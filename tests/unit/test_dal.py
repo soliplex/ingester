@@ -4,7 +4,7 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
-from common import do_monkeypatch
+from common import do_monkeypatch, mock_engine
 
 from soliplex.ingester.lib import dal
 from soliplex.ingester.lib import models
@@ -72,9 +72,7 @@ async def test_read_file_url(tmp_path):
 async def test_read_s3_url():
     """Test read_s3_url function"""
     with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
-        with patch(
-            "soliplex.ingester.lib.dal.opendal.AsyncOperator"
-        ) as mock_op_class:
+        with patch("soliplex.ingester.lib.dal.opendal.AsyncOperator") as mock_op_class:
             mock_settings.return_value = Mock(
                 s3_input_endpoint_url="http://localhost:9000",
                 s3_input_key="key",
@@ -336,9 +334,7 @@ def test_get_storage_operator_s3_target():
     """Test get_storage_operator with s3 target"""
 
     with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
-        with patch(
-            "soliplex.ingester.lib.dal.opendal.AsyncOperator"
-        ) as mock_op:
+        with patch("soliplex.ingester.lib.dal.opendal.AsyncOperator") as mock_op:
             # Create mock S3 config
             mock_s3_config = Mock()
             mock_s3_config.bucket = "test-bucket"
@@ -385,12 +381,8 @@ def test_get_storage_operator_validates_artifact_type():
             parsed_md_store_dir="parsed",
         )
         # INGEST step should not produce PARSED_MD artifact
-        with pytest.raises(
-            ValueError, match="Artifact type .* is not expected"
-        ):
-            dal.get_storage_operator(
-                models.ArtifactType.PARSED_MD, step_config=mock_step_config
-            )
+        with pytest.raises(ValueError, match="Artifact type .* is not expected"):
+            dal.get_storage_operator(models.ArtifactType.PARSED_MD, step_config=mock_step_config)
 
 
 def test_get_storage_operator_with_valid_step_config():
@@ -405,9 +397,7 @@ def test_get_storage_operator_with_valid_step_config():
             file_store_dir="/tmp",
             parsed_md_store_dir="parsed",
         )
-        op = dal.get_storage_operator(
-            models.ArtifactType.PARSED_MD, step_config=mock_step_config
-        )
+        op = dal.get_storage_operator(models.ArtifactType.PARSED_MD, step_config=mock_step_config)
         assert isinstance(op, dal.DBStorageOperator)
 
 

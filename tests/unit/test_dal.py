@@ -4,7 +4,7 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
-from common import do_monkeypatch  # noqa
+from common import do_monkeypatch
 
 from soliplex.ingester.lib import dal
 from soliplex.ingester.lib import models
@@ -104,7 +104,7 @@ async def test_db_storage_operator_read(monkeypatch, mock_engine):
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_read_not_found(monkeypatch, mock_engine):
+async def test_db_storage_operator_read_not_found(monkeypatch, mock_engine):  # noqa F811
     """Test DBStorageOperator read method with file not found"""
     do_monkeypatch(monkeypatch, mock_engine)
     op = dal.DBStorageOperator("doc", "test_root")
@@ -114,7 +114,7 @@ async def test_db_storage_operator_read_not_found(monkeypatch, mock_engine):
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_is_exist(monkeypatch, mock_engine):
+async def test_db_storage_operator_is_exist(monkeypatch, mock_engine):  # noqa F811
     """Test DBStorageOperator is_exist method"""
     do_monkeypatch(monkeypatch, mock_engine)
     op = dal.DBStorageOperator("doc", "test_root")

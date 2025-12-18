@@ -101,7 +101,7 @@ def export_to_env(file_path: str):
     print("initializing environment with default sqlite db docs.db")
     model = Settings(doc_db_url="sqlite+aiosqlite:///docs.db")
     with open(file_path, "w") as f:
-        for field_name in model.model_fields.keys():
+        for field_name in Settings.model_fields.keys():
             value = getattr(model, field_name)
 
             # Convert field name to uppercase for environment variable convention
@@ -140,19 +140,15 @@ def init_env(cfg_name: str = ".env"):
     export_to_env(cfg_name)
 
 
-async def _init_haiku():
+@app.command("init-haiku")
+def init_haiku():
     print("initializing haiku...")
     import haiku.rag.cli as haiku_rag_cli
 
     if os.path.exists("haiku.rag.yaml"):
         print("haiku.rag.yaml already exists. remove or choose a different path.")
         return
-    await haiku_rag_cli.init_config(Path("haiku.rag.yaml"))
-
-
-@app.command("init-haiku")
-def init_haiku():
-    asyncio.run(_init_haiku())
+    haiku_rag_cli.init_config(Path("haiku.rag.yaml"))
 
 
 @app.command("init-config")
@@ -173,7 +169,7 @@ def init_config():
 def bootstrap(haiku: bool = True, config: bool = True, env: bool = True):
     print("starting bootstrap")
     if haiku:
-        asyncio.run(_init_haiku())
+        init_haiku()
     if config:
         init_config()
     if env:

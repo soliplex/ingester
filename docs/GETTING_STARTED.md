@@ -9,7 +9,30 @@ This guide will help you get Soliplex Ingester up and running in minutes.
 - Python 3.12 or higher
 - pip or uv package manager
 - SQLite (included with Python) or PostgreSQL
-- (Optional) Docling server for document parsing
+- Docling server for document parsing (optional)
+- S3 backend (optional)
+
+## Docker Services
+
+A sample docker compose file is provided to show how to configure services used by the ingester.
+
+### postgres
+
+The postgres configuration includes references to startup scripts to create sample users and permissions, but for a production deployment, a more sophisticated secrets configuration should be used. Data is stored in a docker volume which may also need to be changed for a production setup.
+
+### docling-serve
+
+Docling-serve is used to convert pdf documents into markdown and docling JSON documents for use in the pipelline. In order to allow for higher concurrency, the example file shows how to use multiple instances of docling that are load balanced using cookies. The docling client in the ingester handles the cookies to ensure the full request cycle stays on the same server. 
+
+The configuration also shows how to provision GPUs for use in parsing.  Depending on server hardware, the device ids may have to be changed. Multiple instances can share a single GPU but testing is required to determine the optimal configuration.
+
+Docling serve is prone to leak memory so constraining its memory allocation is necessary to prevent overloading server resources.  The restart settings along with load balancing and retry logic in the client will ensure that the ingester is able to continue uninterrupted.
+
+### seaweedfs
+
+SeaweedFS is provided as a simple S3 compatible storage if desired for either the intermediate artifacts or the final LanceDB databases. An initialization script is provided to create the necessary bucket and authentication information. A production configuration should use a more robust secrets confugration.  Cloud providers can also be used for storage if desired.
+
+### 
 
 ## Installation
 

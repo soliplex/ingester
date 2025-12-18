@@ -4,7 +4,7 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
-from common import do_monkeypatch, mock_engine
+from common import do_monkeypatch  # noqa
 
 from soliplex.ingester.lib import dal
 from soliplex.ingester.lib import models

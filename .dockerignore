@@ -1,0 +1,11 @@
+file-store
+docker
+lancedb
+.env
+.venv
+.ruff_cache
+.pytest_cache
+/*.db
+/db
+/haiku.db
+tests

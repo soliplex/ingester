@@ -37,7 +37,7 @@ async def get_workflows_for_status(status: wf_ops.RunStatus, batch_id: int | Non
 
 @wf_router.get("/definitions", summary="get workflow definitions")
 async def list_workflows():
-    wf = await wf_registry.load_registry()
+    wf = await wf_registry.load_workflow_registry()
     res = [{"id": x.id, "name": x.name} for x in wf.values()]
     return res
 

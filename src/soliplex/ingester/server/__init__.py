@@ -1,9 +1,12 @@
 import json
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi import FastAPI
 from fastapi import Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib.config import get_settings
@@ -28,6 +31,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 v1_router = APIRouter(prefix="/api/v1")
 
 
@@ -46,3 +56,8 @@ app.include_router(batch_router)
 app.include_router(doc_router)
 app.include_router(wf_router)
 app.include_router(stats_router)
+
+# Serve UI static files (must be last to not override API routes)
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="ui")

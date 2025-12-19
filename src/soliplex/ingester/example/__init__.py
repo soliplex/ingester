@@ -24,38 +24,21 @@ async def notify_slack(channel_id: str, msg: str):
     _notif_slack_marker = channel_id
 
 
-"""
-async def validate_document(
-    batch_id: int = None, doc_hash: str = None, source: str = None
-):
-    logger.info(
-        f"validate_document started  source={source} "
-        f"batch_id={batch_id} doc_hash={doc_hash}"
-    )
+async def validate_document(batch_id: int = None, doc_hash: str = None, source: str = None):
+    logger.info(f"validate_document started  source={source} batch_id={batch_id} doc_hash={doc_hash}")
 
-async def parse_document(
-    batch_id: int = None, doc_hash: str = None, source: str = None
-):
-    logger.info(
-        f"parse_document started  source={source} "
-        f"batch_id={batch_id} doc_hash={doc_hash}"
-    )
 
-async def chunk_document(
-    batch_id: int = None, doc_hash: str = None, source: str = None
-):
-    logger.info(
-        f"chunk_document started  source={source} "
-        f"batch_id={batch_id} doc_hash={doc_hash}"
-    )
+async def parse_document(batch_id: int = None, doc_hash: str = None, source: str = None):
+    logger.info(f"parse_document started  source={source} batch_id={batch_id} doc_hash={doc_hash}")
 
-async def embed_document(
-    batch_id: int = None, doc_hash: str = None, source: str = None
-):
-    logger.info(
-        f"embed_document started  source={source} "
-        f"batch_id={batch_id} doc_hash={doc_hash}"
-    )
+
+async def chunk_document(batch_id: int = None, doc_hash: str = None, source: str = None):
+    logger.info(f"chunk_document started  source={source} batch_id={batch_id} doc_hash={doc_hash}")
+
+
+async def embed_document(batch_id: int = None, doc_hash: str = None, source: str = None):
+    logger.info(f"embed_document started  source={source} batch_id={batch_id} doc_hash={doc_hash}")
+
 
 async def save_document(
     batch_id: int = None,
@@ -63,8 +46,4 @@ async def save_document(
     uri: str = None,
     source: str = None,
 ):
-    logger.info(
-        f"save_document started  source={source} "
-        f"batch_id={batch_id} doc_hash={doc_hash}"
-    )
-"""
+    logger.info(f"save_document started  source={source} batch_id={batch_id} doc_hash={doc_hash}")

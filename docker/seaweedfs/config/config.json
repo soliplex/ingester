@@ -1,0 +1,20 @@
+{
+    "identities": [
+        {
+            "name": "me",
+            "credentials": [
+                {
+                    "accessKey": "soliplex",
+                    "secretKey": "soliplex"
+                }
+            ],
+            "actions": [
+                "Read",
+                "Write",
+                "List",
+                "Tagging",
+                "Admin"
+            ]
+        }
+    ]
+}

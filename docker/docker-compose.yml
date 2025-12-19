@@ -1,0 +1,84 @@
+services:
+  seaweedfs:
+    image: ghcr.io/chrislusf/seaweedfs
+    command: server -s3 -s3.config=/config/config.json
+      - "8333:8333"
+      - "9333:9333"
+    volumes:
+      - seaweedfs_data:/data
+      - ./seaweedfs/config:/config
+    networks:
+      - soliplex_net
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  postgres:
+    image: pgvector/pgvector:pg18-trixie
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "-A scram-sha-256"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./pgsql/config/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - soliplex_net
+    deploy:
+      resources:
+        limits:
+          memory: "2048M"
+
+
+  seaweedfs-init:
+    image: ghcr.io/chrislusf/seaweedfs
+
+    entrypoint: ["/bin/sh"]
+    volumes:
+      - ./seaweedfs/config/init.sh:/init.sh
+    command: ["/init.sh"]
+    networks:
+      - soliplex_net
+
+
+
+  docling:
+    image: ghcr.io/docling-project/docling-serve-cu128
+    ports:
+      - "5001:5001"
+    environment:
+       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
+       DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
+       DOCLING_NUM_THREADS: 16
+       UVICORN_WORKERS: 1
+       DOCLING_SERVE_ENABLE_UI: 1
+       DOCLING_SERVE_MAX_SYNC_WAIT: 9999
+       NVIDIA_VISIBLE_DEVICES: "all"
+    restart: "unless-stopped"
+    runtime: "nvidia"
+    volumes:
+      - docling_artifacts:/artifacts
+    deploy:
+      resources:
+        limits:
+          memory: 32000M
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['3']
+              capabilities: [gpu]
+    networks:
+      - soliplex_net
+volumes:
+  postgres_data:
+  seaweedfs_data:
+  docling_artifacts:
+
+
+networks:
+      soliplex_net:
+        driver: bridge

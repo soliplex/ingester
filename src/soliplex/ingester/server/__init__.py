@@ -5,7 +5,9 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi import FastAPI
 from fastapi import Form
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from soliplex.ingester.lib import operations
@@ -57,7 +59,19 @@ app.include_router(doc_router)
 app.include_router(wf_router)
 app.include_router(stats_router)
 
-# Serve UI static files (must be last to not override API routes)
+# Serve UI static assets
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="ui")
+    # Mount static assets at /_app
+    app.mount("/_app", StaticFiles(directory=static_dir / "_app"), name="static-assets")
+
+    # Catch-all route for SPA - serves index.html for all non-API routes
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        """Serve the SPA for all routes not caught by API or static assets."""
+        # Serve static files from root if they exist (like favicon.ico)
+        file_path = static_dir / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        # Otherwise serve index.html for SPA routing
+        return FileResponse(static_dir / "index.html")

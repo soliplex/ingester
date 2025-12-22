@@ -5,6 +5,7 @@ import logging
 import pathlib
 
 from docling_core.types.doc.document import DoclingDocument
+from haiku.rag.chunkers import get_chunker
 from haiku.rag.client import HaikuRAG
 from haiku.rag.config import Config as HRConfig
 from haiku.rag.config.models import AppConfig
@@ -97,8 +98,8 @@ async def get_chunk_objs(
     config_dict: dict[str, str | int | bool],
 ) -> list[Chunk]:
     config = build_chunk_config(HRConfig, config_dict)
-    async with HaikuRAG(config=config, create=True) as client:
-        chunks = await client.chunk(docling_document)
+    chunker = get_chunker(config)
+    chunks = await chunker.chunk(docling_document)
     return chunks
 
 

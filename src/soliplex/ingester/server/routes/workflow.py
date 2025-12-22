@@ -84,10 +84,51 @@ async def get_workflows(
 @wf_router.get(
     "/by-status",
     status_code=status.HTTP_200_OK,
-    summary="get workflow runs by status  and batch_id (optional)",
+    summary="get workflow runs by status with optional pagination",
 )
-async def get_workflows_for_status(status: wf_ops.RunStatus, batch_id: int | None = None):
-    return await wf_ops.get_workflows_for_status(status, batch_id)
+async def get_workflows_for_status(
+    status: wf_ops.RunStatus,
+    batch_id: int | None = None,
+    page: int | None = None,
+    rows_per_page: int | None = None,
+) -> list[WorkflowRun] | PaginatedResponse[WorkflowRun]:
+    """
+    Get workflow runs filtered by status with optional pagination.
+
+    When page/rows_per_page not provided: Returns all rows as a list
+    When page provided: Returns paginated response with metadata
+    Results sorted by created_date descending (newest first)
+    """
+    # Validate pagination parameters
+    if page is not None and page < 1:
+        raise ValueError("page must be >= 1")
+
+    # Set default rows_per_page if page is provided but rows_per_page is not
+    if page is not None and rows_per_page is None:
+        rows_per_page = 10
+
+    # Validate rows_per_page
+    if rows_per_page is not None and rows_per_page < 1:
+        raise ValueError("rows_per_page must be >= 1")
+
+    # Get data from operations layer
+    items, total = await wf_ops.get_workflows_for_status(status, batch_id, page=page, rows_per_page=rows_per_page)
+
+    # If pagination not requested, return raw list (backward compatibility)
+    if page is None and rows_per_page is None:
+        return items
+
+    # Calculate total_pages
+    total_pages = (total + rows_per_page - 1) // rows_per_page if rows_per_page > 0 else 0
+
+    # Return paginated response
+    return PaginatedResponse[WorkflowRun](
+        items=items,
+        total=total,
+        page=page or 1,
+        rows_per_page=rows_per_page or 10,
+        total_pages=total_pages,
+    )
 
 
 @wf_router.get("/definitions", summary="get workflow definitions")

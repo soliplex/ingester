@@ -1,13 +1,19 @@
 import { apiClient } from '$lib/services/apiClient';
 import { RunStatus } from '$lib/types/api';
 import type { PageLoad } from './$types';
+import type { WorkflowRun, PaginatedResponse } from '$lib/types/api';
 
 export const load: PageLoad = async () => {
 	try {
-		const [batches, workflows] = await Promise.all([
+		const [batches, workflowsResponse] = await Promise.all([
 			apiClient.getBatches(),
 			apiClient.getWorkflowRuns()
 		]);
+
+		// Extract workflows array from response (handles both array and paginated response)
+		const workflows: WorkflowRun[] = Array.isArray(workflowsResponse)
+			? workflowsResponse
+			: (workflowsResponse as PaginatedResponse<WorkflowRun>).items;
 
 		const now = new Date();
 		const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);

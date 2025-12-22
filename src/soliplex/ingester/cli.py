@@ -18,14 +18,8 @@ from rich import print
 import soliplex.ingester
 import soliplex.ingester.lib.models as models
 import soliplex.ingester.lib.operations as operations
-from soliplex.ingester import server
 
 from .lib.config import get_settings
-from .lib.wf.registry import get_param_set
-from .lib.wf.registry import get_workflow_definition
-from .lib.wf.registry import load_param_registry
-from .lib.wf.registry import load_workflow_registry
-from .lib.wf.runner import start_worker
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +232,8 @@ def validate_haiku(batch_id: int, detail: bool = False):
 
 
 async def _start_worker():
+    from .lib.wf.runner import start_worker
+
     await start_worker()
     # sleep forever
     while True:
@@ -255,6 +251,8 @@ def worker_cmd():
 
 
 async def _dump_workflow(workflow_def_id: str):
+    from .lib.wf.registry import get_workflow_definition
+
     wf_def = await get_workflow_definition(workflow_def_id)
     print(wf_def.model_dump_json(indent=2))
 
@@ -269,6 +267,8 @@ def dump_workfkow(workflow_def_id: str):
 
 
 async def _dump_params(param_def_id: str):
+    from .lib.wf.registry import get_param_set
+
     wf_def = await get_param_set(param_def_id)
     print(wf_def.model_dump_json(indent=2))
 
@@ -283,6 +283,8 @@ def dump_param(param_def_id: str = "default"):
 
 
 async def _list_workflows():
+    from .lib.wf.registry import load_workflow_registry
+
     workflows = await load_workflow_registry()
     for wf in workflows.keys():
         print(wf)
@@ -296,6 +298,8 @@ def list_workflows():
 
 
 async def _list_params():
+    from .lib.wf.registry import load_param_registry
+
     params = await load_param_registry()
     for wf in params.keys():
         print(wf)
@@ -370,6 +374,8 @@ def serve(
         "The literal '*' means trust everything.",
     ),
 ):
+    from soliplex.ingester import server
+
     """Run the Soliplex server"""
     validate_settings(dump=False)
     reload_dirs = []

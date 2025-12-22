@@ -14,7 +14,9 @@ import type {
 	WorkflowParams,
 	ParamSetSummary,
 	DocumentURI,
-	RunStatus
+	RunStatus,
+	PaginatedResponse,
+	PaginationParams
 } from '$lib/types/api';
 
 class ApiClient {
@@ -97,15 +99,31 @@ class ApiClient {
 
 	// Workflow Endpoints
 
-	async getWorkflowRuns(batchId?: number): Promise<WorkflowRun[]> {
-		const params = batchId ? { batch_id: batchId } : undefined;
-		return this.get<WorkflowRun[]>('/workflow/', params);
+	async getWorkflowRuns(
+		batchId?: number,
+		paginationParams?: PaginationParams
+	): Promise<WorkflowRun[] | PaginatedResponse<WorkflowRun>> {
+		const params: Record<string, number> = {};
+		if (batchId) params.batch_id = batchId;
+		if (paginationParams) {
+			params.page = paginationParams.page;
+			params.rows_per_page = paginationParams.rows_per_page;
+		}
+		return this.get<WorkflowRun[] | PaginatedResponse<WorkflowRun>>('/workflow/', params);
 	}
 
-	async getWorkflowRunsByStatus(status: RunStatus, batchId?: number): Promise<WorkflowRun[]> {
+	async getWorkflowRunsByStatus(
+		status: RunStatus,
+		batchId?: number,
+		paginationParams?: PaginationParams
+	): Promise<WorkflowRun[] | PaginatedResponse<WorkflowRun>> {
 		const params: Record<string, string | number> = { status };
 		if (batchId) params.batch_id = batchId;
-		return this.get<WorkflowRun[]>('/workflow/by-status', params);
+		if (paginationParams) {
+			params.page = paginationParams.page;
+			params.rows_per_page = paginationParams.rows_per_page;
+		}
+		return this.get<WorkflowRun[] | PaginatedResponse<WorkflowRun>>('/workflow/by-status', params);
 	}
 
 	async getWorkflowRunDetails(workflowId: number): Promise<WorkflowRun> {

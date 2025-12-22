@@ -432,15 +432,52 @@ async def get_workflows(
         return result, total
 
 
-async def get_workflows_for_status(status: RunStatus, batch_id: int | None) -> list[WorkflowRun]:
+async def get_workflows_for_status(
+    status: RunStatus,
+    batch_id: int | None = None,
+    page: int | None = None,
+    rows_per_page: int | None = None,
+) -> tuple[list[WorkflowRun], int]:
+    """
+    Get workflow runs filtered by status, optionally paginated.
+
+    Args:
+        status: Filter by run status
+        batch_id: Optional batch ID filter
+        page: Page number (1-indexed). If None, returns all rows.
+        rows_per_page: Number of rows per page. If None, returns all rows.
+
+    Returns:
+        Tuple of (list of workflow runs, total count)
+    """
     async with get_session() as session:
+        # Build base query
         q = select(WorkflowRun).where(WorkflowRun.status == status)
         if batch_id is not None:
             q = q.where(WorkflowRun.batch_id == batch_id)
+
+        # Add consistent ordering (newest first)
+        q = q.order_by(WorkflowRun.created_date.desc())
+
+        # Get total count before pagination
+        count_q = select(func.count()).select_from(WorkflowRun).where(WorkflowRun.status == status)
+        if batch_id is not None:
+            count_q = count_q.where(WorkflowRun.batch_id == batch_id)
+
+        count_result = await session.exec(count_q)
+        total = count_result.one()
+
+        # Apply pagination if requested
+        if page is not None and rows_per_page is not None:
+            offset = (page - 1) * rows_per_page
+            q = q.offset(offset).limit(rows_per_page)
+
+        # Execute query
         rs = await session.exec(q)
         res = rs.all()
         [session.expunge(x) for x in res]
-        return res
+
+        return res, total
 
 
 async def get_workflow_run(id: int, get_steps=False) -> WorkflowRun:

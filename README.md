@@ -1,10 +1,12 @@
 # Soliplex Ingester Documentation
 
-Soliplex Ingester is a system to manage loading documents into the [Soliplex RAG system](https://github.com/soliplex/soliplex) using confiurable workflows. It is designed to provide a high level of durability and observability at the document level so no information gets lost due to workflow errors.
+This project is designed to provide a robust system to load documents from various sources into RAG systems.  The default configuration is intended to provide populated databases for the [Soliplex](https://github.com/soliplex/soliplex) RAG (Retrieval Augmented Generation) system but it can be customized to support other storage systems and language models.
 
-The workflow sytem can be configured to use your preferred parameters for document conversion, chunking,embedding and storage. The artifacts from each step are stored for re-use in subsequent pipelines with a smart matching system to maximize re-use of artifacts from previous workflows when available.
+Document ingestion can be a time consuming and error prone process.  Soliplex ingester aims to provide a robust, scalable and observable pathway from source systems to one or more vector databases. It provides a user interface and REST endpoints to follow the progress of documents and supports restarting failed processes.
 
-The ingester service provides web endpoints for submitting documents and tracking their progress. If you need help submitting documents, a set of agents is available to load data from common sources at [Soliplex Ingester Agents](https://github.com/soliplex/ingester-agents).
+This ingester has been tested with workflows containing hundreds of documents and with pdf files containing over one thousand pages (on appropriate hardware) so scalability and reliability paramount.
+
+Soliplex ingester has been designed alongside [agents](https://github.com/soliplex/ingester-agents) that are able do load data from filesystems and source control management systems, but other tools can be used as well.
 
 ## Documentation Index
 
@@ -20,7 +22,6 @@ The ingester service provides web endpoints for submitting documents and trackin
 
 - **[Architecture Overview](docs/ARCHITECTURE.md)** - System design and components
   - Component overview
-  - Data flow diagrams
   - Technology stack
   - Scalability considerations
 
@@ -245,15 +246,14 @@ See LICENSE file in project root.
 - Need clarification? Start a discussion
 - Have suggestions? Submit a pull request
 
-### Technical Support
-- **Issues:** Bug reports and feature requests
-- **Discussions:** Questions and community help
-- **Email:** [Your support email]
+
+
 
 ### Related Documentation
-- **HaikuRAG:** [Link to HaikuRAG docs]
-- **Docling:** [Link to Docling docs]
+- **HaikuRAG:** https://github.com/ggozad/haiku.rag
+- **Docling:** https://docling-project.github.io/docling/
 - **LanceDB:** https://lancedb.com/docs/
+- **Soliplex:** https://github.com/soliplex/soliplex
 
 ---
 
@@ -285,8 +285,8 @@ si-cli validate-haiku 1                  # Validate batch
 # API
 curl http://localhost:8000/docs          # Swagger UI
 curl http://localhost:8000/api/v1/batch/ # List batches
+curl http://localhost:8000/api/v1/document/ingest-document/ # load document into database
+
 ```
 
 ---
-
-Happy documenting! 📚

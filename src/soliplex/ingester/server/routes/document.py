@@ -16,9 +16,7 @@ doc_router = APIRouter(prefix="/api/v1/document", tags=["document"])
 
 
 @doc_router.get("/", status_code=status.HTTP_200_OK)
-async def get_docs(
-    response: Response, source: str = None, batch_id: int = None
-):
+async def get_docs(response: Response, source: str = None, batch_id: int = None):
     if source:
         docs = await operations.get_uris_for_source(source)
         return docs

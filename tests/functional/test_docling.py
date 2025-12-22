@@ -34,9 +34,7 @@ async def test_docling_convert():
         "table_mode": "accurate",
     }
 
-    js = await docling.docling_convert(
-        ba, input_file, "application/pdf", config_dict=test_config
-    )
+    js = await docling.docling_convert(ba, input_file, "application/pdf", config_dict=test_config)
     assert js
 
 
@@ -55,7 +53,5 @@ async def test_docling_convert_no_img():
         "image_export_mode": "placeholder",
     }
 
-    js = await docling.docling_convert(
-        ba, input_file, "application/pdf", config_dict=test_config
-    )
+    js = await docling.docling_convert(ba, input_file, "application/pdf", config_dict=test_config)
     assert js

@@ -66,7 +66,7 @@ def do_state_stransition(
         raise WorkflowException(msg)
 
     if end_status == RunStatus.ERROR and retry >= retries:
-        logger.info("after {retry} retries step  failed")
+        logger.info(f"after {retry} retries step  failed")
         end_status = RunStatus.FAILED
     return end_status
 
@@ -124,16 +124,16 @@ async def get_runnable_steps(top: int | None = None, batch_id: int | None = None
         batch_filt = f" and r.batch_id={batch_id}" if batch_id is not None else ""
         q = text(f"""select * from runstep where (workflow_run_id,workflow_step_number)
         in(
-        SELECT s.workflow_run_id,min(workflow_step_number) as min_step FROM runstep 
+        SELECT s.workflow_run_id,min(workflow_step_number) as min_step FROM runstep
                  s inner join workflowrun r on r.id=s.workflow_run_id
-        where s.retry < s.retries and s.status not in 
-        ('{RunStatus.COMPLETED.value}' ,'{RunStatus.FAILED.value}','{RunStatus.RUNNING.value}') 
-        and r.status not in ('{RunStatus.COMPLETED.value}' ,'{RunStatus.FAILED.value}') 
-        
+        where s.retry < s.retries and s.status not in
+        ('{RunStatus.COMPLETED.value}' ,'{RunStatus.FAILED.value}','{RunStatus.RUNNING.value}')
+        and r.status not in ('{RunStatus.COMPLETED.value}' ,'{RunStatus.FAILED.value}')
+
         {batch_filt}
-        group by s.workflow_run_id) 
+        group by s.workflow_run_id)
         and status not in ('{RunStatus.RUNNING.value}','{RunStatus.FAILED.value}','{RunStatus.COMPLETED.value}')
-        and workflow_run_id not in (select distinct workflow_run_id from runstep where status='{RunStatus.RUNNING.value}') 
+        and workflow_run_id not in (select distinct workflow_run_id from runstep where status='{RunStatus.RUNNING.value}')
         order by priority desc,retry,created_date,workflow_step_number limit {top}""")
 
         rs = await session.exec(q)

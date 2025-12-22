@@ -17,15 +17,6 @@ async def test_find_config(monkeypatch, mock_engine):  # noqa: F811
     logger.info(f"ids={ids}")
     ids2 = await wf_ops.get_step_config_ids("test2")
     assert ids2
-    assert (
-        ids[wf_ops.WorkflowStepType.PARSE]
-        == ids2[wf_ops.WorkflowStepType.PARSE]
-    )
-    assert (
-        ids[wf_ops.WorkflowStepType.PARSE]
-        != ids2[wf_ops.WorkflowStepType.CHUNK]
-    )
-    assert (
-        ids[wf_ops.WorkflowStepType.CHUNK]
-        != ids2[wf_ops.WorkflowStepType.CHUNK]
-    )
+    assert ids[wf_ops.WorkflowStepType.PARSE] == ids2[wf_ops.WorkflowStepType.PARSE]
+    assert ids[wf_ops.WorkflowStepType.PARSE] != ids2[wf_ops.WorkflowStepType.CHUNK]
+    assert ids[wf_ops.WorkflowStepType.CHUNK] != ids2[wf_ops.WorkflowStepType.CHUNK]

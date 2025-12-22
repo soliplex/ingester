@@ -95,9 +95,7 @@ def test_make_config():
             parameters={},
         ),
     }
-    wc = WorkflowDefinition(
-        id="test", name="test", meta={}, item_steps=steps, lifecycle_events={}
-    )
+    wc = WorkflowDefinition(id="test", name="test", meta={}, item_steps=steps, lifecycle_events={})
     js = wc.model_dump_json()
     yaml.dump(yaml.safe_load(js))
 
@@ -125,9 +123,7 @@ async def test_get_step_param_ids(monkeypatch, mock_engine):  # noqa F811
     assert ids1[WorkflowStepType.PARSE] == ids2[WorkflowStepType.PARSE]
     assert ids1[WorkflowStepType.CHUNK] != ids2[WorkflowStepType.CHUNK]
     assert ids1[WorkflowStepType.EMBED] != ids2[WorkflowStepType.EMBED]
-    assert (
-        ids1[WorkflowStepType.PARSE] == ids3[WorkflowStepType.PARSE]
-    )  # same config for parse
+    assert ids1[WorkflowStepType.PARSE] == ids3[WorkflowStepType.PARSE]  # same config for parse
     assert (
         ids1[WorkflowStepType.EMBED] != ids3[WorkflowStepType.EMBED]
     )  # 3 skips  chunk but parse and embed are identical this means embed needs to be different for 3

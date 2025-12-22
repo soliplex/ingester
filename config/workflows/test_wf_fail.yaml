@@ -1,6 +1,6 @@
-id: test_wf
+id: test_wf_fail
 meta: {}
-name: Batch Workflow
+name: Test workflow that fails
 lifecycle_events:
   group_start:
     - name: start span
@@ -22,7 +22,7 @@ item_steps:
     name: docling validate
     retries: 3
     method: soliplex.ingester.example.validate_document
-    parameters: {}
+    parameters: {"fail": true }
   parse:
     name: docling parse
     retries: 3

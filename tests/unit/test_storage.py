@@ -17,9 +17,7 @@ async def test_operators(monkeypatch, mock_engine):  # noqa F811
     bytea = b"test"
     get_settings().file_store_target = "db"
     for st in models.ArtifactType:
-        step_config = models.StepConfig(
-            id=1, step_type=models.ARTIFACTS_TO_STEPS[st]
-        )
+        step_config = models.StepConfig(id=1, step_type=models.ARTIFACTS_TO_STEPS[st])
         logger.info(f" testing {st}")
         op = dal.get_storage_operator(st, step_config)
         assert op is not None

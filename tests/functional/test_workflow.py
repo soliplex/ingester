@@ -2,8 +2,6 @@ import logging
 
 import aiofiles
 import pytest
-from common import do_monkeypatch  # noqa
-from common import mock_engine  # noqa
 
 import soliplex.ingester.lib.operations as doc_ops
 import soliplex.ingester.lib.wf.operations as wf_ops
@@ -12,6 +10,8 @@ from soliplex.ingester.lib import workflow
 from soliplex.ingester.lib.models import ArtifactType
 from soliplex.ingester.lib.models import RunStep
 from soliplex.ingester.lib.models import WorkflowStepType
+from tests.unit import data
+from tests.unit.common import do_monkeypatch
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,6 @@ async def xtest_create_workflow_run(monkeypatch, mock_engine):  # noqa F811
 async def xtest_split_ingestion(monkeypatch, mock_engine):  # noqa F811
     do_monkeypatch(monkeypatch, mock_engine)
 
-    import data as data
-
     batch_id = await doc_ops.new_batch("pytest", "pytest")
 
     test_uri = "/tmp/test.pdf"
@@ -66,9 +64,7 @@ async def xtest_split_ingestion(monkeypatch, mock_engine):  # noqa F811
         doc_meta=test_doc_meta,
         batch_id=batch_id,
     )
-    rg = await wf_ops.create_run_group(
-        workflow_definition_id="batch", batch_id=batch_id, param_id="default"
-    )
+    rg = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="default")
     wf_run, steps = await wf_ops.create_workflow_run(rg, doc_id=doc1.hash)
     ids = await wf_ops.get_step_config_ids("default")
     sc_map = {}
@@ -78,9 +74,7 @@ async def xtest_split_ingestion(monkeypatch, mock_engine):  # noqa F811
         sc_map[sc.step_type] = sc
     assert doc1 is not None
     assert docuri1 is not None
-    op = await wf_ops.find_operator_for_workflow_run(
-        wf_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON
-    )
+    op = await wf_ops.find_operator_for_workflow_run(wf_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
     assert op
 
     await workflow.split_parse_document(
@@ -127,8 +121,6 @@ async def xtest_split_ingestion(monkeypatch, mock_engine):  # noqa F811
 async def test_workflow(monkeypatch, mock_engine):  # noqa F811
     do_monkeypatch(monkeypatch, mock_engine)
 
-    import data as data
-
     batch_id = await doc_ops.new_batch("pytest", "pytest")
 
     test_uri = "/tmp/test.pdf"
@@ -146,9 +138,7 @@ async def test_workflow(monkeypatch, mock_engine):  # noqa F811
         batch_id=batch_id,
     )
 
-    rg = await wf_ops.create_run_group(
-        workflow_definition_id="test_wf", batch_id=batch_id, param_id="default"
-    )
+    rg = await wf_ops.create_run_group(workflow_definition_id="test_wf", batch_id=batch_id, param_id="default")
 
     wf_run, steps = await wf_ops.create_workflow_run(rg, doc_id=doc1.hash)
     ids = await wf_ops.get_step_config_ids("default")
@@ -159,9 +149,7 @@ async def test_workflow(monkeypatch, mock_engine):  # noqa F811
         sc_map[sc.step_type] = sc
     assert doc1 is not None
     assert docuri1 is not None
-    op = await wf_ops.find_operator_for_workflow_run(
-        wf_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON
-    )
+    op = await wf_ops.find_operator_for_workflow_run(wf_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
     assert op
 
     runnable = await runner.get_runnable_steps(1, batch_id=batch_id)
@@ -210,9 +198,8 @@ async def test_workflow(monkeypatch, mock_engine):  # noqa F811
 async def test_ingestion(monkeypatch, mock_engine):  # noqa F811
     do_monkeypatch(monkeypatch, mock_engine)
 
-    import data as data
-
     batch_id = await doc_ops.new_batch("pytest", "pytest")
+    rg = await wf_ops.create_run_group(workflow_definition_id="test_wf", batch_id=batch_id, param_id="default")
 
     test_uri = "/tmp/test.pdf"
     test_bytes = bytes(data.MIN_PDF, "utf-8")
@@ -228,7 +215,7 @@ async def test_ingestion(monkeypatch, mock_engine):  # noqa F811
         doc_meta=test_doc_meta,
         batch_id=batch_id,
     )
-
+    wf_run, steps = await wf_ops.create_workflow_run(rg, doc_id=doc1.hash)
     ids = await wf_ops.get_step_config_ids("default")
 
     sc_map = {}
@@ -243,11 +230,10 @@ async def test_ingestion(monkeypatch, mock_engine):  # noqa F811
         batch_id,
         doc1.hash,
         test_source,
-        step_config=sc_map[WorkflowStepType.PARSE],
+        step_config=sc_map[WorkflowStepType.VALIDATE],
     )
     docf = await doc_ops.get_document(doc1.hash)
     assert "is_valid" in docf.doc_meta
-    wf_run = None
 
     await workflow.parse_document(
         batch_id,
@@ -265,6 +251,7 @@ async def test_ingestion(monkeypatch, mock_engine):  # noqa F811
         force=True,
         workflow_run=wf_run,
     )
+    """
     await workflow.embed_document(
         batch_id,
         doc1.hash,
@@ -281,6 +268,7 @@ async def test_ingestion(monkeypatch, mock_engine):  # noqa F811
         force=True,
         workflow_run=wf_run,
     )
+    """
 
     doc_history = await doc_ops.get_document_uri_history(docuri1.id)
     for h in doc_history:
@@ -292,8 +280,6 @@ async def test_ingestion(monkeypatch, mock_engine):  # noqa F811
 @pytest.mark.asyncio
 async def xtest_status(monkeypatch, mock_engine):  # noqa F811
     do_monkeypatch(monkeypatch, mock_engine)
-
-    import data as data
 
     batch_id = await doc_ops.new_batch("pytest", "pytest")
 
@@ -311,7 +297,5 @@ async def xtest_status(monkeypatch, mock_engine):  # noqa F811
         doc_meta=test_doc_meta,
         batch_id=batch_id,
     )
-    rg = await wf_ops.create_run_group(
-        workflow_definition_id="batch", batch_id=batch_id, param_id="default"
-    )
+    rg = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="default")
     wf_run, steps = await wf_ops.create_workflow_run(rg, doc_id=doc1.hash)

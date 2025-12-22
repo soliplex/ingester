@@ -61,18 +61,14 @@ def test_document_batch_duration_with_completed_date():
     """Test DocumentBatch duration property when completed_date is set"""
     start = datetime.datetime(2024, 1, 1, 10, 0, 0)
     completed = datetime.datetime(2024, 1, 1, 10, 5, 0)
-    batch = DocumentBatch(
-        name="test", source="test", start_date=start, completed_date=completed
-    )
+    batch = DocumentBatch(name="test", source="test", start_date=start, completed_date=completed)
     assert batch.duration == 300.0
 
 
 def test_document_batch_duration_without_completed_date():
     """Test DocumentBatch duration property when completed_date is None (lines 77-79)"""
     start = datetime.datetime(2024, 1, 1, 10, 0, 0)
-    batch = DocumentBatch(
-        name="test", source="test", start_date=start, completed_date=None
-    )
+    batch = DocumentBatch(name="test", source="test", start_date=start, completed_date=None)
     assert batch.duration is None
 
 

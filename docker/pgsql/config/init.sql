@@ -11,4 +11,3 @@ create database soliplex_eval;
 ALTER DATABASE soliplex_eval OWNER TO soliplex_eval;
 grant all privileges on database soliplex_eval to soliplex_eval;
 GRANT ALL PRIVILEGES ON SCHEMA public TO soliplex_eval;
-

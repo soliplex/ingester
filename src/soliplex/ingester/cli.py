@@ -1,9 +1,12 @@
 import asyncio
 import json
 import logging
+import os
 import platform
+import shutil
 import signal
 import sys
+from pathlib import Path
 
 import typer
 import uvicorn
@@ -28,8 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 def init():
-    validate_settings(dump=False)
-    logging.basicConfig(level=get_settings().log_level)
+    try:
+        logging.basicConfig(level=get_settings().log_level)
+    except ValidationError:
+        print("invalid settings. environment variables might not be set.  Run `si-cli validate-settings`")
+        logging.basicConfig(level=logging.INFO)
 
 
 app = typer.Typer(callback=init)
@@ -43,7 +49,7 @@ def validate_settings(dump=True):
     try:
         get_settings()
     except ValidationError as e:
-        print("invalid settings")
+        print("invalid settings. environment variables not set?")
         for x in e.errors():
             print(x)
         sys.exit(1)
@@ -58,11 +64,10 @@ def signal_handler(signum, frame):
 
 
 def run_migrations():
-    from alembic import command
-    from alembic.config import Config
+    pass
 
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+    # alembic_cfg = Config("alembic.ini")
+    # command.upgrade(alembic_cfg, "head")
 
 
 @app.command("db-init")
@@ -70,13 +75,107 @@ def db_init():
     """
     initialize database tables
     """
+    validate_settings(dump=False)
     from sqlalchemy import create_engine
     from sqlmodel import SQLModel
 
     settings = get_settings()
     engine = create_engine(settings.doc_db_url)
     SQLModel.metadata.create_all(engine)
-    run_migrations()
+    # run_migrations()
+
+
+def export_to_env(file_path: str):
+    """
+    Export a pydantic_settings model to a .env file.
+
+    Args:
+
+        file_path: The path to the .env file.
+    """
+    from soliplex.ingester.lib.config import Settings
+
+    if os.path.exists(file_path):
+        print(f"{file_path} already exists. remove or choose a different path.")
+        return
+    print("initializing environment with default sqlite db docs.db")
+    model = Settings(doc_db_url="sqlite+aiosqlite:///docs.db")
+    with open(file_path, "w") as f:
+        for field_name in Settings.model_fields.keys():
+            value = getattr(model, field_name)
+
+            # Convert field name to uppercase for environment variable convention
+            env_var_name = field_name.upper()
+
+            # Handle None values
+            if value is None:
+                continue
+
+            # Convert value to string representation
+            if isinstance(value, bool):
+                value_str = str(value).lower()
+            elif isinstance(value, (int, float)):
+                value_str = str(value)
+            elif isinstance(value, str):
+                # Escape quotes and handle multiline strings
+                if '"' in value or "\n" in value or " " in value:
+                    value_str = f'"{value.replace(chr(92), chr(92) * 2).replace('"', chr(92) + '"')}"'
+                else:
+                    value_str = value
+            else:
+                # For other types (lists, dicts, nested models), use JSON representation
+                import json
+
+                value_str = json.dumps(value)
+
+            f.write(f"{env_var_name}={value_str}\n")
+
+
+@app.command("init-env")
+def init_env(cfg_name: str = ".env"):
+    """
+    initialize environment file
+    """
+    print("initializing environment...")
+    export_to_env(cfg_name)
+
+
+@app.command("init-haiku")
+def init_haiku():
+    print("initializing haiku...")
+    import haiku.rag.cli as haiku_rag_cli
+
+    if os.path.exists("haiku.rag.yaml"):
+        print("haiku.rag.yaml already exists. remove or choose a different path.")
+        return
+    haiku_rag_cli.init_config(Path("haiku.rag.yaml"))
+
+
+@app.command("init-config")
+def init_config():
+    print("initializing  default config files...")
+    wf_path = Path(".") / "config" / "workflows"
+    param_path = Path(".") / "config" / "params"
+    wf_path.mkdir(parents=True, exist_ok=True)
+    param_path.mkdir(parents=True, exist_ok=True)
+
+    import soliplex.ingester.example as ex
+
+    shutil.copyfile(Path(ex.__file__).parent / "default_wf.yaml", wf_path / "default_wf.yaml")
+    shutil.copyfile(Path(ex.__file__).parent / "default_params.yaml", param_path / "default.yaml")
+
+
+@app.command("bootstrap")
+def bootstrap(haiku: bool = True, config: bool = True, env: bool = True):
+    print("starting bootstrap")
+    if haiku:
+        init_haiku()
+    if config:
+        init_config()
+    if env:
+        init_env()
+
+    print("bootstrap complete")
 
 
 async def _validate_haiku(batch_id: int, detail: bool = False):
@@ -87,9 +186,7 @@ async def _validate_haiku(batch_id: int, detail: bool = False):
         for doc in docs:
             doc_hash = doc.hash
             try:
-                _ = await read_doc_bytes(
-                    doc_hash, models.ArtifactType.PARSED_MD
-                )
+                _ = await read_doc_bytes(doc_hash, models.ArtifactType.PARSED_MD)
             except Exception as e:
                 results.append(
                     {
@@ -114,9 +211,7 @@ async def _validate_haiku(batch_id: int, detail: bool = False):
 
             try:
                 hrdoc = await client.get_document_by_id(doc.rag_id)
-                results.append(
-                    {"doc": doc.hash, "haiku": hrdoc.id, "status": "success"}
-                )
+                results.append({"doc": doc.hash, "haiku": hrdoc.id, "status": "success"})
             except Exception as e:
                 results.append(
                     {
@@ -154,6 +249,7 @@ def worker_cmd():
     """
     Run the Soliplex-ingester worker
     """
+    validate_settings(dump=False)
     signal.signal(signal.SIGINT, signal_handler)
     asyncio.run(_start_worker())
 
@@ -168,6 +264,7 @@ def dump_workfkow(workflow_def_id: str):
     """
     dump a workflow definition from config
     """
+    validate_settings(dump=False)
     asyncio.run(_dump_workflow(workflow_def_id))
 
 
@@ -181,6 +278,7 @@ def dump_param(param_def_id: str = "default"):
     """
     dump a parameter set from config
     """
+    validate_settings(dump=False)
     asyncio.run(_dump_params(param_def_id))
 
 
@@ -193,6 +291,7 @@ async def _list_workflows():
 @app.command("list-workflows")
 def list_workflows():
     """list configured workflows"""
+    validate_settings(dump=False)
     asyncio.run(_list_workflows())
 
 
@@ -205,6 +304,7 @@ async def _list_params():
 @app.command("list-param-sets")
 def list_params():
     """list configured parameter sets"""
+    validate_settings(dump=False)
     asyncio.run(_list_params())
 
 
@@ -257,10 +357,7 @@ def serve(
     proxy_headers: bool = typer.Option(
         None,
         "--proxy-headers",
-        help=(
-            "Enable/Disable X-Forwarded-Proto, X-Forwarded-For to "
-            "populate url scheme and remote address info."
-        ),
+        help=("Enable/Disable X-Forwarded-Proto, X-Forwarded-For to populate url scheme and remote address info."),
     ),
     forwarded_allow_ips: str = typer.Option(
         None,
@@ -274,6 +371,7 @@ def serve(
     ),
 ):
     """Run the Soliplex server"""
+    validate_settings(dump=False)
     reload_dirs = []
     reload_includes = []
 

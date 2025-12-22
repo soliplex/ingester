@@ -1,3 +1,12 @@
+# Stage 1: Build UI
+FROM node:20-slim AS ui-builder
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
+# Stage 2: Python base
 FROM python:3.13-slim-trixie AS base
 FROM base AS builder
 
@@ -23,8 +32,13 @@ RUN ls -al /app
 RUN --mount=type=cache,target=/root/.cache/uv \
   uv sync --frozen --no-dev
 
+# Stage 3: Final image
 FROM base
 COPY --from=builder /app /app
+
+# Copy UI build artifacts
+COPY --from=ui-builder /ui/build /app/src/soliplex/ingester/server/static
+
 ENV PATH="/app/.venv/bin:$PATH"
 
-cmd ["si-cli", "serve", "--host=0.0.0.0"]
+CMD ["si-cli", "serve", "--host=0.0.0.0"]

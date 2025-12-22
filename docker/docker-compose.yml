@@ -2,23 +2,23 @@ services:
   soliplex_ingester:
     image: soliplex_ingester:latest
     environment:
-      DOC_DB_URL: postgresql+psycopg://soliplex:soliplex@postgres:5432/soliplex
+      DOC_DB_URL: postgresql+psycopg://soliplex_attrib:soliplex_attrib@postgres:5432/soliplex_attrib
       FILE_STORE_TARGET: fs
       FILE_STORE_DIR: /var/soliplex/file_store
-      LANCEDB_DIR: /var/soliplex/lancedb      
-      WORKER_TASK_COUNT: 10      
+      LANCEDB_DIR: /var/soliplex/lancedb
+      WORKER_TASK_COUNT: 10
       DOCLING_SERVER_URL: http://haproxy:5004/v1'
       DOCLING_HTTP_TIMEOUT: 1200
       DOCLING_CONCURRENCY: 4
 
     ports:
       - "8002:8000"
-    volumes:     
+    volumes:
       - ./file_store:/var/soliplex/file_store
       - ./lancedb:/var/soliplex/lancedb
     networks:
       - soliplex_net
-  
+
 
   postgres:
     image: postgres:18-trixie
@@ -38,8 +38,7 @@ services:
       resources:
         limits:
           memory: "2048M"
-  
-  haproxy:
+haproxy:
     image: docker.io/library/haproxy:3.3-alpine
     ports:
       - 5004:5004
@@ -75,8 +74,7 @@ services:
               capabilities: [gpu]
     networks:
       - soliplex_net
-
-  docling_2:
+ docling_2:
     image: ghcr.io/docling-project/docling-serve-cu128
     ports:
       - "5001:5001"
@@ -89,7 +87,7 @@ services:
        DOCLING_SERVE_ENABLE_UI: 1
        DOCLING_SERVE_MAX_SYNC_WAIT: 9999
        NVIDIA_VISIBLE_DEVICES: "all"
-       
+
     restart: "unless-stopped"
     runtime: "nvidia"
     volumes:
@@ -105,6 +103,7 @@ services:
               capabilities: [gpu]
     networks:
       - soliplex_net
+
 
   docling_3:
     image: ghcr.io/docling-project/docling-serve-cu128
@@ -130,30 +129,6 @@ services:
             - driver: nvidia
               device_ids: ['3']
               capabilities: [gpu]
-    networks:
-      - soliplex_net
-
-  seaweedfs:
-    image: ghcr.io/chrislusf/seaweedfs
-    command: server -s3 -s3.config=/config/config.json
-      - "8333:8333"
-      - "9333:9333"
-    volumes:
-      - seaweedfs_data:/data
-      - ./seaweedfs/config:/config
-    networks:
-      - soliplex_net
-    deploy:
-      resources:
-        limits:
-          memory: 1024M      
-  seaweedfs-init:
-    image: ghcr.io/chrislusf/seaweedfs
-
-    entrypoint: ["/bin/sh"]
-    volumes:
-      - ./seaweedfs/config/init.sh:/init.sh
-    command: ["/init.sh"]
     networks:
       - soliplex_net
 

@@ -34,10 +34,13 @@ SeaweedFS is provided as a simple S3 compatible storage if desired for either th
 
 ### 
 
-## Installation
+
+
 
 ### 1. Install Package
 
+
+#### Installation from source
 **Using pip:**
 ```bash
 cd soliplex-ingester
@@ -48,6 +51,16 @@ pip install -e .
 ```bash
 cd soliplex-ingester
 uv pip install -e .
+```
+
+#### Running your own Install
+You can integrate soliplex ingester into another python project by installing it like any other package.  This will allow you to use custom methods for any part of the workflow if desired.
+
+```
+uv init --lib <my project name>
+uv add https://github.com/soliplex/ingester.git
+uv run si-cli bootstrap
+
 ```
 
 This installs the package and makes the `si-cli` command available.
@@ -63,8 +76,12 @@ You should see the CLI help menu.
 ## Configuration
 
 ### 3. Set Environment Variables
+Automatically configure:
+```
+uv run init-env
+```
 
-Create a `.env` file in the project root:
+Manually create a `.env` file in the project root:
 
 ```bash
 # Minimum required configuration
@@ -85,6 +102,10 @@ export $(cat .env | xargs)
 Or on Windows:
 ```powershell
 Get-Content .env | ForEach-Object { $var = $_.Split('='); [Environment]::SetEnvironmentVariable($var[0], $var[1]) }
+```
+Alternatively, si-cli can be run via uv to initialize the environment file
+```
+uv run --env-file=.env si-cli
 ```
 
 ### 4. Validate Configuration

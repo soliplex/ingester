@@ -74,7 +74,7 @@ ENV/
 env.bak/
 venv.bak/
 
-
+#database files
 /*.db
 /db
 /xdb
@@ -82,10 +82,11 @@ venv.bak/
 /haiku.db
 /file-store
 /.claude
+/docker/seaweedfs/data
 
 # UI build artifacts
-src/soliplex/ingester/server/static/*
-!src/soliplex/ingester/server/static/.gitkeep
+#src/soliplex/ingester/server/static/*
+#!src/soliplex/ingester/server/static/.gitkeep
 
 # UI development files
 ui/node_modules/
@@ -93,6 +94,5 @@ ui/.svelte-kit/
 ui/build/
 ui/.env
 ui/.env.*
-/docker/seaweedfs/data
+
 /ui/.claude
-/ui/CLAUDE.md

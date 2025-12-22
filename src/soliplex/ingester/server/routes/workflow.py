@@ -251,9 +251,17 @@ async def get_workflow_runs(batch_id: int):
 )
 async def get_workflow(workflow_id: int):
     try:
-        return await wf_ops.get_workflow_run(workflow_id, get_steps=True)
+        result = await wf_ops.get_workflow_run(workflow_id, get_steps=True)
+        # get_workflow_run returns a tuple (run, steps) when get_steps=True
+        run, steps = result
+        # Convert to dict and add steps
+        run_dict = run.model_dump()
+        run_dict["steps"] = [step.model_dump() for step in steps]
+
     except Exception as e:
         return {"error": str(e)}
+    else:
+        return run_dict
 
 
 @wf_router.post(

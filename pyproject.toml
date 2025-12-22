@@ -113,6 +113,9 @@ parametrize-names-type = "csv"
 where = ["src"]
 include = ["soliplex.ingester*"]
 
+[tool.setuptools.package-data]
+"soliplex.ingester.server" = ["static/**/*"]
+
 [tool.uv.sources]
 
 pdf-splitter = { git = "https://github.com/runyaga/pdf-splitter.git" ,branch="main" }

@@ -2,6 +2,7 @@ import datetime
 import hashlib
 from contextlib import asynccontextmanager
 from enum import Enum
+from typing import TypeVar
 
 from async_lru import alru_cache
 from pydantic import BaseModel
@@ -22,9 +23,7 @@ from soliplex.ingester.lib.config import get_settings
 async def get_engine():  # pragma: no cover
     settings = get_settings()
     if "sqlite" in settings.doc_db_url:
-        engine = create_async_engine(
-            settings.doc_db_url, connect_args={"check_same_thread": False}
-        )
+        engine = create_async_engine(settings.doc_db_url, connect_args={"check_same_thread": False})
     else:
         engine = create_async_engine(settings.doc_db_url)
     # SQLModel.metadata.create_all(engine)
@@ -71,9 +70,7 @@ class DocumentBatch(SQLModel, table=True):
     source: str = Field(default=None)
     start_date: datetime.datetime = Field(default=None)
     completed_date: datetime.datetime = Field(nullable=True)
-    batch_params: dict[str, str] = Field(
-        default_factory=dict, sa_column=Column(JSON)
-    )
+    batch_params: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
 
     @computed_field
     @property
@@ -102,18 +99,14 @@ class DocumentURI(SQLModel, table=True):
     source: str = Field(default=None)
     version: int = Field(default=1)
     batch_id: int = Field(nullable=True, foreign_key="documentbatch.id")
-    __table_args__ = (
-        UniqueConstraint("uri", "source", name="unq_uri_source"),
-    )
+    __table_args__ = (UniqueConstraint("uri", "source", name="unq_uri_source"),)
 
 
 class Document(SQLModel, table=True):
     hash: str = Field(default=None, primary_key=True)
     mime_type: str = Field(default=None)
     file_size: int = Field(nullable=True)
-    doc_meta: dict[str, str] = Field(
-        default_factory=dict, sa_column=Column(JSON)
-    )
+    doc_meta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
     rag_id: str = Field(nullable=True)
     batch_id: int = Field(nullable=True, foreign_key="documentbatch.id")
 
@@ -195,9 +188,7 @@ class DocumentURIHistory(SQLModel, table=True):
     process_date: datetime.datetime = Field(default=None)
     action: str = Field(default=None)
     batch_id: int = Field(nullable=True, foreign_key="documentbatch.id")
-    histmeta: dict[str, str] = Field(
-        default_factory=dict, sa_column=Column(JSON)
-    )
+    histmeta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
 # ----------------- workflow related models ----------------------
@@ -220,18 +211,14 @@ class RunGroup(SQLModel, table=True):
     name: str | None = Field(default=None, nullable=True)
     workflow_definition_id: str = Field(default=None)
     param_definition_id: str = Field(default=None)
-    batch_id: int | None = Field(
-        default=None, foreign_key="documentbatch.id", nullable=True
-    )
+    batch_id: int | None = Field(default=None, foreign_key="documentbatch.id", nullable=True)
     created_date: datetime.datetime = Field(default=None, allow_mutation=False)
     start_date: datetime.datetime = Field(default=None)
     completed_date: datetime.datetime | None = Field(nullable=True)
     status: RunStatus = Field(default=RunStatus.PENDING)
     status_date: datetime.datetime = Field(nullable=True)
     status_message: str = Field(default=None, nullable=True)
-    status_meta: dict[str, str] = Field(
-        default_factory=dict, sa_column=Column(JSON)
-    )
+    status_meta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
 class LifecycleHistory(SQLModel, table=True):
@@ -250,9 +237,7 @@ class LifecycleHistory(SQLModel, table=True):
     status: RunStatus = Field(default=RunStatus.PENDING)
     status_date: datetime.datetime = Field(nullable=True)
     status_message: str = Field(default=None, nullable=True)
-    status_meta: dict[str, str] = Field(
-        default_factory=dict, sa_column=Column(JSON)
-    )
+    status_meta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
 class WorkflowRun(SQLModel, table=True):
@@ -276,12 +261,8 @@ class WorkflowRun(SQLModel, table=True):
     status: RunStatus = Field(default=RunStatus.PENDING)
     status_date: datetime.datetime = Field(nullable=True)
     status_message: str = Field(default=None, nullable=True)
-    status_meta: dict[str, str] = Field(
-        default_factory=dict, sa_column=Column(JSON)
-    )
-    run_params: dict[str, str | int | bool] = Field(
-        default_factory=dict, sa_column=Column(JSON)
-    )
+    status_meta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
+    run_params: dict[str, str | int | bool] = Field(default_factory=dict, sa_column=Column(JSON))
 
     @computed_field
     @property
@@ -323,9 +304,7 @@ class RunStep(SQLModel, table=True):
     retries: int = Field(default=1)
     status: RunStatus = Field(default=RunStatus.PENDING)
     status_message: str = Field(default=None, nullable=True)
-    status_meta: dict[str, str] = Field(
-        default_factory=dict, sa_column=Column(JSON)
-    )
+    status_meta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
     worker_id: str = Field(default=None, nullable=True)
 
     @computed_field
@@ -350,16 +329,12 @@ class StepConfig(SQLModel, table=True):
         sa_column_kwargs={"autoincrement": True},
     )
 
-    created_date: datetime.datetime | None = Field(
-        default=None, allow_mutation=False
-    )
+    created_date: datetime.datetime | None = Field(default=None, allow_mutation=False)
     step_type: WorkflowStepType = Field(default=None, allow_mutation=False)
     config_json: dict[str, str | int | bool] | None = Field(
         default=None, sa_column=Column(JSON), allow_mutation=False
     )  # config for this step
-    cuml_config_json: str | None = Field(
-        default=None, allow_mutation=False
-    )  # config for all previous steps
+    cuml_config_json: str | None = Field(default=None, allow_mutation=False)  # config for all previous steps
     # __table_args__ = (
     #     UniqueConstraint(
     #         "config_json", "step_type",
@@ -376,9 +351,7 @@ class ConfigSet(SQLModel, table=True):
     )
     yaml_id: str = Field(default=None, allow_mutation=False)
     yaml_contents: str = Field(default=None, allow_mutation=False)
-    created_date: datetime.datetime | None = Field(
-        default=None, allow_mutation=False
-    )
+    created_date: datetime.datetime | None = Field(default=None, allow_mutation=False)
 
 
 class ConfigSetItem(SQLModel, table=True):
@@ -425,3 +398,24 @@ class WorkflowParams(BaseModel):
     name: str | None = None
     meta: dict[str, str] | None = None
     config: dict[WorkflowStepType, dict[str, str | int | float | bool]]
+
+
+class WorkflowRunWithSteps(BaseModel):
+    """Response model for workflow run with associated steps"""
+
+    workflow_run: WorkflowRun
+    steps: list[RunStep] | None = None
+
+
+# Type variable for generic pagination
+T = TypeVar("T")
+
+
+class PaginatedResponse[T](BaseModel):
+    """Generic paginated response model"""
+
+    items: list[T]
+    total: int
+    page: int
+    rows_per_page: int
+    total_pages: int

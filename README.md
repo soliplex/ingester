@@ -1,12 +1,16 @@
 # Soliplex Ingester Documentation
 
-Welcome to the Soliplex Ingester documentation! This directory contains comprehensive guides for using, configuring, and extending the system.
+Soliplex Ingester is a system to manage loading documents into the [Soliplex RAG system](https://github.com/soliplex/soliplex) using confiurable workflows. It is designed to provide a high level of durability and observability at the document level so no information gets lost due to workflow errors.
+
+The workflow sytem can be configured to use your preferred parameters for document conversion, chunking,embedding and storage. The artifacts from each step are stored for re-use in subsequent pipelines with a smart matching system to maximize re-use of artifacts from previous workflows when available.
+
+The ingester service provides web endpoints for submitting documents and tracking their progress. If you need help submitting documents, a set of agents is available to load data from common sources at [Soliplex Ingester Agents](https://github.com/soliplex/ingester-agents).
 
 ## Documentation Index
 
 ### Getting Started
 
-- **[Getting Started Guide](GETTING_STARTED.md)** - Quick start tutorial for new users
+- **[Getting Started Guide](docs/GETTING_STARTED.md)** - Quick start tutorial for new users
   - Installation and setup
   - First batch processing
   - Basic operations
@@ -14,19 +18,19 @@ Welcome to the Soliplex Ingester documentation! This directory contains comprehe
 
 ### Core Documentation
 
-- **[Architecture Overview](ARCHITECTURE.md)** - System design and components
+- **[Architecture Overview](docs/ARCHITECTURE.md)** - System design and components
   - Component overview
   - Data flow diagrams
   - Technology stack
   - Scalability considerations
 
-- **[API Reference](API.md)** - Complete REST API documentation
+- **[API Reference](docs/API.md)** - Complete REST API documentation
   - All endpoints with examples
   - Request/response formats
   - Data models
   - Error handling
 
-- **[Workflow System](WORKFLOWS.md)** - Workflow concepts and configuration
+- **[Workflow System](docs/WORKFLOWS.md)** - Workflow concepts and configuration
   - Workflow step types
   - Configuration files
   - Execution model
@@ -34,21 +38,21 @@ Welcome to the Soliplex Ingester documentation! This directory contains comprehe
   - Retry logic
   - Monitoring and troubleshooting
 
-- **[Database Schema](DATABASE.md)** - Data models and relationships
+- **[Database Schema](docs/DATABASE.md)** - Data models and relationships
   - All database tables
   - Field descriptions
   - Relationships and constraints
   - Query examples
   - Migration guide
 
-- **[Configuration Guide](CONFIGURATION.md)** - Environment variables and settings
+- **[Configuration Guide](docs/CONFIGURATION.md)** - Environment variables and settings
   - All configuration options
   - Environment-specific configs
   - Performance tuning
   - Secrets management
   - Troubleshooting
 
-- **[CLI Reference](CLI.md)** - Command-line interface guide
+- **[CLI Reference](docs/CLI.md)** - Command-line interface guide
   - All CLI commands
   - Usage examples
   - Deployment patterns
@@ -57,21 +61,21 @@ Welcome to the Soliplex Ingester documentation! This directory contains comprehe
 ## Quick Links
 
 ### For New Users
-1. Start with [Getting Started](GETTING_STARTED.md)
-2. Review [Architecture](ARCHITECTURE.md) to understand the system
-3. Explore [API Reference](API.md) for integration
+1. Start with [Getting Started](docs/GETTING_STARTED.md)
+2. Review [Architecture](docs/ARCHITECTURE.md) to understand the system
+3. Explore [API Reference](docs/API.md) for integration
 
 ### For Developers
-1. Read [Architecture](ARCHITECTURE.md) for system design
-2. Study [Workflows](WORKFLOWS.md) to understand processing
-3. Check [Database](DATABASE.md) for data models
-4. Review [Configuration](CONFIGURATION.md) for environment setup
+1. Read [Architecture](docs/ARCHITECTURE.md) for system design
+2. Study [Workflows](docs/WORKFLOWS.md) to understand processing
+3. Check [Database](docs/DATABASE.md) for data models
+4. Review [Configuration](docs/CONFIGURATION.md) for environment setup
 
 ### For Operations
-1. Review [Configuration](CONFIGURATION.md) for deployment settings
-2. Use [CLI Reference](CLI.md) for management commands
-3. Monitor using [API Reference](API.md) stats endpoints
-4. Troubleshoot with [Workflows](WORKFLOWS.md) debugging section
+1. Review [Configuration](docs/CONFIGURATION.md) for deployment settings
+2. Use [CLI Reference](docs/CLI.md) for management commands
+3. Monitor using [API Reference](docs/API.md) stats endpoints
+4. Troubleshoot with [Workflows](docs/WORKFLOWS.md) debugging section
 
 ## Document Summaries
 
@@ -184,20 +188,16 @@ Command-line tool reference:
 
 ---
 
-## Additional Resources
 
-### PlantUML Diagrams
 
-- **models.plantuml** - Database entity relationship diagram
-- **process.plantuml** - Workflow processing sequence diagram
-
-View with PlantUML tools or online viewers.
 
 ### Configuration Examples
 
 Check `config/` directory for:
 - `workflows/*.yaml` - Example workflow definitions
 - `params/*.yaml` - Example parameter sets
+
+Check `docker/` directory for how to use docker compose to provision support services.
 
 ## Documentation Maintenance
 
@@ -230,7 +230,7 @@ Found an error or unclear section? Please:
 
 - **Version:** 0.1.0
 - **Python:** 3.12+
-- **Last Updated:** 2025-01-16
+
 
 ## License
 

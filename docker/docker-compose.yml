@@ -1,21 +1,27 @@
 services:
-  seaweedfs:
-    image: ghcr.io/chrislusf/seaweedfs
-    command: server -s3 -s3.config=/config/config.json
-      - "8333:8333"
-      - "9333:9333"
+  soliplex_ingester:
+    image: soliplex_ingester:latest
+    environment:
+      DOC_DB_URL: postgresql+psycopg://soliplex_attrib:soliplex_attrib@postgres:5432/soliplex_attrib
+      FILE_STORE_TARGET: fs
+      FILE_STORE_DIR: /var/soliplex/file_store
+      LANCEDB_DIR: /var/soliplex/lancedb
+      WORKER_TASK_COUNT: 10
+      DOCLING_SERVER_URL: http://haproxy:5004/v1'
+      DOCLING_HTTP_TIMEOUT: 1200
+      DOCLING_CONCURRENCY: 4
+
+    ports:
+      - "8002:8000"
     volumes:
-      - seaweedfs_data:/data
-      - ./seaweedfs/config:/config
+      - ./file_store:/var/soliplex/file_store
+      - ./lancedb:/var/soliplex/lancedb
     networks:
       - soliplex_net
-    deploy:
-      resources:
-        limits:
-          memory: 1024M
+
 
   postgres:
-    image: pgvector/pgvector:pg18-trixie
+    image: postgres:18-trixie
 
     environment:
       POSTGRES_USER: postgres
@@ -32,29 +38,24 @@ services:
       resources:
         limits:
           memory: "2048M"
-
-
-  seaweedfs-init:
-    image: ghcr.io/chrislusf/seaweedfs
-
-    entrypoint: ["/bin/sh"]
+haproxy:
+    image: docker.io/library/haproxy:3.3-alpine
+    ports:
+      - 5004:5004
     volumes:
-      - ./seaweedfs/config/init.sh:/init.sh
-    command: ["/init.sh"]
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
     networks:
       - soliplex_net
-
-
-
   docling:
     image: ghcr.io/docling-project/docling-serve-cu128
     ports:
-      - "5001:5001"
+      - "5000:5001"
     environment:
        DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
        DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
        DOCLING_NUM_THREADS: 16
        UVICORN_WORKERS: 1
+       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
        DOCLING_SERVE_ENABLE_UI: 1
        DOCLING_SERVE_MAX_SYNC_WAIT: 9999
        NVIDIA_VISIBLE_DEVICES: "all"
@@ -73,6 +74,65 @@ services:
               capabilities: [gpu]
     networks:
       - soliplex_net
+ docling_2:
+    image: ghcr.io/docling-project/docling-serve-cu128
+    ports:
+      - "5001:5001"
+    environment:
+       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
+       DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
+       DOCLING_NUM_THREADS: 8
+       UVICORN_WORKERS: 1
+       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+       DOCLING_SERVE_ENABLE_UI: 1
+       DOCLING_SERVE_MAX_SYNC_WAIT: 9999
+       NVIDIA_VISIBLE_DEVICES: "all"
+
+    restart: "unless-stopped"
+    runtime: "nvidia"
+    volumes:
+      - docling_artifacts:/artifacts
+    deploy:
+      resources:
+        limits:
+          memory: 32000M
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['3']
+              capabilities: [gpu]
+    networks:
+      - soliplex_net
+
+
+  docling_3:
+    image: ghcr.io/docling-project/docling-serve-cu128
+    environment:
+       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
+       DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
+       DOCLING_NUM_THREADS: 8
+       UVICORN_WORKERS: 1
+       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+       DOCLING_SERVE_ENABLE_UI: 1
+       DOCLING_SERVE_MAX_SYNC_WAIT: 9999
+       NVIDIA_VISIBLE_DEVICES: "all"
+    restart: "unless-stopped"
+    runtime: "nvidia"
+    volumes:
+      - docling_artifacts:/artifacts
+    deploy:
+      resources:
+        limits:
+          memory: 32000M
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['3']
+              capabilities: [gpu]
+    networks:
+      - soliplex_net
+
+
 volumes:
   postgres_data:
   seaweedfs_data:
@@ -82,3 +142,4 @@ volumes:
 networks:
       soliplex_net:
         driver: bridge
+

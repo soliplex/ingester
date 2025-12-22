@@ -36,9 +36,7 @@ async def read_input_url(input_url: str):
     elif input_url.startswith("s3://"):
         return await read_s3_url(input_url)
     else:
-        raise ValueError(
-            f"Unknown uri {input_url}"
-        )
+        raise ValueError(f"Unknown uri {input_url}")
 
 
 async def read_file_url(input_url: str):
@@ -80,9 +78,7 @@ class DBStorageOperator:
             rs = await session.exec(
                 select(models.DocumentBytes)
                 .where(models.DocumentBytes.hash == path)
-                .where(
-                    models.DocumentBytes.artifact_type == self.artifact_type
-                )
+                .where(models.DocumentBytes.artifact_type == self.artifact_type)
                 .where(models.DocumentBytes.storage_root == self.storage_root)
             )
             res = rs.first()
@@ -97,9 +93,7 @@ class DBStorageOperator:
                 select(func.count())
                 .select_from(models.DocumentBytes)
                 .where(models.DocumentBytes.hash == path)
-                .where(
-                    models.DocumentBytes.artifact_type == self.artifact_type
-                )
+                .where(models.DocumentBytes.artifact_type == self.artifact_type)
                 .where(models.DocumentBytes.storage_root == self.storage_root)
             )
             rs = await session.exec(statement)
@@ -124,9 +118,7 @@ class DBStorageOperator:
         async with models.get_session() as session:
             rs = await session.exec(
                 select(models.DocumentBytes)
-                .where(
-                    models.DocumentBytes.artifact_type == self.artifact_type
-                )
+                .where(models.DocumentBytes.artifact_type == self.artifact_type)
                 .where(models.DocumentBytes.storage_root == self.storage_root)
             )
             res = rs.all()
@@ -140,9 +132,7 @@ class DBStorageOperator:
             rs = await session.exec(
                 select(models.DocumentBytes)
                 .where(models.DocumentBytes.hash == path)
-                .where(
-                    models.DocumentBytes.artifact_type == self.artifact_type
-                )
+                .where(models.DocumentBytes.artifact_type == self.artifact_type)
                 .where(models.DocumentBytes.storage_root == self.storage_root)
             )
             res = rs.first()
@@ -190,9 +180,7 @@ class FileStorageOperator:
         await aos.unlink(norm_path)
 
     async def list(self, path: str) -> list[str]:
-        files = await recursive_listdir(
-            self._get_normalized_path(self.store_path)
-        )
+        files = await recursive_listdir(self._get_normalized_path(self.store_path))
         return [f.name for f in files]
 
     def get_uri(self, path: str) -> str:
@@ -205,18 +193,11 @@ def get_storage_operator(
     step_config: models.StepConfig | None = None,
 ) -> opendal.AsyncOperator:
     if step_config is not None:
-        expected_artifact_type = models.ARTIFACTS_FROM_STEPS[
-            step_config.step_type
-        ]
+        expected_artifact_type = models.ARTIFACTS_FROM_STEPS[step_config.step_type]
         if artifact_type not in expected_artifact_type:
-            raise ValueError(
-                f"Artifact type {artifact_type} is not expected "
-                f"for step type {step_config.step_type}"
-            )
+            raise ValueError(f"Artifact type {artifact_type} is not expected for step type {step_config.step_type}")
     if step_config is None and artifact_type != models.ArtifactType.DOC:
-        raise ValueError(
-            "step_config is required for non-document artifacts"
-        )
+        raise ValueError("step_config is required for non-document artifacts")
     settings = get_settings()
     target = settings.file_store_target
     op = None
@@ -237,19 +218,11 @@ def get_storage_operator(
             root=root,
         )
     elif target == "fs":
-        fs_root = (
-            settings.file_store_dir
-            + "/"
-            + getattr(settings, f"{st}_store_dir")
-            + "/"
-            + root
-        )
+        fs_root = settings.file_store_dir + "/" + getattr(settings, f"{st}_store_dir") + "/" + root
         op = FileStorageOperator(fs_root)
     elif target == "db":
         op = DBStorageOperator(st, root)
 
     else:
-        raise ValueError(
-            f"Unknown target {target}"
-        )
+        raise ValueError(f"Unknown target {target}")
     return op

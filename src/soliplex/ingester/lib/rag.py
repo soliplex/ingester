@@ -20,30 +20,22 @@ logger = logging.getLogger(__name__)
 _rag_lock = asyncio.Lock()
 
 
-def build_docling_config(
-    start_config: AppConfig, config_dict: dict[str, str | int | bool]
-) -> AppConfig:
+def build_docling_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
     config = copy.deepcopy(start_config)
     env = get_settings()
     # may cause issues if they go to v2
-    config.providers.docling_serve.base_url = env.docling_server_url.replace(
-        "/v1", ""
-    )
+    config.providers.docling_serve.base_url = env.docling_server_url.replace("/v1", "")
     config.providers.docling_serve.timeout = env.docling_http_timeout
     return config
 
 
-def build_embed_config(
-    start_config: AppConfig, config_dict: dict[str, str | int | bool]
-) -> AppConfig:
+def build_embed_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
     config = copy.deepcopy(start_config)
 
     required_keys = ["model", "vector_dim"]
     for key in required_keys:
         if key not in config_dict:
-            raise ValueError(
-                f"Missing required key {key}"
-            )
+            raise ValueError(f"Missing required key {key}")
     # for k, v in config_dict.items():
     #    setattr(config.embeddings, k, v)
     config.embeddings.model.name = config_dict["model"]
@@ -53,9 +45,7 @@ def build_embed_config(
     return config
 
 
-def build_chunk_config(
-    start_config: AppConfig, config_dict: dict[str, str | int | bool]
-) -> AppConfig:
+def build_chunk_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
     config = copy.deepcopy(start_config)
     config = build_docling_config(config, config_dict)
     # some
@@ -64,35 +54,25 @@ def build_chunk_config(
     required_keys = ["chunk_size", "chunker"]
     for key in required_keys:
         if key not in config_dict:
-            raise ValueError(
-                f"Missing required key {key}"
-            )
+            raise ValueError(f"Missing required key {key}")
     for k, v in config_dict.items():
         setattr(config.processing, k, v)
     return config
 
 
-def build_storage_config(
-    start_config: AppConfig, config_dict: dict[str, str | int | bool]
-) -> AppConfig:
+def build_storage_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
     env = get_settings()
     config = copy.deepcopy(start_config)
     required_keys = ["data_dir"]
     for key in required_keys:
         if key not in config_dict:
-            raise ValueError(
-                f"Missing required key {key}"
-            )
+            raise ValueError(f"Missing required key {key}")
     for k, v in config_dict.items():
         setattr(config.storage, k, v)
     storage_dir = config_dict["data_dir"]
     logger.info(f"storage_dir: {storage_dir}")
-    config.storage.data_dir = pathlib.Path(env.lancedb_dir) / pathlib.Path(
-        storage_dir
-    )
-    config.storage.auto_vacuum = (
-        False  # hardcode to be off as it causes too many issues
-    )
+    config.storage.data_dir = pathlib.Path(env.lancedb_dir) / pathlib.Path(storage_dir)
+    config.storage.auto_vacuum = False  # hardcode to be off as it causes too many issues
     return config
 
 
@@ -131,14 +111,9 @@ async def embed(
     config = build_embed_config(HRConfig, config_dict)
     ret = []
     # don't use gather to avoid overloading ollama
-    for batch in itertools.batched(
-        chunks, n=env.embed_batch_size, strict=False
-    ):
+    for batch in itertools.batched(chunks, n=env.embed_batch_size, strict=False):
         batch_chunks = await embed_chunks(batch, config)
-        logger.info(
-            f"{doc_hash}embedded {len(batch_chunks)} chunks "
-            f"of {len(chunks)} total"
-        )
+        logger.info(f"{doc_hash}embedded {len(batch_chunks)} chunks of {len(chunks)} total")
         ret.extend(batch_chunks)
     return ret
 
@@ -159,9 +134,7 @@ async def save_to_rag(
     required_keys = ["data_dir"]
     for key in required_keys:
         if key not in config_dict:
-            raise ValueError(
-                f"Missing required key {key}"
-            )
+            raise ValueError(f"Missing required key {key}")
     # TODO: step config may need to be more predictable
     docling_document = DoclingDocument.model_validate_json(docling_json)
     config = build_storage_config(config, config_dict)

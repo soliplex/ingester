@@ -4,6 +4,7 @@ import logging
 
 import yaml
 from async_lru import alru_cache
+from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel import text
 from sqlmodel import update
@@ -19,6 +20,7 @@ from soliplex.ingester.lib.models import RunStatus
 from soliplex.ingester.lib.models import RunStep
 from soliplex.ingester.lib.models import StepConfig
 from soliplex.ingester.lib.models import WorkflowRun
+from soliplex.ingester.lib.models import WorkflowRunWithSteps
 from soliplex.ingester.lib.models import WorkflowStepType
 from soliplex.ingester.lib.models import get_session
 from soliplex.ingester.lib.operations import get_batch
@@ -113,11 +115,7 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
                 cuml_cfg = cuml_cfg.copy()
                 cuml_cfg.update({st.value: step_config})
                 cuml_str = json.dumps(cuml_cfg, indent=4)
-                existq = (
-                    select(StepConfig)
-                    .where(StepConfig.step_type == st)
-                    .where(StepConfig.cuml_config_json == cuml_str)
-                )
+                existq = select(StepConfig).where(StepConfig.step_type == st).where(StepConfig.cuml_config_json == cuml_str)
                 rs = await session.exec(existq)
                 exist = rs.first()
                 if exist:
@@ -134,12 +132,8 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
                     id_map[st] = step_config.id
                 step_id = id_map[st]
                 set_id = configset.id
-                logger.info(
-                    f"created step config {step_id} config_set={set_id}"
-                )
-                setitem = ConfigSetItem(
-                    config_set_id=set_id, config_id=step_id
-                )
+                logger.info(f"created step config {step_id} config_set={set_id}")
+                setitem = ConfigSetItem(config_set_id=set_id, config_id=step_id)
                 session.add(setitem)
                 await session.flush()
             await session.commit()
@@ -166,9 +160,7 @@ async def get_run_group(run_group_id: int) -> RunGroup:
         if res:
             session.expunge(res)
             return res
-        raise NotFoundError(
-            f"run group {run_group_id} not found"
-        )
+        raise NotFoundError(f"run group {run_group_id} not found")
 
 
 async def get_run_group_stats(run_group_id: int) -> dict[RunStatus:int]:
@@ -198,9 +190,7 @@ async def create_run_group(
 ) -> RunGroup:
     batch = await get_batch(batch_id)
     if batch is None:
-        raise NotFoundError(
-            f"Batch {batch_id} not found"
-        )
+        raise NotFoundError(f"Batch {batch_id} not found")
 
     # pull definitions from registry so defaults can be used and check if ids are invalid
     workflow_def = await get_workflow_definition(workflow_definition_id)
@@ -332,9 +322,7 @@ async def create_workflow_run(
     param_id = run_group.param_definition_id
     batch = await get_batch(batch_id)
     if batch is None:
-        raise NotFoundError(
-            f"Batch {batch_id} not found"
-        )
+        raise NotFoundError(f"Batch {batch_id} not found")
     workflow_def = await get_workflow_definition(workflow_definition_id)
     parameter_ids = await get_step_config_ids(param_id)
     created = datetime.datetime.now()
@@ -384,20 +372,67 @@ async def create_workflow_run(
         return workflow_run, new_steps
 
 
-async def get_workflows(batch_id: int | None) -> list[WorkflowRun]:
+async def get_workflows(
+    batch_id: int | None,
+    include_steps: bool = False,
+    page: int | None = None,
+    rows_per_page: int | None = None,
+) -> tuple[list[WorkflowRun] | list[WorkflowRunWithSteps], int]:
+    """
+    Get workflow runs, optionally with their associated steps.
+
+    Args:
+        batch_id: Optional batch ID filter
+        include_steps: If True, include associated RunSteps for each workflow run
+        page: Page number (1-indexed). If None, returns all rows.
+        rows_per_page: Number of rows per page. If None, returns all rows.
+
+    Returns:
+        Tuple of (list of workflow runs, total count)
+    """
     async with get_session() as session:
+        # Build base query
         q = select(WorkflowRun)
         if batch_id is not None:
             q = q.where(WorkflowRun.batch_id == batch_id)
+
+        # Add consistent ordering (newest first)
+        q = q.order_by(WorkflowRun.created_date.desc())
+
+        # Get total count before pagination
+        count_q = select(func.count()).select_from(WorkflowRun)
+        if batch_id is not None:
+            count_q = count_q.where(WorkflowRun.batch_id == batch_id)
+        count_rs = await session.exec(count_q)
+        total = count_rs.one()
+
+        # Apply pagination if parameters provided
+        if page is not None and rows_per_page is not None:
+            offset = (page - 1) * rows_per_page
+            q = q.offset(offset).limit(rows_per_page)
+
+        # Execute query
         rs = await session.exec(q)
         res = rs.all()
         [session.expunge(x) for x in res]
-        return res
+
+        if not include_steps:
+            return res, total
+
+        # Load steps for all workflow runs efficiently
+        workflow_run_ids = [run.id for run in res]
+        steps_by_run_id = await get_steps_for_workflow_runs(workflow_run_ids)
+
+        # Combine workflow runs with their steps
+        result = []
+        for run in res:
+            steps = steps_by_run_id.get(run.id, [])
+            result.append(WorkflowRunWithSteps(workflow_run=run, steps=steps))
+
+        return result, total
 
 
-async def get_workflows_for_status(
-    status: RunStatus, batch_id: int | None
-) -> list[WorkflowRun]:
+async def get_workflows_for_status(status: RunStatus, batch_id: int | None) -> list[WorkflowRun]:
     async with get_session() as session:
         q = select(WorkflowRun).where(WorkflowRun.status == status)
         if batch_id is not None:
@@ -425,9 +460,7 @@ async def get_workflow_run(id: int, get_steps=False) -> WorkflowRun:
                 return run, steps
 
             return run
-        raise NotFoundError(
-            f"workflow run {id} not found"
-        )
+        raise NotFoundError(f"workflow run {id} not found")
 
 
 async def get_workflow_runs(batch_id: int) -> WorkflowRun:
@@ -438,9 +471,7 @@ async def get_workflow_runs(batch_id: int) -> WorkflowRun:
         if res:
             session.expunge(res)
             return res
-        raise NotFoundError(
-            f"workflow run {batch_id} not found"
-        )
+        raise NotFoundError(f"workflow run {batch_id} not found")
 
 
 async def get_run_step(run_step_id: int) -> RunStep:
@@ -451,9 +482,7 @@ async def get_run_step(run_step_id: int) -> RunStep:
         if res:
             session.expunge(res)
             return res
-        raise NotFoundError(
-            f"run step {run_step_id} not found"
-        )
+        raise NotFoundError(f"run step {run_step_id} not found")
 
 
 async def get_step_config_by_id(step_config_id: int) -> StepConfig:
@@ -464,9 +493,7 @@ async def get_step_config_by_id(step_config_id: int) -> StepConfig:
         if res:
             session.expunge(res)
             return res
-        raise NotFoundError(
-            f"step config {step_config_id} not found"
-        )
+        raise NotFoundError(f"step config {step_config_id} not found")
 
 
 async def find_operator_for_workflow_run(
@@ -474,15 +501,11 @@ async def find_operator_for_workflow_run(
     step_type: WorkflowStepType,
     artifact_type: ArtifactType,
 ) -> StepConfig:
-    step_config = await get_step_config_for_workflow_run(
-        workflow_run_id, step_type
-    )
+    step_config = await get_step_config_for_workflow_run(workflow_run_id, step_type)
     return get_storage_operator(artifact_type, step_config)
 
 
-async def get_step_config_for_workflow_run(
-    workflow_run_id: int, step_type: WorkflowStepType
-) -> StepConfig:
+async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: WorkflowStepType) -> StepConfig:
     async with get_session() as session:
         q = text(
             f"""select s.id from
@@ -502,14 +525,10 @@ async def get_step_config_for_workflow_run(
             session.expunge(res)
 
             return res
-        raise NotFoundError(
-            f"step config {step_type} not found"
-        )
+        raise NotFoundError(f"step config {step_type} not found")
 
 
-async def update_run_status(
-    workflow_run_id: int, is_last_step: bool, status: RunStatus, session
-):
+async def update_run_status(workflow_run_id: int, is_last_step: bool, status: RunStatus, session):
     update_status = None
     if is_last_step and status == RunStatus.COMPLETED:
         update_status = RunStatus.COMPLETED
@@ -521,15 +540,9 @@ async def update_run_status(
         RunStatus.ERROR,
     ):
         update_status = RunStatus.RUNNING
-    logger.info(
-        f"update run status {workflow_run_id} {update_status} {status}"
-    )
+    logger.info(f"update run status {workflow_run_id} {update_status} {status}")
     if update_status is not None:
-        q = (
-            select(WorkflowRun)
-            .where(WorkflowRun.id == workflow_run_id)
-            .with_for_update()
-        )
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run_id).with_for_update()
         results = await session.exec(q)
         wf = results.first()
         wf.status_date = datetime.datetime.now()
@@ -556,6 +569,30 @@ async def get_steps_for_batch(batch_id: int) -> list[RunStep]:
             session.expunge_all()
             return res
         return []
+
+
+async def get_steps_for_workflow_runs(workflow_run_ids: list[int]) -> dict[int, list[RunStep]]:
+    """
+    Load steps for multiple workflow runs efficiently.
+    Returns dict mapping workflow_run_id -> list[RunStep]
+    """
+    if not workflow_run_ids:
+        return {}
+
+    async with get_session() as session:
+        q = select(RunStep).where(RunStep.workflow_run_id.in_(workflow_run_ids))
+        rs = await session.exec(q)
+        all_steps = rs.all()
+        [session.expunge(x) for x in all_steps]
+
+        # Group steps by workflow_run_id
+        steps_by_run_id: dict[int, list[RunStep]] = {}
+        for step in all_steps:
+            if step.workflow_run_id not in steps_by_run_id:
+                steps_by_run_id[step.workflow_run_id] = []
+            steps_by_run_id[step.workflow_run_id].append(step)
+
+        return steps_by_run_id
 
 
 async def get_run_steps(status: RunStatus) -> list[RunStep]:

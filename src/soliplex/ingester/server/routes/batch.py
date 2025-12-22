@@ -13,16 +13,12 @@ from soliplex.ingester.lib.wf import operations as wf_ops
 batch_router = APIRouter(prefix="/api/v1/batch", tags=["batch"])
 
 
-@batch_router.get(
-    "/", status_code=status.HTTP_200_OK, summary="Get all batches"
-)
+@batch_router.get("/", status_code=status.HTTP_200_OK, summary="Get all batches")
 async def get_batches():
     return await operations.list_batches()
 
 
-@batch_router.post(
-    "/", status_code=status.HTTP_201_CREATED, summary="Create a new batch"
-)
+@batch_router.post("/", status_code=status.HTTP_201_CREATED, summary="Create a new batch")
 async def create_batch(
     source: str = Form(...),
     name: str = Form(...),

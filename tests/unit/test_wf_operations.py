@@ -259,12 +259,57 @@ async def test_get_workflows(monkeypatch, mock_engine):  # noqa F811
     await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get workflows for batch
-    workflows = await wf_ops.get_workflows(batch_id)
+    workflows, total = await wf_ops.get_workflows(batch_id)
     assert len(workflows) >= 1
+    assert total >= 1
 
     # Get all workflows (no filter)
-    all_workflows = await wf_ops.get_workflows(None)
+    all_workflows, all_total = await wf_ops.get_workflows(None)
     assert len(all_workflows) >= 1
+    assert all_total >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_workflows_with_steps(monkeypatch, mock_engine):  # noqa F811
+    """Test get_workflows function with include_steps=True"""
+    do_monkeypatch(monkeypatch, mock_engine)
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/workflows_with_steps_test.pdf"
+    test_bytes = b"test bytes"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # Get workflows with steps
+    workflows_with_steps, total = await wf_ops.get_workflows(batch_id, include_steps=True)
+    assert len(workflows_with_steps) >= 1
+    assert total >= 1
+
+    # Verify the result is a list of WorkflowRunWithSteps
+    from soliplex.ingester.lib.models import WorkflowRun
+    from soliplex.ingester.lib.models import WorkflowRunWithSteps
+
+    # Find our specific workflow run in the results
+    our_workflow = None
+    for wf in workflows_with_steps:
+        assert isinstance(wf, WorkflowRunWithSteps)
+        if wf.workflow_run.id == workflow_run.id:
+            our_workflow = wf
+            break
+
+    assert our_workflow is not None, f"Could not find workflow_run.id={workflow_run.id} in results"
+    assert our_workflow.steps is not None
+    assert len(our_workflow.steps) == len(steps)
+
+    # Verify without include_steps returns plain WorkflowRun
+    workflows_without_steps, total_without = await wf_ops.get_workflows(batch_id, include_steps=False)
+    assert isinstance(workflows_without_steps[0], WorkflowRun)
+    assert total_without >= 1
 
 
 @pytest.mark.asyncio

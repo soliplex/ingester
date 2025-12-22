@@ -13,9 +13,7 @@ class S3Settings(BaseSettings):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_nested_delimiter="__", env_nested_max_split=1
-    )
+    model_config = SettingsConfigDict(env_nested_delimiter="__", env_nested_max_split=1)
     doc_db_url: str
     docling_server_url: str = "http://localhost:5001/v1"
     docling_http_timeout: int = 600

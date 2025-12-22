@@ -6,8 +6,11 @@ from fastapi import Response
 from fastapi import status
 
 from soliplex.ingester.lib import workflow as workflow
+from soliplex.ingester.lib.models import PaginatedResponse
 from soliplex.ingester.lib.models import RunGroup
 from soliplex.ingester.lib.models import WorkflowParams
+from soliplex.ingester.lib.models import WorkflowRun
+from soliplex.ingester.lib.models import WorkflowRunWithSteps
 from soliplex.ingester.lib.models import WorkflowStepType
 from soliplex.ingester.lib.wf import operations as wf_ops
 from soliplex.ingester.lib.wf import registry as wf_registry
@@ -20,10 +23,62 @@ wf_router = APIRouter(prefix="/api/v1/workflow", tags=["workflow"])
 @wf_router.get(
     "/",
     status_code=status.HTTP_200_OK,
-    summary="get workflow runs by batch_id (optional)",
+    summary="get workflow runs with optional pagination",
 )
-async def get_workflows(batch_id: int | None = None):
-    return await wf_ops.get_workflows(batch_id)
+async def get_workflows(
+    batch_id: int | None = None,
+    include_steps: bool = False,
+    page: int | None = None,
+    rows_per_page: int | None = None,
+) -> (
+    list[WorkflowRun] | list[WorkflowRunWithSteps] | PaginatedResponse[WorkflowRun] | PaginatedResponse[WorkflowRunWithSteps]
+):
+    """
+    Get workflow runs with optional pagination.
+
+    When page/rows_per_page not provided: Returns all rows as a list
+    When page provided: Returns paginated response with metadata
+    Results sorted by created_date descending (newest first)
+    """
+    # Validate pagination parameters
+    if page is not None and page < 1:
+        raise ValueError("page must be >= 1")
+
+    # Set default rows_per_page if page is provided but rows_per_page is not
+    if page is not None and rows_per_page is None:
+        rows_per_page = 10
+
+    # Validate rows_per_page
+    if rows_per_page is not None and rows_per_page < 1:
+        raise ValueError("rows_per_page must be >= 1")
+
+    # Get data from operations layer
+    items, total = await wf_ops.get_workflows(batch_id, include_steps=include_steps, page=page, rows_per_page=rows_per_page)
+
+    # If pagination not requested, return raw list (backward compatibility)
+    if page is None and rows_per_page is None:
+        return items
+
+    # Calculate total_pages
+    total_pages = (total + rows_per_page - 1) // rows_per_page if rows_per_page > 0 else 0
+
+    # Return paginated response
+    if include_steps:
+        return PaginatedResponse[WorkflowRunWithSteps](
+            items=items,
+            total=total,
+            page=page or 1,
+            rows_per_page=rows_per_page or 10,
+            total_pages=total_pages,
+        )
+    else:
+        return PaginatedResponse[WorkflowRun](
+            items=items,
+            total=total,
+            page=page or 1,
+            rows_per_page=rows_per_page or 10,
+            total_pages=total_pages,
+        )
 
 
 @wf_router.get(
@@ -32,7 +87,7 @@ async def get_workflows(batch_id: int | None = None):
     summary="get workflow runs by status  and batch_id (optional)",
 )
 async def get_workflows_for_status(status: wf_ops.RunStatus, batch_id: int | None = None):
-    await wf_ops.get_workflows_for_status(status, batch_id)
+    return await wf_ops.get_workflows_for_status(status, batch_id)
 
 
 @wf_router.get("/definitions", summary="get workflow definitions")

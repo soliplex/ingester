@@ -73,7 +73,10 @@ def build_storage_config(start_config: AppConfig, config_dict: dict[str, str | i
     storage_dir = config_dict["data_dir"]
     logger.info(f"param storage_dir: {storage_dir}")
     if env.lancedb_dir.startswith("s3://"):
-        s3_dir = f"{env.lancedb_dir}/{storage_dir}"
+        if env.lancedb_dir.endswith('/'):
+            s3_dir = f"{env.lancedb_dir}{storage_dir}"
+        else:            
+            s3_dir = f"{env.lancedb_dir}/{storage_dir}"
         config.lancedb.uri = s3_dir
         config.lancedb.api_key = "xxx"  # these just need to be filled in, environment variables have the real value
         config.lancedb.region = "xx"

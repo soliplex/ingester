@@ -1,5 +1,7 @@
 import logging
 
+from soliplex.ingester.lib.workflow import WorkflowException
+
 logger = logging.getLogger(__name__)
 _start_span_marker = None
 _notif_slack_marker = None
@@ -24,8 +26,12 @@ async def notify_slack(channel_id: str, msg: str):
     _notif_slack_marker = channel_id
 
 
-async def validate_document(batch_id: int = None, doc_hash: str = None, source: str = None):
+async def validate_document(batch_id: int = None, doc_hash: str = None, source: str = None, fail: bool = False):
     logger.info(f"validate_document started  source={source} batch_id={batch_id} doc_hash={doc_hash}")
+    if fail:
+        raise WorkflowException("validation failed")
+
+    logger.info(f"validate_document completed  source={source} batch_id={batch_id} doc_hash={doc_hash}")
 
 
 async def parse_document(batch_id: int = None, doc_hash: str = None, source: str = None):

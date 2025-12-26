@@ -2,6 +2,7 @@ import datetime
 import hashlib
 from contextlib import asynccontextmanager
 from enum import Enum
+from typing import TypeVar
 
 from async_lru import alru_cache
 from pydantic import BaseModel
@@ -404,3 +405,17 @@ class WorkflowRunWithSteps(BaseModel):
 
     workflow_run: WorkflowRun
     steps: list[RunStep] | None = None
+
+
+# Type variable for generic pagination
+T = TypeVar("T")
+
+
+class PaginatedResponse[T](BaseModel):
+    """Generic paginated response model"""
+
+    items: list[T]
+    total: int
+    page: int
+    rows_per_page: int
+    total_pages: int

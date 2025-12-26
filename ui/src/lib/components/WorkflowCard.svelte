@@ -30,12 +30,17 @@
 				</h3>
 				<StatusBadge status={workflow.status} />
 			</div>
-			<p class="mt-1 text-sm text-gray-600">
+
+			<p class="mt-2 text-sm text-gray-600">
 				Document: {truncateText(workflow.doc_id, 40)}
+				Source : {workflow.run_params.source}
 			</p>
 			<div class="mt-2 flex flex-wrap gap-4 text-xs text-gray-500">
 				<span>
 					Definition: <span class="font-medium">{workflow.workflow_definition_id}</span>
+				</span>
+				<span>
+					Parameter Set: <span class="font-medium">{workflow.run_params.param_id}</span>
 				</span>
 				<span>Batch: <span class="font-medium">#{workflow.batch_id}</span></span>
 				{#if progress()}

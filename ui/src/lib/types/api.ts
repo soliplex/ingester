@@ -207,3 +207,17 @@ export interface ApiError {
 	error: string;
 	status_code: number;
 }
+
+// Pagination Models
+export interface PaginatedResponse<T> {
+	items: T[];
+	total: number;
+	page: number;
+	rows_per_page: number;
+	total_pages: number;
+}
+
+export interface PaginationParams {
+	page: number;
+	rows_per_page: number;
+}

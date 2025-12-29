@@ -71,8 +71,26 @@ def build_storage_config(start_config: AppConfig, config_dict: dict[str, str | i
     for k, v in config_dict.items():
         setattr(config.storage, k, v)
     storage_dir = config_dict["data_dir"]
-    logger.info(f"storage_dir: {storage_dir}")
-    config.storage.data_dir = pathlib.Path(env.lancedb_dir) / pathlib.Path(storage_dir)
+    logger.info(f"param storage_dir: {storage_dir}")
+    if env.lancedb_dir.startswith("s3://"):
+        if env.lancedb_dir.endswith('/'):
+            s3_dir = f"{env.lancedb_dir}{storage_dir}"
+        else:            
+            s3_dir = f"{env.lancedb_dir}/{storage_dir}"
+        config.lancedb.uri = s3_dir
+        config.lancedb.api_key = "xxx"  # these just need to be filled in, environment variables have the real value
+        config.lancedb.region = "xx"
+        config.storage.data_dir = pathlib.Path(s3_dir)
+        logger.info(f"hr lancedb uri: {config.lancedb.uri}")
+    elif storage_dir.startswith("s3://"):
+        config.lancedb.uri = storage_dir
+        config.lancedb.api_key = "xxx"  # these just need to be filled in, environment variables have the real value
+        config.lancedb.region = "xx"
+        config.storage.data_dir = pathlib.Path(storage_dir)
+        logger.info(f"hr lancedb uri: {config.lancedb.uri}")
+    else:
+        config.storage.data_dir = pathlib.Path(env.lancedb_dir) / pathlib.Path(storage_dir)
+        logger.info(f"hr storage data dir: {config.storage.data_dir}")
     config.storage.auto_vacuum = False  # hardcode to be off as it causes too many issues
     return config
 

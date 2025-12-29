@@ -38,27 +38,27 @@ services:
       resources:
         limits:
           memory: "2048M"
-haproxy:
-    image: docker.io/library/haproxy:3.3-alpine
-    ports:
-      - 5004:5004
-    volumes:
-      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
-    networks:
-      - soliplex_net
+  haproxy:
+      image: docker.io/library/haproxy:3.3-alpine
+      ports:
+        - 5004:5004
+      volumes:
+        - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+      networks:
+        - soliplex_net
   docling:
     image: ghcr.io/docling-project/docling-serve-cu128
     ports:
       - "5000:5001"
     environment:
-       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
-       DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
-       DOCLING_NUM_THREADS: 16
-       UVICORN_WORKERS: 1
-       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-       DOCLING_SERVE_ENABLE_UI: 1
-       DOCLING_SERVE_MAX_SYNC_WAIT: 9999
-       NVIDIA_VISIBLE_DEVICES: "all"
+        DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
+        DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
+        DOCLING_NUM_THREADS: 16
+        UVICORN_WORKERS: 1
+        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+        DOCLING_SERVE_ENABLE_UI: 1
+        DOCLING_SERVE_MAX_SYNC_WAIT: 9999
+        NVIDIA_VISIBLE_DEVICES: "all"
     restart: "unless-stopped"
     runtime: "nvidia"
     volumes:
@@ -74,19 +74,19 @@ haproxy:
               capabilities: [gpu]
     networks:
       - soliplex_net
- docling_2:
+  docling_2:
     image: ghcr.io/docling-project/docling-serve-cu128
     ports:
       - "5001:5001"
     environment:
-       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
-       DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
-       DOCLING_NUM_THREADS: 8
-       UVICORN_WORKERS: 1
-       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-       DOCLING_SERVE_ENABLE_UI: 1
-       DOCLING_SERVE_MAX_SYNC_WAIT: 9999
-       NVIDIA_VISIBLE_DEVICES: "all"
+        DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
+        DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
+        DOCLING_NUM_THREADS: 8
+        UVICORN_WORKERS: 1
+        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+        DOCLING_SERVE_ENABLE_UI: 1
+        DOCLING_SERVE_MAX_SYNC_WAIT: 9999
+        NVIDIA_VISIBLE_DEVICES: "all"
 
     restart: "unless-stopped"
     runtime: "nvidia"
@@ -108,14 +108,14 @@ haproxy:
   docling_3:
     image: ghcr.io/docling-project/docling-serve-cu128
     environment:
-       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
-       DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
-       DOCLING_NUM_THREADS: 8
-       UVICORN_WORKERS: 1
-       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-       DOCLING_SERVE_ENABLE_UI: 1
-       DOCLING_SERVE_MAX_SYNC_WAIT: 9999
-       NVIDIA_VISIBLE_DEVICES: "all"
+        DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
+        DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
+        DOCLING_NUM_THREADS: 8
+        UVICORN_WORKERS: 1
+        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+        DOCLING_SERVE_ENABLE_UI: 1
+        DOCLING_SERVE_MAX_SYNC_WAIT: 9999
+        NVIDIA_VISIBLE_DEVICES: "all"
     restart: "unless-stopped"
     runtime: "nvidia"
     volumes:
@@ -132,6 +132,34 @@ haproxy:
     networks:
       - soliplex_net
 
+  seaweedfs:
+    image: ghcr.io/chrislusf/seaweedfs
+    command: server -s3 -s3.config=/config/config.json
+    ports:
+      - 8333:8333
+      - 9333:9333
+    volumes:
+      - seaweedfs_data:/data
+      - ./seaweedfs/config:/config
+    networks:
+      - soliplex_net
+    deploy:
+      resources:
+        limits:
+          memory: 4096M
+
+  seaweedfs-init:
+    image: ghcr.io/chrislusf/seaweedfs
+
+    entrypoint: ["/bin/sh"]
+    volumes:
+      - ./seaweedfs/config/init.sh:/init.sh
+    command: ["/init.sh"]
+    networks:
+      - soliplex_net
+
+
+
 
 volumes:
   postgres_data:
@@ -142,4 +170,3 @@ volumes:
 networks:
       soliplex_net:
         driver: bridge
-

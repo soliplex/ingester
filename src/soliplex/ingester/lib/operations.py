@@ -325,11 +325,22 @@ async def get_document_uri_history(
 
 
 async def update_doc_status(source: str, uri_hashes: dict[str, str]):
+    """
+    deletes document uri records that are not in the uri_hashes provided
+
+    Args:
+        source (str): The source of the documents.
+        uri_hashes (dict[str, str]): A dictionary mapping URIs to their respective hashes.
+
+    Returns:
+        dict[str, Any]: A dictionary containing the status of the documents.
+    """
     status, to_delete = await get_doc_status(source, uri_hashes)
     logger.info(
         f" found {len(to_delete)} to delete for {source}",
         extra=log_context(action="update_doc_status", source=source),
     )
+
     async with models.get_session() as session:
         for row in to_delete:
             logger.info(

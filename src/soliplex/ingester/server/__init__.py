@@ -43,13 +43,28 @@ app.add_middleware(
 v1_router = APIRouter(prefix="/api/v1")
 
 
-@v1_router.post("/source-status")
+@v1_router.post(
+    "/source-status", summary="Check which files need processing by comparing submitted hashes to existing hashes"
+)
 async def source_status(source: str = Form(...), hashes: str = Form(...)):
     hashes = json.loads(hashes)
     if not isinstance(hashes, dict):
         msg = "hashes must be a dictionary"
         raise TypeError(msg)
     status, to_delete = await operations.get_doc_status(source, hashes)
+    return status
+
+
+@v1_router.post("/source-cleanup", summary="Delete files that are not in the submitted hashes for this source")
+async def source_cleanup(batch_id: int = Form(...), hashes: str = Form(...)):
+    hashes = json.loads(hashes)
+    if not isinstance(hashes, dict):
+        msg = "hashes must be a dictionary"
+        raise TypeError(msg)
+    batch = operations.get_batch(batch_id)
+    source = batch.source
+    status, to_delete = await operations.get_doc_status(source, hashes)
+    operations.update_doc_status(source, hashes)
     return status
 
 

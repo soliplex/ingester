@@ -2,7 +2,7 @@
 name = "soliplex-ingester"
 version = "0.1.0"
 description = "ingestion workflow manager for soliplex"
-authors = [{ name = "Enfold", email = "info@enfoldsystems.net" }]
+authors = [{ name = "Enfold Systems", email = "info@enfoldsystems.net" }]
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"

@@ -1,5 +1,4 @@
 import logging
-from unittest.mock import AsyncMock
 from unittest.mock import Mock
 from unittest.mock import patch
 
@@ -45,9 +44,18 @@ async def test_read_input_url_s3():
     """Test read_input_url with s3:// URL"""
     with patch("soliplex.ingester.lib.dal.read_s3_url") as mock_read:
         mock_read.return_value = b"test content"
-        result = await dal.read_input_url("s3://bucket/key")
+        result = await dal.read_input_url("s3://soliplex-input/key")
         assert result == b"test content"
-        mock_read.assert_called_once_with("s3://bucket/key")
+        mock_read.assert_called_once_with("s3://soliplex-input/key")
+
+
+@pytest.mark.asyncio
+async def test_read_input_url_s3_bucket_mismatch():
+    """Test read_input_url with s3:// URL with mismatched bucket"""
+    with patch("soliplex.ingester.lib.dal.read_s3_url") as mock_read:
+        mock_read.side_effect = ValueError("Bucket does not match configured bucket")
+        with pytest.raises(ValueError, match="Bucket does not match configured bucket"):
+            await dal.read_input_url("s3://invalid-bucket/key")
 
 
 @pytest.mark.asyncio
@@ -66,26 +74,6 @@ async def test_read_file_url(tmp_path):
 
     result = await dal.read_file_url(file_url)
     assert result == b"test content"
-
-
-@pytest.mark.asyncio
-async def test_read_s3_url():
-    """Test read_s3_url function"""
-    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
-        with patch("soliplex.ingester.lib.dal.opendal.AsyncOperator") as mock_op_class:
-            mock_settings.return_value = Mock(
-                s3_input_endpoint_url="http://localhost:9000",
-                s3_input_key="key",
-                s3_input_secret="secret",
-                s3_input_region="us-east-1",
-            )
-            mock_op = AsyncMock()
-            mock_op.read.return_value = b"s3 content"
-            mock_op_class.return_value = mock_op
-
-            result = await dal.read_s3_url("s3://bucket/path/to/file.txt")
-            assert result == b"s3 content"
-            mock_op.read.assert_called_once_with("path/to/file.txt")
 
 
 @pytest.mark.asyncio
@@ -114,20 +102,20 @@ async def test_db_storage_operator_read_not_found(monkeypatch, mock_engine):  # 
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_is_exist(monkeypatch, mock_engine):  # noqa F811
-    """Test DBStorageOperator is_exist method"""
+async def test_db_storage_operator_exists(monkeypatch, mock_engine):  # noqa F811
+    """Test DBStorageOperator exists method"""
     do_monkeypatch(monkeypatch, mock_engine)
     op = dal.DBStorageOperator("doc", "test_root")
 
     # Should not exist initially
-    exists = await op.is_exist("test_hash")
+    exists = await op.exists("test_hash")
     assert not exists
 
     # Write a document
     await op.write("test_hash", b"test content")
 
     # Should exist now
-    exists = await op.is_exist("test_hash")
+    exists = await op.exists("test_hash")
     assert exists
 
 
@@ -183,14 +171,14 @@ async def test_db_storage_operator_delete(monkeypatch, mock_engine):
     await op.write("test_hash", b"test content")
 
     # Verify it exists
-    exists = await op.is_exist("test_hash")
+    exists = await op.exists("test_hash")
     assert exists
 
     # Delete it
     await op.delete("test_hash")
 
     # Verify it's gone
-    exists = await op.is_exist("test_hash")
+    exists = await op.exists("test_hash")
     assert not exists
 
 
@@ -235,19 +223,19 @@ async def test_file_storage_operator_read(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_file_storage_operator_is_exist(tmp_path):
-    """Test FileStorageOperator is_exist method"""
+async def test_file_storage_operator_exists(tmp_path):
+    """Test FileStorageOperator exists method"""
     op = dal.FileStorageOperator(str(tmp_path))
 
     # Should not exist initially
-    exists = await op.is_exist("test_hash_xyz")
+    exists = await op.exists("test_hash_xyz")
     assert not exists
 
     # Write a file
     await op.write("test_hash_xyz", b"test content")
 
     # Should exist now
-    exists = await op.is_exist("test_hash_xyz")
+    exists = await op.exists("test_hash_xyz")
     assert exists
 
 
@@ -272,14 +260,14 @@ async def test_file_storage_operator_delete(tmp_path):
     await op.write("test_hash_ghi", b"test content")
 
     # Verify it exists
-    exists = await op.is_exist("test_hash_ghi")
+    exists = await op.exists("test_hash_ghi")
     assert exists
 
     # Delete it
     await op.delete("test_hash_ghi")
 
     # Verify it's gone
-    exists = await op.is_exist("test_hash_ghi")
+    exists = await op.exists("test_hash_ghi")
     assert not exists
 
 

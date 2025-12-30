@@ -171,7 +171,7 @@ async def handle_file(session, input_uri: str = None, file_bytes=None) -> tuple[
         )
 
         op = dal.get_storage_operator(models.ArtifactType.DOC)
-        exists = await op.is_exist(hash)
+        exists = await op.exists(hash)
         if not exists:
             await op.write(hash, file_bytes)
         return hash, len(file_bytes), md5_hash

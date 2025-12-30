@@ -172,7 +172,7 @@ async def split_parse_document(
         )
         return
     test_op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
-    exists = await test_op.is_exist(doc_hash)
+    exists = await test_op.exists(doc_hash)
     logger.info(
         f"do parse {doc_hash} {exists} {force}",
         extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
@@ -194,7 +194,7 @@ async def split_parse_document(
         return
 
     test_op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
-    exists = await test_op.is_exist(doc_hash)
+    exists = await test_op.exists(doc_hash)
     logger.info(
         f"do parse split {doc_hash} {exists} {force}",
         extra=_lc,
@@ -286,7 +286,7 @@ async def parse_document(
 
     doc = await doc_ops.get_document(doc_hash)
     test_op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
-    exists = await test_op.is_exist(doc_hash)
+    exists = await test_op.exists(doc_hash)
     logger.info(
         f"do parse {doc_hash} {exists} {force}",
         extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
@@ -341,7 +341,7 @@ async def chunk_document(
     logger.info(f"chunk_document started  {source} {batch_id} {doc_hash}")
 
     op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
-    exists = await op.is_exist(doc_hash)
+    exists = await op.exists(doc_hash)
     if not exists or force:
         json_bytes = await read_bytes(
             doc_hash,
@@ -422,7 +422,7 @@ async def save_to_rag(
     chunk_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
     embed_op = await _get_op(workflow_run.id, WorkflowStepType.EMBED, ArtifactType.EMBEDDINGS)
 
-    embed_exists = await embed_op.is_exist(doc_hash)
+    embed_exists = await embed_op.exists(doc_hash)
     if embed_exists:
         chunk_bytes = await embed_op.read(doc_hash)
         logger.info(f"got embeddings for {doc_hash}", extra=_log_con)

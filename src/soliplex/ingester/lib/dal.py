@@ -104,7 +104,7 @@ def validate_s3_settings(s3: S3Settings):
         raise ValueError("s3.bucket is required")
 
 
-def create_s3_operator(s3: S3Settings, root: str = None) -> opendal.AsyncOperator:
+def create_s3_operator(s3: S3Settings, root: str = "/") -> opendal.AsyncOperator:
     validate_s3_settings(s3)
     return opendal.AsyncOperator(
         "s3",

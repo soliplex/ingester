@@ -1,52 +1,135 @@
 import datetime
 import hashlib
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import TypeVar
 
-from async_lru import alru_cache
 from pydantic import BaseModel
 from pydantic import ImportString
 from pydantic import computed_field
 from sqlalchemy import JSON
 from sqlalchemy import Column
 from sqlalchemy import UniqueConstraint
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import Field
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from soliplex.ingester.lib.config import get_settings
+
+class Database:
+    """
+    Database manager that handles engine lifecycle and session creation.
+
+    Connection pooling is handled automatically by SQLAlchemy's engine.
+
+    Usage:
+        # Initialize once at application startup
+        await Database.initialize()
+
+        # Or with custom URL (for testing)
+        await Database.initialize("sqlite+aiosqlite:///:memory:")
+
+        # Get sessions anywhere in the app
+        async with get_session() as session:
+            ...
+
+        # Cleanup at shutdown (optional but recommended)
+        await Database.close()
+    """
+
+    _engine: AsyncEngine | None = None
+    _initialized: bool = False
+
+    @classmethod
+    async def initialize(cls, url: str | None = None) -> None:
+        """
+        Initialize the database engine and create tables.
+
+        Safe to call multiple times - will only initialize once unless reset() is called.
+
+        Args:
+            url: Database URL. If None, reads from settings.
+        """
+        if cls._initialized:
+            return
+
+        if url is None:
+            from soliplex.ingester.lib.config import get_settings
+
+            url = get_settings().doc_db_url
+
+        connect_args = {}
+        if "sqlite" in url:
+            connect_args["check_same_thread"] = False
+
+        cls._engine = create_async_engine(url, connect_args=connect_args)
+
+        # Create all tables
+        async with cls._engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+        cls._initialized = True
+
+    @classmethod
+    def engine(cls) -> AsyncEngine:
+        """Get the database engine. Raises if not initialized."""
+        if cls._engine is None:
+            raise RuntimeError("Database not initialized. Call 'await Database.initialize()' first.")
+        return cls._engine
+
+    @classmethod
+    @asynccontextmanager
+    async def session(cls) -> AsyncIterator[AsyncSession]:
+        """Create a database session with automatic transaction management."""
+        # Auto-initialize if needed (preserves backwards compatibility)
+        if not cls._initialized:
+            await cls.initialize()
+
+        async with AsyncSession(cls._engine) as session:
+            try:
+                async with session.begin():
+                    yield session
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+
+    @classmethod
+    async def close(cls) -> None:
+        """Close the database engine and release all connections."""
+        if cls._engine is not None:
+            await cls._engine.dispose()
+            cls._engine = None
+            cls._initialized = False
+
+    @classmethod
+    async def reset(cls, url: str | None = None) -> None:
+        """
+        Reset and reinitialize the database (primarily for testing).
+
+        Args:
+            url: New database URL. If None, reads from settings.
+        """
+        await cls.close()
+        await cls.initialize(url)
 
 
-@alru_cache(maxsize=1)
-async def get_engine():  # pragma: no cover
-    settings = get_settings()
-    if "sqlite" in settings.doc_db_url:
-        engine = create_async_engine(settings.doc_db_url, connect_args={"check_same_thread": False})
-    else:
-        engine = create_async_engine(settings.doc_db_url)
-    # SQLModel.metadata.create_all(engine)
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    return engine
+# Backwards-compatible module-level functions
+async def get_engine() -> AsyncEngine:
+    """Get the database engine (backwards compatible)."""
+    if not Database._initialized:
+        await Database.initialize()
+    return Database.engine()
 
 
 @asynccontextmanager
-async def get_session():  # pragma: no cover
-    engine = await get_engine()
-    async with AsyncSession(engine) as session:
-        try:
-            # Begin a transaction within the session
-            async with session.begin():
-                yield session
-        except Exception:
-            # Rollback the transaction if an error occurs
-            await session.rollback()
-            raise
-        finally:
-            # Close the session, returning the connection to the pool
-            await session.close()
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """Get a database session (backwards compatible)."""
+    async with Database.session() as session:
+        yield session
 
 
 def doc_hash(data: bytes) -> str:

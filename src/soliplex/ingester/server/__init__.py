@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib.config import get_settings
+from soliplex.ingester.lib.models import Database
 
 from .routes.batch import batch_router
 from .routes.document import doc_router
@@ -25,10 +26,17 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
     logger.info("Starting soliplex-ingester")
+
+    # Initialize database before starting worker
+    await Database.initialize()
+
     import soliplex.ingester.lib.wf.runner as runner
 
     await runner.start_worker()
     yield
+
+    # Cleanup
+    await Database.close()
     logger.info("soliplex-ingester stopped")
 
 

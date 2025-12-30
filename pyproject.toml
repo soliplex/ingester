@@ -53,6 +53,8 @@ LANCEDB_DIR="./lancedb"
 DOCLING_SERVER_URL="http://localhost:5004/v1"
 
 [tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "WARN"
 pythonpath = "."
 python_files = "test_*.py"
 # skip 'tests/functional' by default

@@ -1,45 +1,52 @@
-from contextlib import asynccontextmanager
+"""
+Shared pytest fixtures for soliplex_ingester tests.
+
+All database fixtures are function-scoped to ensure complete test isolation.
+Each test gets a fresh in-memory SQLite database.
+"""
 
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel
-from sqlmodel.ext.asyncio.session import AsyncSession
+
+from soliplex.ingester.lib.models import Database
 
 
 @pytest_asyncio.fixture(scope="function")
-async def mock_engine():
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-    )
-    # SQLModel.metadata.create_all(engine)
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    return engine
+async def db():
+    """
+    Create a fresh in-memory database for each test.
+
+    This fixture:
+    - Resets any existing database state
+    - Creates a new in-memory SQLite database
+    - Initializes all tables
+    - Yields for the test to run
+    - Cleans up after the test
+
+    Usage:
+        @pytest.mark.asyncio
+        async def test_something(db):
+            # Database is ready, get_session() will work
+            async with get_session() as session:
+                ...
+    """
+    # Reset to a fresh in-memory database
+    await Database.reset("sqlite+aiosqlite:///:memory:")
+    yield Database
+    # Cleanup after test
+    await Database.close()
 
 
-@asynccontextmanager
-async def mock_session(engine):
-    async with AsyncSession(engine) as session:
-        try:
-            # Begin a transaction within the session
-            async with session.begin():
-                yield session
-        except Exception:
-            # Rollback the transaction if an error occurs
-            await session.rollback()
-            raise
-        finally:
-            # Close the session, returning the connection to the pool
-            await session.close()
+@pytest_asyncio.fixture
+async def db_session(db):
+    """
+    Provide a database session for tests that need direct session access.
 
-
-def do_monkeypatch(monkeypatch, mock_engine):
-    import soliplex.ingester.lib.config as cfg
-
-    settings = cfg.get_settings()
-    settings.doc_db_url = "sqlite+aiosqlite:///:memory:"
-    monkeypatch.setattr(
-        "soliplex.ingester.lib.models.get_session",
-        lambda: mock_session(mock_engine),
-    )
+    Usage:
+        @pytest.mark.asyncio
+        async def test_something(db_session):
+            # Use the session directly
+            db_session.add(some_model)
+            await db_session.flush()
+    """
+    async with Database.session() as session:
+        yield session

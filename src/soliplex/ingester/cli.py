@@ -232,7 +232,11 @@ def validate_haiku(batch_id: int, detail: bool = False):
 
 
 async def _start_worker():
+    from .lib.models import Database
     from .lib.wf.runner import start_worker
+
+    # Initialize database before starting worker
+    await Database.initialize()
 
     await start_worker()
     # sleep forever

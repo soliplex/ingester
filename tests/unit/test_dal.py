@@ -4,7 +4,6 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
-from common import do_monkeypatch
 
 from soliplex.ingester.lib import dal
 from soliplex.ingester.lib import models
@@ -89,9 +88,8 @@ async def test_read_s3_url():
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_read(monkeypatch, mock_engine):
+async def test_db_storage_operator_read(db):
     """Test DBStorageOperator read method"""
-    do_monkeypatch(monkeypatch, mock_engine)
     op = dal.DBStorageOperator("doc", "test_root")
 
     # Write a document first
@@ -104,9 +102,8 @@ async def test_db_storage_operator_read(monkeypatch, mock_engine):
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_read_not_found(monkeypatch, mock_engine):  # noqa F811
+async def test_db_storage_operator_read_not_found(db):
     """Test DBStorageOperator read method with file not found"""
-    do_monkeypatch(monkeypatch, mock_engine)
     op = dal.DBStorageOperator("doc", "test_root")
 
     with pytest.raises(FileNotFoundError):
@@ -114,9 +111,8 @@ async def test_db_storage_operator_read_not_found(monkeypatch, mock_engine):  # 
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_is_exist(monkeypatch, mock_engine):  # noqa F811
+async def test_db_storage_operator_is_exist(db):
     """Test DBStorageOperator is_exist method"""
-    do_monkeypatch(monkeypatch, mock_engine)
     op = dal.DBStorageOperator("doc", "test_root")
 
     # Should not exist initially
@@ -132,9 +128,8 @@ async def test_db_storage_operator_is_exist(monkeypatch, mock_engine):  # noqa F
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_write(monkeypatch, mock_engine):
+async def test_db_storage_operator_write(db):
     """Test DBStorageOperator write method"""
-    do_monkeypatch(monkeypatch, mock_engine)
     op = dal.DBStorageOperator("doc", "test_root")
 
     test_bytes = b"test content"
@@ -146,9 +141,8 @@ async def test_db_storage_operator_write(monkeypatch, mock_engine):
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_list(monkeypatch, mock_engine):
+async def test_db_storage_operator_list(db):
     """Test DBStorageOperator list method"""
-    do_monkeypatch(monkeypatch, mock_engine)
     op = dal.DBStorageOperator("doc", "test_root")
 
     # Write multiple documents
@@ -173,10 +167,8 @@ async def test_db_storage_operator_get_uri():
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_delete(monkeypatch, mock_engine):
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_db_storage_operator_delete(db):
     """Test DBStorageOperator delete method"""
-
     op = dal.DBStorageOperator("doc", "test_root")
 
     # Write a document
@@ -195,10 +187,8 @@ async def test_db_storage_operator_delete(monkeypatch, mock_engine):
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_delete_missing(monkeypatch, mock_engine):
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_db_storage_operator_delete_missing(db):
     """Test DBStorageOperator delete method"""
-
     op = dal.DBStorageOperator("doc", "test_root")
 
     # Delete a document that doesn't exist

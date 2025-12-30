@@ -1,0 +1,7 @@
+id: test_missing_chunk_diff_param
+name: test with parse chunk and embed, missing chunk, different parse param
+config:
+  parse:
+    parse_param: parse_param_2
+  embed:
+    embed_param: embed_param_base

@@ -339,3 +339,119 @@ async def test_save_to_rag_missing_data_dir():
             step_config=step_config,
             embed_config=embed_config,
         )
+
+
+def test_build_storage_config_s3_in_data_dir(mock_app_config, mock_settings):
+    """Test build_storage_config when data_dir contains an S3 URI"""
+    mock_app_config.lancedb = MagicMock()
+
+    with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
+        config_dict = {
+            "data_dir": "s3://my-bucket/rag-data",
+        }
+        result = rag.build_storage_config(mock_app_config, config_dict)
+
+        # Verify lancedb configuration is set for S3
+        assert result.lancedb.uri == "s3://my-bucket/rag-data"
+        assert result.lancedb.api_key == "xxx"
+        assert result.lancedb.region == "xx"
+        assert result.storage.data_dir == pathlib.Path("s3://my-bucket/rag-data")
+        assert result.storage.auto_vacuum is False
+
+
+def test_build_storage_config_s3_in_env_lancedb_dir_with_trailing_slash(mock_app_config):
+    """Test build_storage_config when env.lancedb_dir contains an S3 URI with trailing slash"""
+    mock_settings_s3 = MagicMock()
+    mock_settings_s3.lancedb_dir = "s3://env-bucket/lancedb/"
+
+    mock_app_config.lancedb = MagicMock()
+
+    with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings_s3):
+        config_dict = {
+            "data_dir": "my-project-data",
+        }
+        result = rag.build_storage_config(mock_app_config, config_dict)
+
+        # Verify lancedb configuration uses env.lancedb_dir + data_dir
+        assert result.lancedb.uri == "s3://env-bucket/lancedb/my-project-data"
+        assert result.lancedb.api_key == "xxx"
+        assert result.lancedb.region == "xx"
+        assert result.storage.data_dir == pathlib.Path("s3://env-bucket/lancedb/my-project-data")
+        assert result.storage.auto_vacuum is False
+
+
+def test_build_storage_config_s3_in_env_lancedb_dir_without_trailing_slash(mock_app_config):
+    """Test build_storage_config when env.lancedb_dir contains an S3 URI without trailing slash"""
+    mock_settings_s3 = MagicMock()
+    mock_settings_s3.lancedb_dir = "s3://env-bucket/lancedb"
+
+    mock_app_config.lancedb = MagicMock()
+
+    with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings_s3):
+        config_dict = {
+            "data_dir": "my-project-data",
+        }
+        result = rag.build_storage_config(mock_app_config, config_dict)
+
+        # Verify lancedb configuration uses env.lancedb_dir + "/" + data_dir
+        assert result.lancedb.uri == "s3://env-bucket/lancedb/my-project-data"
+        assert result.lancedb.api_key == "xxx"
+        assert result.lancedb.region == "xx"
+        assert result.storage.data_dir == pathlib.Path("s3://env-bucket/lancedb/my-project-data")
+        assert result.storage.auto_vacuum is False
+
+
+def test_build_storage_config_both_s3_uses_config_dict(mock_app_config):
+    """Test build_storage_config when both env.lancedb_dir and config_dict['data_dir'] contain S3 URIs.
+
+    When both contain S3 URIs, the value from config_dict should be used (takes precedence).
+    """
+    mock_settings_s3 = MagicMock()
+    mock_settings_s3.lancedb_dir = "s3://env-bucket/lancedb"
+
+    mock_app_config.lancedb = MagicMock()
+
+    with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings_s3):
+        config_dict = {
+            "data_dir": "s3://config-bucket/rag-data",
+        }
+        result = rag.build_storage_config(mock_app_config, config_dict)
+
+        # Verify config_dict S3 URI is used, not the env.lancedb_dir
+        assert result.lancedb.uri == "s3://config-bucket/rag-data"
+        assert result.lancedb.api_key == "xxx"
+        assert result.lancedb.region == "xx"
+        assert result.storage.data_dir == pathlib.Path("s3://config-bucket/rag-data")
+        assert result.storage.auto_vacuum is False
+
+
+def test_build_embed_config_missing_model_key(mock_app_config):
+    """Test build_embed_config raises ValueError when 'model' key is missing"""
+    config_dict = {"vector_dim": 1024, "provider": "test-provider"}  # Missing model
+
+    with pytest.raises(ValueError, match="Missing required key model"):
+        rag.build_embed_config(mock_app_config, config_dict)
+
+
+def test_build_chunk_config_missing_chunk_size_key(mock_app_config, mock_settings):
+    """Test build_chunk_config raises ValueError when 'chunk_size' key is missing"""
+    with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
+        config_dict = {"chunker": "hierarchical"}  # Missing chunk_size
+
+        with pytest.raises(ValueError, match="Missing required key chunk_size"):
+            rag.build_chunk_config(mock_app_config, config_dict)
+
+
+def test_build_chunk_config_without_text_context_radius(mock_app_config, mock_settings):
+    """Test build_chunk_config when text_context_radius is not in config_dict"""
+    with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
+        config_dict = {
+            "chunk_size": 512,
+            "chunker": "hierarchical",
+        }
+        result = rag.build_chunk_config(mock_app_config, config_dict)
+
+        # Verify the config is built successfully
+        assert result is not mock_app_config
+        assert result.processing.chunk_size == 512
+        assert result.processing.chunker == "hierarchical"

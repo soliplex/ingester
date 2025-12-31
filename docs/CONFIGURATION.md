@@ -2,7 +2,7 @@
 
 ## Overview
 
-Soliplex Ingester is configured via environment variables using Pydantic Settings. All configuration is defined in `src/soliplex_ingester/lib/config.py:15`.
+Soliplex Ingester is configured via environment variables using Pydantic Settings. All configuration is defined in `src/soliplex/ingester/lib/config.py:15`.
 
 ## Environment Variables
 
@@ -19,11 +19,11 @@ DOC_DB_URL="sqlite+aiosqlite:///./db/documents.db"
 
 **PostgreSQL Example:**
 ```bash
-DOC_DB_URL="postgresql+asyncpg://username:password@localhost:5432/soliplex"
+DOC_DB_URL="postgresql+psycopg://username:password@localhost:5432/soliplex"
 ```
 
 **Notes:**
-- Must use async drivers (`aiosqlite` or `asyncpg`)
+- Must use async drivers (`aiosqlite` for SQLite or `psycopg` for PostgreSQL)
 - SQLite uses relative or absolute file paths
 - PostgreSQL requires credentials and network access
 
@@ -156,15 +156,38 @@ Directory for LanceDB vector storage.
 
 **Default:** `lancedb`
 
-**Example:**
+**Filesystem Example:**
 ```bash
 LANCEDB_DIR=/var/lib/soliplex/lancedb
 ```
 
+**S3 Example:**
+```bash
+LANCEDB_DIR=s3://my-bucket/lancedb
+```
+
 **Notes:**
+- Local filesystem paths or S3 URIs are supported
+- When using S3, LanceDB requires standard AWS environment variables (see below)
 - Stores vector embeddings for RAG retrieval
-- Requires sufficient disk space
+- Requires sufficient disk space (filesystem) or S3 bucket access
 - Periodically compact for performance
+
+**Required AWS Environment Variables for S3:**
+```bash
+AWS_ACCESS_KEY_ID=your_access_key_id
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=us-east-1
+```
+
+**Optional AWS Environment Variables:**
+```bash
+# For S3-compatible providers (MinIO, SeaweedFS, etc.)
+AWS_ENDPOINT=http://127.0.0.1:8333
+
+# Required when using HTTP to connect to endpoint
+AWS_ALLOW_HTTP=1
+```
 
 ---
 
@@ -409,18 +432,72 @@ si-cli serve
 
 ---
 
-## Nested Configuration (Advanced)
+## S3 Configuration Overview
 
-Pydantic Settings supports nested configuration using `__` delimiter.
+This project supports S3 storage in two different contexts with different configuration methods:
 
+### 1. LanceDB Vector Storage (`LANCEDB_DIR`)
+
+**Purpose:** Stores vector embeddings for RAG retrieval
+**Configuration Method:** Standard AWS environment variables
 **Example:**
 ```bash
-# Not yet implemented in current version
-# DEFAULT_S3__BUCKET=my-bucket
-# DEFAULT_S3__ENDPOINT_URL=https://s3.amazonaws.com
+LANCEDB_DIR=s3://my-vector-bucket/lancedb
+AWS_ACCESS_KEY_ID=your_key_id
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=us-east-1
 ```
 
-See `src/soliplex_ingester/lib/config.py:16` for nested model definitions.
+### 2. Artifact Storage (`FILE_STORE_TARGET=s3`)
+
+**Purpose:** Stores intermediate processing artifacts (documents, markdown, chunks, embeddings)
+**Configuration Method:** Nested Pydantic settings with `__` delimiter
+**Example:**
+```bash
+FILE_STORE_TARGET=s3
+ARTIFACT_S3__BUCKET=my-artifact-bucket
+ARTIFACT_S3__ACCESS_KEY_ID=your_key_id
+ARTIFACT_S3__ACCESS_SECRET=your_secret_key
+ARTIFACT_S3__REGION=us-east-1
+ARTIFACT_S3__ENDPOINT_URL=http://127.0.0.1:8333
+```
+
+**Important Notes:**
+- These are independent systems and can use different S3 buckets or providers
+- LanceDB uses standard AWS SDK naming (`AWS_SECRET_ACCESS_KEY`)
+- Artifact/Input S3 uses Pydantic nested naming (`ARTIFACT_S3__ACCESS_SECRET`)
+- The field name difference is intentional to support Pydantic's nested configuration
+
+---
+
+## Nested Configuration (Advanced)
+
+Pydantic Settings supports nested configuration using `__` delimiter for structured settings.
+
+**Artifact S3 Configuration:**
+```bash
+ARTIFACT_S3__BUCKET=soliplex-artifacts
+ARTIFACT_S3__ACCESS_KEY_ID=soliplex
+ARTIFACT_S3__ACCESS_SECRET=soliplex
+ARTIFACT_S3__REGION=xx
+ARTIFACT_S3__ENDPOINT_URL=http://127.0.0.1:8333
+```
+
+**Input S3 Configuration:**
+```bash
+INPUT_S3__BUCKET=soliplex-inputs
+INPUT_S3__ACCESS_KEY_ID=soliplex
+INPUT_S3__ACCESS_SECRET=soliplex
+INPUT_S3__REGION=xx
+INPUT_S3__ENDPOINT_URL=http://127.0.0.1:8333
+```
+
+**Notes:**
+- `ACCESS_SECRET` (not `SECRET_ACCESS_KEY`) is used for nested config fields
+- Nested delimiter is `__` (double underscore)
+- Both `INPUT_S3` and `ARTIFACT_S3` can point to different buckets/providers
+
+See `src/soliplex/ingester/lib/config.py:7-16` for nested model definitions.
 
 ---
 
@@ -466,7 +543,7 @@ DO_RAG=false
 
 **staging.env:**
 ```bash
-DOC_DB_URL=postgresql+asyncpg://user:pass@staging-db:5432/soliplex
+DOC_DB_URL=postgresql+psycopg://user:pass@staging-db:5432/soliplex
 LOG_LEVEL=INFO
 INGEST_WORKER_CONCURRENCY=10
 DOCLING_SERVER_URL=http://docling-staging:5001/v1
@@ -477,7 +554,7 @@ DO_RAG=true
 
 **production.env:**
 ```bash
-DOC_DB_URL=postgresql+asyncpg://user:pass@prod-db:5432/soliplex
+DOC_DB_URL=postgresql+psycopg://user:pass@prod-db:5432/soliplex
 LOG_LEVEL=WARNING
 INGEST_WORKER_CONCURRENCY=20
 DOCLING_CONCURRENCY=5
@@ -501,7 +578,7 @@ services:
   ingester:
     image: soliplex-ingester:latest
     environment:
-      DOC_DB_URL: postgresql+asyncpg://postgres:password@db:5432/soliplex
+      DOC_DB_URL: postgresql+psycopg://postgres:password@db:5432/soliplex
       DOCLING_SERVER_URL: http://docling:5001/v1
       LOG_LEVEL: INFO
       FILE_STORE_DIR: /data/files
@@ -543,7 +620,7 @@ kind: ConfigMap
 metadata:
   name: soliplex-config
 data:
-  DOC_DB_URL: "postgresql+asyncpg://user:pass@postgres-service:5432/soliplex"
+  DOC_DB_URL: "postgresql+psycopg://user:pass@postgres-service:5432/soliplex"
   DOCLING_SERVER_URL: "http://docling-service:5001/v1"
   LOG_LEVEL: "INFO"
   INGEST_WORKER_CONCURRENCY: "20"
@@ -607,7 +684,7 @@ Keep secrets out of version control:
 
 ```bash
 # .env.secrets (add to .gitignore)
-DOC_DB_URL=postgresql+asyncpg://user:$(cat /run/secrets/db_password)@db/soliplex
+DOC_DB_URL=postgresql+psycopg://user:$(cat /run/secrets/db_password)@db/soliplex
 ```
 
 ### Using Secret Management Tools
@@ -688,7 +765,7 @@ env:
 | `LOG_LEVEL` | str | No | `INFO` | Logging level |
 | `FILE_STORE_TARGET` | str | No | `fs` | Storage backend type |
 | `FILE_STORE_DIR` | str | No | `file_store` | Base storage directory |
-| `LANCEDB_DIR` | str | No | `lancedb` | LanceDB directory |
+| `LANCEDB_DIR` | str | No | `lancedb` | LanceDB directory (supports S3 URIs) |
 | `DOCUMENT_STORE_DIR` | str | No | `raw` | Raw documents subdir |
 | `PARSED_MARKDOWN_STORE_DIR` | str | No | `markdown` | Markdown subdir |
 | `PARSED_JSON_STORE_DIR` | str | No | `json` | JSON subdir |
@@ -705,4 +782,11 @@ env:
 | `DEFAULT_WORKFLOW_ID` | str | No | `batch_split` | Default workflow |
 | `PARAM_DIR` | str | No | `config/params` | Parameter sets dir |
 | `DEFAULT_PARAM_ID` | str | No | `default` | Default parameter set |
+| `AWS_ACCESS_KEY_ID` | str | Conditional | - | AWS access key (required for S3 LanceDB) |
+| `AWS_SECRET_ACCESS_KEY` | str | Conditional | - | AWS secret key (required for S3 LanceDB) |
+| `AWS_REGION` | str | Conditional | - | AWS region (required for S3 LanceDB) |
+| `AWS_ENDPOINT` | str | No | - | S3 endpoint (for non-AWS providers) |
+| `AWS_ALLOW_HTTP` | int | No | - | Allow HTTP for S3 (set to 1 for HTTP) |
+| `ARTIFACT_S3__*` | nested | Conditional | - | Artifact S3 config (BUCKET, ACCESS_SECRET, etc.) |
+| `INPUT_S3__*` | nested | Conditional | - | Input S3 config (BUCKET, ACCESS_SECRET, etc.) |
 | `DO_RAG` | bool | No | `True` | Enable RAG integration |

@@ -44,18 +44,18 @@ async def get_workflow_definition(
     wf_id: str | None = None,
 ) -> WorkflowDefinition:
     if wf_id is None:
-        wf_id = get_default_wofklow_id()
+        wf_id = get_default_workflow_id()
     registry = await load_workflow_registry()
     if wf_id in registry:
         return registry[wf_id]
     else:
-        load_workflow_registry(force_reload=True)
+        registry = await load_workflow_registry(force_reload=True)
         if wf_id in registry:
             return registry[wf_id]
         raise KeyError(f"workflow {wf_id} not found")
 
 
-def get_default_wofklow_id() -> str:
+def get_default_workflow_id() -> str:
     settings = get_settings()
     return settings.default_workflow_id
 
@@ -73,17 +73,17 @@ async def load_param_set(yaml_file: Path) -> WorkflowParams:
     return wf_loaded
 
 
-async def get_param_set(id: str | None = None) -> WorkflowParams:
-    if id is None:
-        id = get_default_param_id()
+async def get_param_set(param_id: str | None = None) -> WorkflowParams:
+    if param_id is None:
+        param_id = get_default_param_id()
     registry = await load_param_registry()
-    if id in registry:
-        return registry[id]
+    if param_id in registry:
+        return registry[param_id]
     else:
-        await load_param_registry(force_reload=True)
-        if id in registry:
-            return registry[id]
-        raise KeyError(f"param set {id} not found")
+        registry = await load_param_registry(force_reload=True)
+        if param_id in registry:
+            return registry[param_id]
+        raise KeyError(f"param set {param_id} not found")
 
 
 async def load_param_registry(

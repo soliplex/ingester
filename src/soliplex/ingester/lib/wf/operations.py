@@ -2,8 +2,9 @@ import datetime
 import json
 import logging
 
+import opendal
 import yaml
-from async_lru import alru_cache
+from sqlalchemy import bindparam
 from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel import text
@@ -64,7 +65,7 @@ async def create_workflow_runs_for_batch(
     return run_group, runs
 
 
-@alru_cache(maxsize=1024)
+# @alru_cache(maxsize=1024)
 async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
     """
     Returns a map of step type to step config ID for a given
@@ -87,11 +88,11 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
             exist_set = setrs.first()
             if exist_set:
                 stepq = text(
-                    f"""select stepconfig.* from stepconfig
+                    """select stepconfig.* from stepconfig
                     inner join configsetitem
                     on configsetitem.config_id=stepconfig.id
-                    where configsetitem.config_set_id={exist_set.id}"""
-                )
+                    where configsetitem.config_set_id=:config_set_id"""
+                ).bindparams(bindparam("config_set_id", value=exist_set.id))
                 steprs = await session.exec(stepq)
 
                 for step in steprs.all():
@@ -107,6 +108,7 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
             await session.refresh(configset)
             cuml_cfg = {}
             cuml_str = json.dumps(cuml_cfg, indent=4)
+            # create step configs for each step to help matches when steps are missing
             for st in typelist:
                 if st in param_set.config:
                     step_config = param_set.config[st]
@@ -140,7 +142,7 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
     return id_map
 
 
-async def get_run_groups_for_batch(batch_id: int | None) -> list[RunGroup]:
+async def get_run_groups_for_batch(batch_id: int | None = None) -> list[RunGroup]:
     async with get_session() as session:
         q = select(RunGroup)
         if batch_id is not None:
@@ -148,7 +150,8 @@ async def get_run_groups_for_batch(batch_id: int | None) -> list[RunGroup]:
         q = q.order_by(RunGroup.created_date.desc())
         rs = await session.exec(q)
         groups = rs.all()
-        [session.expunge(x) for x in groups]
+        for x in groups:
+            session.expunge(x)
         return groups
 
 
@@ -163,15 +166,15 @@ async def get_run_group(run_group_id: int) -> RunGroup:
         raise NotFoundError(f"run group {run_group_id} not found")
 
 
-async def get_run_group_stats(run_group_id: int) -> dict[RunStatus:int]:
+async def get_run_group_stats(run_group_id: int) -> dict[RunStatus, int]:
     async with get_session() as session:
         q = text(
-            f"""select r.status,count(distinct workflow_run_id)
+            """select r.status,count(distinct workflow_run_id)
             from runstep r inner join workflowrun w
             on w.id=r.workflow_run_id
-            where run_group_id={run_group_id}
+            where run_group_id=:run_group_id
             group by r.status"""
-        )
+        ).bindparams(bindparam("run_group_id", value=run_group_id))
         rs = await session.exec(q)
         res = rs.all()
         ret = {}
@@ -224,7 +227,7 @@ async def create_lifecycle_history(
     step_id: int | None = None,
     status_message: str | None = None,
     status_meta: dict[str, str] | None = None,
-):
+) -> LifecycleHistory:
     dt = datetime.datetime.now()
     async with get_session() as session:
         run_group_history = LifecycleHistory(
@@ -256,7 +259,7 @@ async def update_lifecycle_history(
     step_id: int | None = None,
     status_message: str | None = None,
     status_meta: dict[str, str] | None = None,
-):
+) -> None:
     dt = datetime.datetime.now()
     end_date = None
     if status == RunStatus.COMPLETED or status == RunStatus.FAILED:
@@ -267,13 +270,13 @@ async def update_lifecycle_history(
             .where(LifecycleHistory.run_group_id == run_group_id)
             .where(LifecycleHistory.workflow_run_id == workflow_run_id)
             .where(LifecycleHistory.step_id == step_id)
-            .where(LifecycleHistory.lifecycle_event == event)
+            .where(LifecycleHistory.event == event)
             .values(
                 status=status,
                 status_date=dt,
                 status_message=status_message,
                 status_meta=status_meta,
-                end_date=end_date,
+                completed_date=end_date,
             )
         )
         await session.exec(q)
@@ -281,15 +284,15 @@ async def update_lifecycle_history(
 
 
 async def create_single_workflow_run(
-    workflow_definiton_id: str,
+    workflow_definition_id: str,
     doc_id: str,
     priority: int = 0,
     param_id: str | None = None,
-):
+) -> tuple[WorkflowRun, list[RunStep]]:
     doc = await get_document(doc_id)
     batch_id = doc.batch_id
     run_group = await create_run_group(
-        workflow_definition_id=workflow_definiton_id,
+        workflow_definition_id=workflow_definition_id,
         batch_id=batch_id,
         name=f"single run {doc_id} ",
         param_id=param_id,
@@ -366,7 +369,8 @@ async def create_workflow_run(
             idx += 1
         await session.flush()
         session.expunge(workflow_run)
-        [session.expunge(step) for step in new_steps]
+        for step in new_steps:
+            session.expunge(step)
         await session.commit()
 
         return workflow_run, new_steps
@@ -414,7 +418,8 @@ async def get_workflows(
         # Execute query
         rs = await session.exec(q)
         res = rs.all()
-        [session.expunge(x) for x in res]
+        for x in res:
+            session.expunge(x)
 
         if not include_steps:
             return res, total
@@ -475,29 +480,32 @@ async def get_workflows_for_status(
         # Execute query
         rs = await session.exec(q)
         res = rs.all()
-        [session.expunge(x) for x in res]
+        for x in res:
+            session.expunge(x)
 
         return res, total
 
 
-async def get_workflow_run(id: int, get_steps=False) -> WorkflowRun:
+async def get_workflow_run(
+    workflow_run_id: int, include_steps: bool = False
+) -> WorkflowRun | tuple[WorkflowRun, list[RunStep]]:
     async with get_session() as session:
-        q = select(WorkflowRun).where(WorkflowRun.id == id)
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run_id)
         rs = await session.exec(q)
         run = rs.first()
 
         if run:
             session.expunge(run)
-            if get_steps:
-                q = select(RunStep).where(RunStep.workflow_run_id == id)
+            if include_steps:
+                q = select(RunStep).where(RunStep.workflow_run_id == workflow_run_id)
                 rs = await session.exec(q)
-                rs = rs.all()
-                [session.expunge(x) for x in rs]
-                steps = rs
+                steps = rs.all()
+                for step in steps:
+                    session.expunge(step)
                 return run, steps
 
             return run
-        raise NotFoundError(f"workflow run {id} not found")
+        raise NotFoundError(f"workflow run {workflow_run_id} not found")
 
 
 async def get_workflow_runs(batch_id: int) -> WorkflowRun:
@@ -537,7 +545,7 @@ async def find_operator_for_workflow_run(
     workflow_run_id: int,
     step_type: WorkflowStepType,
     artifact_type: ArtifactType,
-) -> StepConfig:
+) -> opendal.AsyncOperator:
     step_config = await get_step_config_for_workflow_run(workflow_run_id, step_type)
     return get_storage_operator(artifact_type, step_config)
 
@@ -545,11 +553,14 @@ async def find_operator_for_workflow_run(
 async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: WorkflowStepType) -> StepConfig:
     async with get_session() as session:
         q = text(
-            f"""select s.id from
+            """select s.id from
             stepconfig s inner join runstep r
             on r.step_config_id=s.id
-            where r.workflow_run_id={workflow_run_id}
-            and r.step_type='{step_type.value.upper()}'"""
+            where r.workflow_run_id=:workflow_run_id
+            and r.step_type=:step_type"""
+        ).bindparams(
+            bindparam("workflow_run_id", value=workflow_run_id),
+            bindparam("step_type", value=step_type.value.upper()),
         )
 
         rs = await session.exec(q)
@@ -565,7 +576,7 @@ async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: Work
         raise NotFoundError(f"step config {step_type} not found")
 
 
-async def update_run_status(workflow_run_id: int, is_last_step: bool, status: RunStatus, session):
+async def update_run_status(workflow_run_id: int, is_last_step: bool, status: RunStatus, session) -> RunStatus:
     update_status = None
     if is_last_step and status == RunStatus.COMPLETED:
         update_status = RunStatus.COMPLETED
@@ -595,11 +606,11 @@ async def update_run_status(workflow_run_id: int, is_last_step: bool, status: Ru
 async def get_steps_for_batch(batch_id: int) -> list[RunStep]:
     async with get_session() as session:
         q = text(
-            f"""select r.* from
+            """select r.* from
                runstep r inner join workflowrun w
                on w.id=r.workflow_run_id
-               where batch_id={batch_id}"""
-        )
+               where batch_id=:batch_id"""
+        ).bindparams(bindparam("batch_id", value=batch_id))
         rs = await session.exec(q)
         res = rs.all()
         if res:
@@ -620,7 +631,8 @@ async def get_steps_for_workflow_runs(workflow_run_ids: list[int]) -> dict[int, 
         q = select(RunStep).where(RunStep.workflow_run_id.in_(workflow_run_ids))
         rs = await session.exec(q)
         all_steps = rs.all()
-        [session.expunge(x) for x in all_steps]
+        for x in all_steps:
+            session.expunge(x)
 
         # Group steps by workflow_run_id
         steps_by_run_id: dict[int, list[RunStep]] = {}
@@ -637,14 +649,15 @@ async def get_run_steps(status: RunStatus) -> list[RunStep]:
         q = select(RunStep).where(RunStep.status == status)
         rs = await session.exec(q)
         res = rs.all()
-        [session.expunge(x) for x in res]
+        for x in res:
+            session.expunge(x)
         return res
 
 
-async def get_run_group_durations(run_group_id: int) -> list:
+async def get_run_group_durations(run_group_id: int) -> list[tuple]:
     async with get_session() as session:
         q = text(
-            f"""
+            """
                  select step_type,count(1) as count,
                  round(max(duration),1) as longest,
                  round(min(duration),1) as shortest,
@@ -665,19 +678,19 @@ async def get_run_group_durations(run_group_id: int) -> list:
                 inner join documentbatch b on b.id=w.batch_id
                 inner join document d on d.hash=w.doc_id
                 inner join rungroup rg on rg.id=w.run_group_id
-                where rg.id={run_group_id} and r.status ='COMPLETED'
+                where rg.id=:run_group_id and r.status ='COMPLETED'
                 ) group by step_type;
         """
-        )
+        ).bindparams(bindparam("run_group_id", value=run_group_id))
         rs = await session.exec(q)
         res = rs.all()
         return res
 
 
-async def get_step_stats(run_group_id: int) -> list():
+async def get_step_stats(run_group_id: int) -> list[tuple]:
     async with get_session() as session:
         q = text(
-            f"""select b.name,param_definition_id, step_type,
+            """select b.name,param_definition_id, step_type,
             r.status, count(1),
             sum(json_query(doc_meta::jsonb,'$.page_count')::int)
              as pages
@@ -686,28 +699,28 @@ async def get_step_stats(run_group_id: int) -> list():
         inner join documentbatch b on b.id=w.batch_id
         inner join document d on d.hash=w.doc_id
         inner join rungroup rg on rg.id=w.run_group_id
-        where rg.id={run_group_id}
+        where rg.id=:run_group_id
         group by b.name,param_definition_id, step_type,r.status
         order by b.name,step_type,r.status;"""
-        )
+        ).bindparams(bindparam("run_group_id", value=run_group_id))
         rs = await session.exec(q)
         res = rs.all()
         return res
 
 
-async def reset_failed_steps(run_group_id: int):
+async def reset_failed_steps(run_group_id: int) -> None:
     async with get_session() as session:
         q = text(
-            f"""update runstep set status='PENDING',retry=0
+            """update runstep set status='PENDING',retry=0
             where workflow_run_id in
             (select id from workflowrun
-             where run_group_id={run_group_id}
+             where run_group_id=:run_group_id
              and status='FAILED')"""
-        )
+        ).bindparams(bindparam("run_group_id", value=run_group_id))
         await session.exec(q)
         q = text(
-            f"""update workflowrun set status='RUNNING'
-            where run_group_id={run_group_id}
+            """update workflowrun set status='RUNNING'
+            where run_group_id=:run_group_id
             and status='FAILED'"""
-        )
+        ).bindparams(bindparam("run_group_id", value=run_group_id))
         await session.exec(q)

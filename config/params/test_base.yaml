@@ -1,0 +1,9 @@
+id: test_base
+name: test with parse chunk and embed, base params
+config:
+  parse:
+    parse_param: parse_param_base
+  chunk:
+    chunk_param: chunk_param_base
+  embed:
+    embed_param: embed_param_base

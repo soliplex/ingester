@@ -3,8 +3,6 @@ from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 import pytest
-from common import do_monkeypatch
-from common import mock_engine  # noqa
 
 import soliplex.ingester.lib.models as models
 import soliplex.ingester.lib.operations as operations
@@ -13,8 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_new_document(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_new_document(db):
     test_uri = "/tmp/test.pdf"
     mime_type = "application/pdf"
     test_bytes = b"test bytes"
@@ -35,11 +32,10 @@ async def test_new_document(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_update_document(monkeypatch, mock_engine):  # noqa F811
+async def test_update_document(db):
     """
     tests updating a document with the same uri
     """
-    do_monkeypatch(monkeypatch, mock_engine)
     test_uri = "/tmp/test.pdf"
     mime_type = "application/pdf"
     test_bytes = b"test bytes"
@@ -90,8 +86,7 @@ async def test_update_document(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_uri_for_hash(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_get_uri_for_hash(db):
     test_uri = "/tmp/test.pdf"
     mime_type = "application/pdf"
     test_bytes = b"test bytes"
@@ -120,8 +115,7 @@ async def test_get_uri_for_hash(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_status(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_status(db):
     test_uri = "/tmp/test.pdf"
     mime_type = "application/pdf"
     test_bytes = b"test bytes"
@@ -179,9 +173,7 @@ async def test_status(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_history_for_hash(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
-
+async def test_history_for_hash(db):
     test_uri = "/tmp/test.pdf"
     mime_type = "application/pdf"
     test_bytes = b"test bytes"
@@ -200,8 +192,7 @@ async def test_history_for_hash(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_delete_document(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_delete_document(db):
     test_uri = "/tmp/test.pdf"
     mime_type = "application/pdf"
     test_bytes = b"test bytes"
@@ -271,27 +262,24 @@ def test_guess_extension_known():
 
 
 @pytest.mark.asyncio
-async def test_handle_file_no_input(monkeypatch, mock_engine):  # noqa F811
+async def test_handle_file_no_input(db):
     """Test handle_file with no input_uri or file_bytes"""
-    do_monkeypatch(monkeypatch, mock_engine)
     async with models.get_session() as session:
         with pytest.raises(ValueError, match="input_uri or file_bytes must be provided"):
             await operations.handle_file(session, input_uri=None, file_bytes=None)
 
 
 @pytest.mark.asyncio
-async def test_handle_file_empty_bytes(monkeypatch, mock_engine):  # noqa F811
+async def test_handle_file_empty_bytes(db):
     """Test handle_file with empty file_bytes"""
-    do_monkeypatch(monkeypatch, mock_engine)
     async with models.get_session() as session:
         with pytest.raises(ValueError, match="file_bytes must be provided"):
             await operations.handle_file(session, input_uri=None, file_bytes=b"")
 
 
 @pytest.mark.asyncio
-async def test_handle_file_with_input_uri(monkeypatch, mock_engine):  # noqa F811
+async def test_handle_file_with_input_uri(db):
     """Test handle_file with input_uri"""
-    do_monkeypatch(monkeypatch, mock_engine)
     test_bytes = b"test file content"
 
     with patch("soliplex.ingester.lib.operations.dal.read_input_url") as mock_read:
@@ -311,9 +299,8 @@ async def test_handle_file_with_input_uri(monkeypatch, mock_engine):  # noqa F81
 
 
 @pytest.mark.asyncio
-async def test_read_doc_bytes(monkeypatch, mock_engine):  # noqa F811
+async def test_read_doc_bytes(db):
     """Test read_doc_bytes function"""
-    do_monkeypatch(monkeypatch, mock_engine)
     test_bytes = b"test content"
 
     with patch("soliplex.ingester.lib.operations.dal.get_storage_operator") as mock_get_op:
@@ -327,9 +314,8 @@ async def test_read_doc_bytes(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_delete_file(monkeypatch, mock_engine):  # noqa F811
+async def test_delete_file(db):
     """Test delete_file function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with patch("soliplex.ingester.lib.operations.dal.get_storage_operator") as mock_get_op:
         with patch("soliplex.ingester.lib.operations.add_history_for_hash") as mock_history:
@@ -343,8 +329,7 @@ async def test_delete_file(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_update_doc_meta(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_update_doc_meta(db):
     test_uri = "/tmp/test.pdf"
     mime_type = "application/pdf"
     test_bytes = b"test bytes"
@@ -423,9 +408,8 @@ def test_guess_extension_office():
 
 
 @pytest.mark.asyncio
-async def test_batch_operations(monkeypatch, mock_engine):  # noqa F811
+async def test_batch_operations(db):
     """Test batch creation and retrieval"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Test new_batch
     batch_id = await operations.new_batch(source="test_source", name="Test Batch")
@@ -452,9 +436,8 @@ async def test_batch_operations(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_documents_in_batch(monkeypatch, mock_engine):  # noqa F811
+async def test_get_documents_in_batch(db):
     """Test get_documents_in_batch function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create a batch
     batch_id = await operations.new_batch(source="test_source", name="Test Batch")
@@ -481,9 +464,8 @@ async def test_get_documents_in_batch(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_uris_for_batch(monkeypatch, mock_engine):  # noqa F811
+async def test_get_uris_for_batch(db):
     """Test get_uris_for_batch function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create a batch
     batch_id = await operations.new_batch(source="test_source", name="Test Batch")
@@ -509,9 +491,8 @@ async def test_get_uris_for_batch(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_uris_for_source(monkeypatch, mock_engine):  # noqa F811
+async def test_get_uris_for_source(db):
     """Test get_uris_for_source function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     test_source = "test_source_unique"
     test_uri1 = "/tmp/source_test1.pdf"
@@ -530,9 +511,8 @@ async def test_get_uris_for_source(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_create_document_with_batch_id(monkeypatch, mock_engine):  # noqa F811
+async def test_create_document_with_batch_id(db):
     """Test create_document_from_uri with batch_id"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create a batch
     batch_id = await operations.new_batch(source="test_source", name="Test Batch")
@@ -550,9 +530,8 @@ async def test_create_document_with_batch_id(monkeypatch, mock_engine):  # noqa 
 
 
 @pytest.mark.asyncio
-async def test_create_document_with_invalid_batch_id(monkeypatch, mock_engine):  # noqa F811
+async def test_create_document_with_invalid_batch_id(db):
     """Test create_document_from_uri with non-existent batch_id"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     test_uri = "/tmp/invalid_batch_doc.pdf"
     test_bytes = b"test bytes"
@@ -562,9 +541,8 @@ async def test_create_document_with_invalid_batch_id(monkeypatch, mock_engine): 
 
 
 @pytest.mark.asyncio
-async def test_create_document_with_completed_batch(monkeypatch, mock_engine):  # noqa F811
+async def test_create_document_with_completed_batch(db):
     """Test create_document_from_uri with completed batch"""
-    do_monkeypatch(monkeypatch, mock_engine)
     import datetime
 
     # Create and complete a batch
@@ -591,9 +569,8 @@ async def test_create_document_with_completed_batch(monkeypatch, mock_engine):  
 
 
 @pytest.mark.asyncio
-async def test_validate_storage(monkeypatch, mock_engine):  # noqa F811
+async def test_validate_storage(db):
     """Test validate_storage function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with patch("soliplex.ingester.lib.operations.dal.get_storage_operator") as mock_get_op:
         mock_op = AsyncMock()
@@ -607,9 +584,8 @@ async def test_validate_storage(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_delete_document_uri_not_found(monkeypatch, mock_engine):  # noqa F811
+async def test_delete_document_uri_not_found(db):
     """Test delete_document_uri with non-existent uri"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     async with models.get_session() as session:
         with pytest.raises(operations.DocumentNotFoundError):
@@ -617,9 +593,8 @@ async def test_delete_document_uri_not_found(monkeypatch, mock_engine):  # noqa 
 
 
 @pytest.mark.asyncio
-async def test_handle_file_existing(monkeypatch, mock_engine):  # noqa F811
+async def test_handle_file_existing(db):
     """Test handle_file when file already exists in storage"""
-    do_monkeypatch(monkeypatch, mock_engine)
     test_bytes = b"test file content"
 
     with patch("soliplex.ingester.lib.operations.dal.get_storage_operator") as mock_get_op:
@@ -637,9 +612,8 @@ async def test_handle_file_existing(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_document_not_found(monkeypatch, mock_engine):  # noqa F811
+async def test_get_document_not_found(db):
     """Test get_document with non-existent hash"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with pytest.raises(operations.DocumentNotFoundError):
         await operations.get_document("nonexistent_hash")

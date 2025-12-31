@@ -11,14 +11,12 @@ from soliplex.ingester.lib.models import ArtifactType
 from soliplex.ingester.lib.models import RunStep
 from soliplex.ingester.lib.models import WorkflowStepType
 from tests.unit import data
-from tests.unit.common import do_monkeypatch
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def xtest_create_workflow_run(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def xtest_create_workflow_run(db):
     batch_id = await doc_ops.new_batch("pytest-source", "pytest-batch")
     test_uri = "/tmp/test.pdf"
     mime_type = "application/pdf"
@@ -45,9 +43,7 @@ async def xtest_create_workflow_run(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def xtest_split_ingestion(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
-
+async def xtest_split_ingestion(db):
     batch_id = await doc_ops.new_batch("pytest", "pytest")
 
     test_uri = "/tmp/test.pdf"
@@ -118,9 +114,7 @@ async def xtest_split_ingestion(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_workflow(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
-
+async def test_workflow(db):
     batch_id = await doc_ops.new_batch("pytest", "pytest")
 
     test_uri = "/tmp/test.pdf"
@@ -195,9 +189,7 @@ async def test_workflow(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_ingestion(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
-
+async def test_ingestion(db):
     batch_id = await doc_ops.new_batch("pytest", "pytest")
     rg = await wf_ops.create_run_group(workflow_definition_id="test_wf", batch_id=batch_id, param_id="default")
 
@@ -278,9 +270,7 @@ async def test_ingestion(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def xtest_status(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
-
+async def xtest_status(db):
     batch_id = await doc_ops.new_batch("pytest", "pytest")
 
     test_uri = "/tmp/test.pdf"

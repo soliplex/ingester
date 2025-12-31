@@ -2,8 +2,6 @@ import datetime
 import logging
 
 import pytest
-from common import do_monkeypatch
-from common import mock_engine  # noqa
 
 import soliplex.ingester.lib.models as models
 import soliplex.ingester.lib.operations as doc_ops
@@ -23,46 +21,43 @@ async def test_not_found_error():
 
 
 @pytest.mark.asyncio
-async def test_create_run_group(monkeypatch, mock_engine):  # noqa F811
+async def test_create_run_group(db):
     """Test create_run_group function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create a batch first
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
 
     # Create run group
     run_group = await wf_ops.create_run_group(
-        workflow_definition_id="batch", batch_id=batch_id, param_id="test1", name="Test Run Group"
+        workflow_definition_id="batch", batch_id=batch_id, param_id="test_base", name="Test Run Group"
     )
 
     assert run_group is not None
     assert run_group.id is not None
     assert run_group.workflow_definition_id == "batch"
     assert run_group.batch_id == batch_id
-    assert run_group.param_definition_id == "test1"
+    assert run_group.param_definition_id == "test_base"
     assert run_group.name == "Test Run Group"
     assert run_group.start_date is not None
     assert run_group.created_date is not None
 
 
 @pytest.mark.asyncio
-async def test_create_run_group_with_invalid_batch(monkeypatch, mock_engine):  # noqa F811
+async def test_create_run_group_with_invalid_batch(db):
     """Test create_run_group with non-existent batch"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with pytest.raises(wf_ops.NotFoundError, match="Batch .* not found"):
-        await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=99999, param_id="test1")
+        await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=99999, param_id="test_base")
 
 
 @pytest.mark.asyncio
-async def test_get_run_group(monkeypatch, mock_engine):  # noqa F811
+async def test_get_run_group(db):
     """Test get_run_group function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create a batch and run group
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
     run_group = await wf_ops.create_run_group(
-        workflow_definition_id="batch", batch_id=batch_id, param_id="test1", name="Test Run Group"
+        workflow_definition_id="batch", batch_id=batch_id, param_id="test_base", name="Test Run Group"
     )
 
     # Get the run group
@@ -73,23 +68,21 @@ async def test_get_run_group(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_run_group_not_found(monkeypatch, mock_engine):  # noqa F811
+async def test_get_run_group_not_found(db):
     """Test get_run_group with non-existent id"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with pytest.raises(wf_ops.NotFoundError, match="run group .* not found"):
         await wf_ops.get_run_group(99999)
 
 
 @pytest.mark.asyncio
-async def test_get_run_groups_for_batch(monkeypatch, mock_engine):  # noqa F811
+async def test_get_run_groups_for_batch(db):
     """Test get_run_groups_for_batch function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create a batch and run groups
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
-    run_group1 = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
-    run_group2 = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test2")
+    run_group1 = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    run_group2 = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
 
     # Get run groups for batch
     groups = await wf_ops.get_run_groups_for_batch(batch_id)
@@ -100,13 +93,12 @@ async def test_get_run_groups_for_batch(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_run_groups_for_batch_no_filter(monkeypatch, mock_engine):  # noqa F811
+async def test_get_run_groups_for_batch_no_filter(db):
     """Test get_run_groups_for_batch with no batch_id filter"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create a batch and run group
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
-    await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
 
     # Get all run groups (no filter)
     groups = await wf_ops.get_run_groups_for_batch(None)
@@ -114,9 +106,8 @@ async def test_get_run_groups_for_batch_no_filter(monkeypatch, mock_engine):  # 
 
 
 @pytest.mark.asyncio
-async def test_create_workflow_run(monkeypatch, mock_engine):  # noqa F811
+async def test_create_workflow_run(db):
     """Test create_workflow_run function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -127,7 +118,7 @@ async def test_create_workflow_run(monkeypatch, mock_engine):  # noqa F811
     )
 
     # Create run group
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
 
     # Create workflow run
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash, priority=5)
@@ -150,9 +141,8 @@ async def test_create_workflow_run(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_create_single_workflow_run(monkeypatch, mock_engine):  # noqa F811
+async def test_create_single_workflow_run(db):
     """Test create_single_workflow_run function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -164,7 +154,7 @@ async def test_create_single_workflow_run(monkeypatch, mock_engine):  # noqa F81
 
     # Create single workflow run
     workflow_run, steps = await wf_ops.create_single_workflow_run(
-        workflow_definiton_id="batch", doc_id=doc.hash, priority=3, param_id="test1"
+        workflow_definition_id="batch", doc_id=doc.hash, priority=3, param_id="test_base"
     )
 
     assert workflow_run is not None
@@ -175,9 +165,8 @@ async def test_create_single_workflow_run(monkeypatch, mock_engine):  # noqa F81
 
 
 @pytest.mark.asyncio
-async def test_create_workflow_runs_for_batch(monkeypatch, mock_engine):  # noqa F811
+async def test_create_workflow_runs_for_batch(db):
     """Test create_workflow_runs_for_batch function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -191,7 +180,7 @@ async def test_create_workflow_runs_for_batch(monkeypatch, mock_engine):  # noqa
 
     # Create workflow runs for batch
     run_group, runs = await wf_ops.create_workflow_runs_for_batch(
-        batch_id=batch_id, workflow_definition_id="batch", priority=2, param_id="test1"
+        batch_id=batch_id, workflow_definition_id="batch", priority=2, param_id="test_base"
     )
 
     assert run_group is not None
@@ -204,9 +193,8 @@ async def test_create_workflow_runs_for_batch(monkeypatch, mock_engine):  # noqa
 
 
 @pytest.mark.asyncio
-async def test_get_workflow_run(monkeypatch, mock_engine):  # noqa F811
+async def test_get_workflow_run(db):
     """Test get_workflow_run function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -216,17 +204,17 @@ async def test_get_workflow_run(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get workflow run without steps
-    retrieved_run = await wf_ops.get_workflow_run(workflow_run.id, get_steps=False)
+    retrieved_run = await wf_ops.get_workflow_run(workflow_run.id, include_steps=False)
     assert retrieved_run is not None
     assert retrieved_run.id == workflow_run.id
     assert retrieved_run.doc_id == doc.hash
 
     # Get workflow run with steps
-    retrieved_run2, retrieved_steps = await wf_ops.get_workflow_run(workflow_run.id, get_steps=True)
+    retrieved_run2, retrieved_steps = await wf_ops.get_workflow_run(workflow_run.id, include_steps=True)
     assert retrieved_run2 is not None
     assert retrieved_run2.id == workflow_run.id
     assert retrieved_steps is not None
@@ -234,18 +222,16 @@ async def test_get_workflow_run(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_workflow_run_not_found(monkeypatch, mock_engine):  # noqa F811
+async def test_get_workflow_run_not_found(db):
     """Test get_workflow_run with non-existent id"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with pytest.raises(wf_ops.NotFoundError, match="workflow run .* not found"):
         await wf_ops.get_workflow_run(99999)
 
 
 @pytest.mark.asyncio
-async def test_get_workflows(monkeypatch, mock_engine):  # noqa F811
+async def test_get_workflows(db):
     """Test get_workflows function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -255,7 +241,7 @@ async def test_get_workflows(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get workflows for batch
@@ -270,9 +256,8 @@ async def test_get_workflows(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_workflows_with_steps(monkeypatch, mock_engine):  # noqa F811
+async def test_get_workflows_with_steps(db):
     """Test get_workflows function with include_steps=True"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -282,7 +267,7 @@ async def test_get_workflows_with_steps(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get workflows with steps
@@ -313,9 +298,8 @@ async def test_get_workflows_with_steps(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_workflows_for_status(monkeypatch, mock_engine):  # noqa F811
+async def test_get_workflows_for_status(db):
     """Test get_workflows_for_status function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -325,7 +309,7 @@ async def test_get_workflows_for_status(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get workflows with PENDING status
@@ -338,9 +322,8 @@ async def test_get_workflows_for_status(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_run_step(monkeypatch, mock_engine):  # noqa F811
+async def test_get_run_step(db):
     """Test get_run_step function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -350,7 +333,7 @@ async def test_get_run_step(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get the first step
@@ -361,18 +344,16 @@ async def test_get_run_step(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_run_step_not_found(monkeypatch, mock_engine):  # noqa F811
+async def test_get_run_step_not_found(db):
     """Test get_run_step with non-existent id"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with pytest.raises(wf_ops.NotFoundError, match="run step .* not found"):
         await wf_ops.get_run_step(99999)
 
 
 @pytest.mark.asyncio
-async def test_get_run_steps(monkeypatch, mock_engine):  # noqa F811
+async def test_get_run_steps(db):
     """Test get_run_steps function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -382,7 +363,7 @@ async def test_get_run_steps(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get all PENDING steps
@@ -391,9 +372,8 @@ async def test_get_run_steps(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_steps_for_batch(monkeypatch, mock_engine):  # noqa F811
+async def test_get_steps_for_batch(db):
     """Test get_steps_for_batch function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -403,7 +383,7 @@ async def test_get_steps_for_batch(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get steps for batch
@@ -412,12 +392,11 @@ async def test_get_steps_for_batch(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_step_config_by_id(monkeypatch, mock_engine):  # noqa F811
+async def test_get_step_config_by_id(db):
     """Test get_step_config_by_id function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Get step config ids for a param set
-    step_config_ids = await wf_ops.get_step_config_ids("test1")
+    step_config_ids = await wf_ops.get_step_config_ids("test_base")
     assert step_config_ids is not None
 
     # Get a step config by id
@@ -430,18 +409,16 @@ async def test_get_step_config_by_id(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_step_config_by_id_not_found(monkeypatch, mock_engine):  # noqa F811
+async def test_get_step_config_by_id_not_found(db):
     """Test get_step_config_by_id with non-existent id"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with pytest.raises(wf_ops.NotFoundError, match="step config .* not found"):
         await wf_ops.get_step_config_by_id(99999)
 
 
 @pytest.mark.asyncio
-async def test_get_step_config_for_workflow_run(monkeypatch, mock_engine):  # noqa F811
+async def test_get_step_config_for_workflow_run(db):
     """Test get_step_config_for_workflow_run function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -451,7 +428,7 @@ async def test_get_step_config_for_workflow_run(monkeypatch, mock_engine):  # no
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get step config for PARSE step
@@ -461,18 +438,16 @@ async def test_get_step_config_for_workflow_run(monkeypatch, mock_engine):  # no
 
 
 @pytest.mark.asyncio
-async def test_get_step_config_for_workflow_run_not_found(monkeypatch, mock_engine):  # noqa F811
+async def test_get_step_config_for_workflow_run_not_found(db):
     """Test get_step_config_for_workflow_run with non-existent workflow"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     with pytest.raises(wf_ops.NotFoundError, match="step config .* not found"):
         await wf_ops.get_step_config_for_workflow_run(99999, WorkflowStepType.PARSE)
 
 
 @pytest.mark.asyncio
-async def test_find_operator_for_workflow_run(monkeypatch, mock_engine):  # noqa F811
+async def test_find_operator_for_workflow_run(db):
     """Test find_operator_for_workflow_run function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -482,7 +457,7 @@ async def test_find_operator_for_workflow_run(monkeypatch, mock_engine):  # noqa
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Find operator for workflow run
@@ -493,9 +468,8 @@ async def test_find_operator_for_workflow_run(monkeypatch, mock_engine):  # noqa
 
 
 @pytest.mark.asyncio
-async def test_create_lifecycle_history(monkeypatch, mock_engine):  # noqa F811
+async def test_create_lifecycle_history(db):
     """Test create_lifecycle_history function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -505,7 +479,7 @@ async def test_create_lifecycle_history(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Create lifecycle history
@@ -529,9 +503,8 @@ async def test_create_lifecycle_history(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_update_run_status(monkeypatch, mock_engine):  # noqa F811
+async def test_update_run_status(db):
     """Test update_run_status function - tests status update logic"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -541,7 +514,7 @@ async def test_update_run_status(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
 
     # Create and update in the same session
     async with models.get_session() as session:
@@ -569,9 +542,8 @@ async def test_update_run_status(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_update_run_status_failed(monkeypatch, mock_engine):  # noqa F811
+async def test_update_run_status_failed(db):
     """Test update_run_status with FAILED status"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -581,7 +553,7 @@ async def test_update_run_status_failed(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
 
     # Create and update in the same session
     async with models.get_session() as session:
@@ -607,9 +579,8 @@ async def test_update_run_status_failed(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_update_run_status_running(monkeypatch, mock_engine):  # noqa F811
+async def test_update_run_status_running(db):
     """Test update_run_status with RUNNING status"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -619,7 +590,7 @@ async def test_update_run_status_running(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
 
     # Create and update in the same session
     async with models.get_session() as session:
@@ -647,9 +618,8 @@ async def test_update_run_status_running(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_get_run_group_stats(monkeypatch, mock_engine):  # noqa F811
+async def test_get_run_group_stats(db):
     """Test get_run_group_stats function"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     # Create test data
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")
@@ -659,7 +629,7 @@ async def test_get_run_group_stats(monkeypatch, mock_engine):  # noqa F811
         test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
     )
 
-    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test1")
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
     await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # Get stats
@@ -668,3 +638,477 @@ async def test_get_run_group_stats(monkeypatch, mock_engine):  # noqa F811
     assert isinstance(stats, dict)
     # Should have status counts
     assert "PENDING" in stats
+
+
+@pytest.mark.asyncio
+async def test_update_lifecycle_history(db):
+    """Test update_lifecycle_history function"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/update_lifecycle_test.pdf"
+    test_bytes = b"test bytes for lifecycle"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # First create lifecycle history
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.ITEM_START,
+        status=RunStatus.RUNNING,
+        step_id=steps[0].id,
+    )
+
+    # Then update it
+    await wf_ops.update_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.ITEM_START,
+        status=RunStatus.COMPLETED,
+        step_id=steps[0].id,
+        status_message="Completed successfully",
+        status_meta={"result": "success"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_lifecycle_history_failed(db):
+    """Test update_lifecycle_history with FAILED status"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/update_lifecycle_failed_test.pdf"
+    test_bytes = b"test bytes for lifecycle failed"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # First create lifecycle history
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.ITEM_START,
+        status=RunStatus.RUNNING,
+        step_id=steps[0].id,
+    )
+
+    # Then update it with FAILED status
+    await wf_ops.update_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.ITEM_START,
+        status=RunStatus.FAILED,
+        step_id=steps[0].id,
+        status_message="Failed with error",
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_lifecycle_history_running(db):
+    """Test update_lifecycle_history with RUNNING status (no end_date set)"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/update_lifecycle_running_test.pdf"
+    test_bytes = b"test bytes for lifecycle running"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # First create lifecycle history
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.STEP_START,
+        status=RunStatus.PENDING,
+        step_id=steps[0].id,
+    )
+
+    # Then update it with RUNNING status (should not set end_date)
+    await wf_ops.update_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.STEP_START,
+        status=RunStatus.RUNNING,
+        step_id=steps[0].id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_workflows_with_pagination(db):
+    """Test get_workflows with pagination parameters"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri1 = "/tmp/pagination_test1.pdf"
+    test_uri2 = "/tmp/pagination_test2.pdf"
+    test_bytes1 = b"test bytes 1 for pagination"
+    test_bytes2 = b"test bytes 2 for pagination"
+
+    uri1, doc1 = await doc_ops.create_document_from_uri(
+        test_uri1, "test_source", "application/pdf", test_bytes1, batch_id=batch_id
+    )
+    uri2, doc2 = await doc_ops.create_document_from_uri(
+        test_uri2, "test_source", "application/pdf", test_bytes2, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc1.hash)
+    await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc2.hash)
+
+    # Get workflows with pagination
+    workflows, total = await wf_ops.get_workflows(batch_id, page=1, rows_per_page=1)
+    assert len(workflows) == 1
+    assert total >= 2
+
+
+@pytest.mark.asyncio
+async def test_get_workflows_for_status_with_pagination(db):
+    """Test get_workflows_for_status with pagination parameters"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri1 = "/tmp/status_pagination_test1.pdf"
+    test_uri2 = "/tmp/status_pagination_test2.pdf"
+    test_bytes1 = b"test bytes 1 for status pagination"
+    test_bytes2 = b"test bytes 2 for status pagination"
+
+    uri1, doc1 = await doc_ops.create_document_from_uri(
+        test_uri1, "test_source", "application/pdf", test_bytes1, batch_id=batch_id
+    )
+    uri2, doc2 = await doc_ops.create_document_from_uri(
+        test_uri2, "test_source", "application/pdf", test_bytes2, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc1.hash)
+    await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc2.hash)
+
+    # Get workflows for status with pagination
+    workflows, total = await wf_ops.get_workflows_for_status(RunStatus.PENDING, batch_id, page=1, rows_per_page=1)
+    assert len(workflows) == 1
+    assert total >= 2
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_runs(db):
+    """Test get_workflow_runs function (singular)"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/get_workflow_runs_test.pdf"
+    test_bytes = b"test bytes for get_workflow_runs"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # Get workflow runs by batch_id
+    result = await wf_ops.get_workflow_runs(batch_id)
+    assert result is not None
+    assert result.batch_id == batch_id
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_runs_not_found(db):
+    """Test get_workflow_runs with non-existent batch"""
+
+    with pytest.raises(wf_ops.NotFoundError, match="workflow run .* not found"):
+        await wf_ops.get_workflow_runs(99999)
+
+
+@pytest.mark.asyncio
+async def test_get_steps_for_batch_empty(db):
+    """Test get_steps_for_batch with no steps"""
+
+    # Create a batch with no workflow runs
+    batch_id = await doc_ops.new_batch("test_source", "Empty Batch")
+
+    # Get steps for batch - should return empty list
+    steps = await wf_ops.get_steps_for_batch(batch_id)
+    assert steps == []
+
+
+@pytest.mark.asyncio
+async def test_get_steps_for_workflow_runs_empty(db):
+    """Test get_steps_for_workflow_runs with empty list"""
+
+    # Get steps for empty list
+    result = await wf_ops.get_steps_for_workflow_runs([])
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_update_run_status_error(db):
+    """Test update_run_status with ERROR status"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/update_status_error_test.pdf"
+    test_bytes = b"test bytes for error status"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+
+    async with models.get_session() as session:
+        workflow_run = models.WorkflowRun(
+            run_group_id=run_group.id,
+            workflow_definition_id="batch",
+            batch_id=batch_id,
+            doc_id=doc.hash,
+            start_date=datetime.datetime.now(),
+            priority=0,
+            created_date=datetime.datetime.now(),
+            run_params={},
+        )
+        session.add(workflow_run)
+        await session.flush()
+        await session.refresh(workflow_run)
+        workflow_run_id = workflow_run.id
+
+        # Update run status to ERROR (not last step)
+        result = await wf_ops.update_run_status(workflow_run_id, is_last_step=False, status=RunStatus.ERROR, session=session)
+        assert result == RunStatus.RUNNING
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_update_run_status_pending(db):
+    """Test update_run_status with PENDING status (no update)"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/update_status_pending_test.pdf"
+    test_bytes = b"test bytes for pending status"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+
+    async with models.get_session() as session:
+        workflow_run = models.WorkflowRun(
+            run_group_id=run_group.id,
+            workflow_definition_id="batch",
+            batch_id=batch_id,
+            doc_id=doc.hash,
+            start_date=datetime.datetime.now(),
+            priority=0,
+            created_date=datetime.datetime.now(),
+            run_params={},
+        )
+        session.add(workflow_run)
+        await session.flush()
+        await session.refresh(workflow_run)
+        workflow_run_id = workflow_run.id
+
+        # Update run status with PENDING (should return status unchanged)
+        result = await wf_ops.update_run_status(
+            workflow_run_id, is_last_step=False, status=RunStatus.PENDING, session=session
+        )
+        assert result == RunStatus.PENDING
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_get_step_config_ids_with_existing_config(db):
+    """Test get_step_config_ids when config already exists (line 124)"""
+
+    # First call creates the config
+    id_map1 = await wf_ops.get_step_config_ids("test_base")
+    assert id_map1 is not None
+
+    # Second call should hit the existing config branch
+    id_map2 = await wf_ops.get_step_config_ids("test_base")
+    assert id_map2 is not None
+
+    # IDs should be the same
+    for step_type in id_map1:
+        assert id_map1[step_type] == id_map2[step_type]
+
+
+@pytest.mark.asyncio
+async def test_get_step_config_ids_existing_step_config(db):
+    """Test get_step_config_ids when step config exists but config set is new (line 124)"""
+    from unittest.mock import AsyncMock
+    from unittest.mock import MagicMock
+    from unittest.mock import patch
+
+    # We need to simulate the scenario where:
+    # 1. ConfigSet doesn't exist (exist_set is None)
+    # 2. But individual StepConfig already exists for some step types
+
+    # Create a mock param set
+    mock_param_set = MagicMock()
+    mock_param_set.id = "test_new_param"
+    mock_param_set.config = {models.WorkflowStepType.INGEST: {"key": "value"}}
+    mock_param_set.model_dump_json.return_value = '{"id": "test_new_param", "config": {"ingest": {"key": "value"}}}'
+
+    # Create a mock step config that "already exists"
+    mock_existing_step_config = MagicMock()
+    mock_existing_step_config.id = 999
+
+    # Track flush calls to simulate database state
+    flush_count = [0]
+
+    # Mock session behavior
+    mock_session = MagicMock()
+
+    # Setup session.exec to return appropriate results
+    async def mock_exec(query):
+        result = MagicMock()
+        # Check if it's the config set query or step config query
+        query_str = str(query)
+        if "configset" in query_str.lower() or "config_set" in query_str.lower():
+            result.first.return_value = None  # ConfigSet doesn't exist
+        elif "stepconfig" in query_str.lower():
+            # Return existing step config on first query for each step type
+            result.first.return_value = mock_existing_step_config
+        else:
+            result.first.return_value = None
+        return result
+
+    mock_session.exec = mock_exec
+
+    async def mock_flush():
+        flush_count[0] += 1
+
+    mock_session.flush = mock_flush
+    mock_session.add = MagicMock()
+    mock_session.commit = AsyncMock()
+
+    async def mock_refresh(obj):
+        if hasattr(obj, "id") and obj.id is None:
+            obj.id = flush_count[0]
+
+    mock_session.refresh = mock_refresh
+    mock_session.no_autoflush = MagicMock()
+    mock_session.no_autoflush.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.no_autoflush.__exit__ = MagicMock(return_value=None)
+
+    mock_context = MagicMock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_context.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("soliplex.ingester.lib.wf.operations.get_param_set", new=AsyncMock(return_value=mock_param_set)),
+        patch("soliplex.ingester.lib.wf.operations.get_session", return_value=mock_context),
+    ):
+        id_map = await wf_ops.get_step_config_ids("test_new_param")
+        # The existing step config id should be used
+        assert models.WorkflowStepType.INGEST in id_map
+        assert id_map[models.WorkflowStepType.INGEST] == 999
+
+
+@pytest.mark.asyncio
+async def test_create_workflow_run_with_invalid_batch_in_run_group(db):
+    """Test create_workflow_run when run_group has invalid batch_id (line 328)"""
+    from unittest.mock import AsyncMock
+    from unittest.mock import MagicMock
+    from unittest.mock import patch
+
+    # Create a mock run_group with an invalid batch_id
+    mock_run_group = MagicMock()
+    mock_run_group.batch_id = 99999
+    mock_run_group.workflow_definition_id = "batch"
+    mock_run_group.param_definition_id = "test_base"
+    mock_run_group.id = 1
+
+    # Mock get_batch to return None
+    with patch.object(wf_ops, "get_batch", new=AsyncMock(return_value=None)):
+        with pytest.raises(wf_ops.NotFoundError, match="Batch .* not found"):
+            await wf_ops.create_workflow_run(run_group=mock_run_group, doc_id="test_hash")
+
+
+@pytest.mark.asyncio
+async def test_get_run_group_durations(db):
+    """Test get_run_group_durations function (mocked due to PostgreSQL-specific SQL)"""
+    from unittest.mock import AsyncMock
+    from unittest.mock import MagicMock
+    from unittest.mock import patch
+
+    # Mock the session and query execution since the SQL uses PostgreSQL-specific syntax
+    mock_result = MagicMock()
+    mock_result.all.return_value = [("parse", 5, 10.5, 1.2, 5.5, 100, 20, 50.0, 120)]
+
+    mock_session = MagicMock()
+    mock_session.exec = AsyncMock(return_value=mock_result)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("soliplex.ingester.lib.wf.operations.get_session", return_value=mock_session):
+        durations = await wf_ops.get_run_group_durations(1)
+        assert isinstance(durations, list)
+        assert len(durations) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_step_stats(db):
+    """Test get_step_stats function (mocked due to PostgreSQL-specific SQL)"""
+    from unittest.mock import AsyncMock
+    from unittest.mock import MagicMock
+    from unittest.mock import patch
+
+    # Mock the session and query execution since the SQL uses PostgreSQL-specific syntax
+    mock_result = MagicMock()
+    mock_result.all.return_value = [("Test Batch", "test_base", "parse", "PENDING", 5, 100)]
+
+    mock_session = MagicMock()
+    mock_session.exec = AsyncMock(return_value=mock_result)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("soliplex.ingester.lib.wf.operations.get_session", return_value=mock_session):
+        stats = await wf_ops.get_step_stats(1)
+        assert isinstance(stats, list)
+        assert len(stats) == 1
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_steps(db):
+    """Test reset_failed_steps function"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/reset_failed_test.pdf"
+    test_bytes = b"test bytes for reset failed"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # Set workflow run and step to FAILED status
+    async with models.get_session() as session:
+        # Update workflow run status to FAILED
+        workflow_run_db = await session.get(models.WorkflowRun, workflow_run.id)
+        workflow_run_db.status = RunStatus.FAILED
+        session.add(workflow_run_db)
+
+        # Update first step to FAILED
+        step_db = await session.get(models.RunStep, steps[0].id)
+        step_db.status = RunStatus.FAILED
+        session.add(step_db)
+        await session.commit()
+
+    # Reset failed steps
+    await wf_ops.reset_failed_steps(run_group.id)
+
+    # Verify steps were reset (no exception means success)
+    # The function doesn't return anything, so we just verify it doesn't raise

@@ -35,7 +35,7 @@ class WorkflowException(Exception):
     pass
 
 
-def do_state_stransition(
+def do_state_transition(
     start_status: RunStatus,
     end_status: RunStatus,
     retry: int,
@@ -84,7 +84,7 @@ async def set_step_status(
             timestamp = datetime.datetime.now()
             results = await session.exec(q)
             step = results.first()
-            step.status = do_state_stransition(step.status, status, step.retry, step.retries, step.worker_id)
+            step.status = do_state_transition(step.status, status, step.retry, step.retries, step.worker_id)
             step.status_date = timestamp
             step.status_message = message
             step.status_meta = meta
@@ -115,6 +115,7 @@ async def set_step_status(
             f"error setting step status {run_step_id} {status} {e} swallowing to keep going",
             exc_info=True,
         )
+        return None
 
 
 async def get_runnable_steps(top: int | None = None, batch_id: int | None = None) -> list[RunStep]:
@@ -250,8 +251,6 @@ async def run_lifecycle_event(
                     run_group,
                 )
                 if res is None or not isinstance(res, dict):
-                    res = {}
-                elif not isinstance(res, dict):
                     res = {"result": str(res)}
             await operations.update_lifecycle_history(
                 run_group.id,
@@ -383,7 +382,7 @@ def build_coro(
         "workflow_run": workflow_run,
         "workflow_def": workflow_def,
         "step_config": step_config,
-        "batch_id:": batch_id,
+        "batch_id": batch_id,
         "doc_hash": workflow_run.doc_id,
         "source": batch_source,
         "run_group": run_group,

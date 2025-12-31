@@ -1,8 +1,6 @@
 import logging
 
 import pytest
-from common import do_monkeypatch
-from common import mock_engine  # noqa
 
 import soliplex.ingester.lib.dal as dal
 import soliplex.ingester.lib.models as models
@@ -12,8 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_operators(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_operators(db):
     bytea = b"test"
     get_settings().file_store_target = "db"
     for st in models.ArtifactType:

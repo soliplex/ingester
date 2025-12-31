@@ -2,11 +2,10 @@ import logging
 
 import pytest
 import yaml
-from common import do_monkeypatch
-from common import mock_engine  # noqa
 
 import soliplex.ingester.lib.wf.operations as wf_ops
 import soliplex.ingester.lib.wf.registry as wf_registry
+from soliplex.ingester.lib.models import Database
 from soliplex.ingester.lib.models import EventHandler
 from soliplex.ingester.lib.models import WorkflowDefinition
 from soliplex.ingester.lib.models import WorkflowStepType
@@ -101,29 +100,87 @@ def test_make_config():
 
 
 @pytest.mark.asyncio
-async def test_get_step_param_ids(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_get_param_set_base(db: Database):
+    base_config = await wf_registry.get_param_set("test_base")
+    ids = await wf_ops.get_step_config_ids("test_base")
+    assert ids
+    assert base_config
 
-    pset1 = await wf_registry.get_param_set("test1")
-    pset2 = await wf_registry.get_param_set("test2")
-    pset3 = await wf_registry.get_param_set("test3")
-    assert pset1 is not None
-    assert pset2 is not None
-    assert pset3 is not None
 
-    ids1 = await wf_ops.get_step_config_ids("test1")
-    assert ids1
-    ids2 = await wf_ops.get_step_config_ids("test2")
-    assert ids2
-    ids3 = await wf_ops.get_step_config_ids("test3")
-    assert ids3
-    logger.info(f"ids1={ids1}")
-    logger.info(f"ids1={ids2}")
-    logger.info(f"ids1={ids3}")
-    assert ids1[WorkflowStepType.PARSE] == ids2[WorkflowStepType.PARSE]
-    assert ids1[WorkflowStepType.CHUNK] != ids2[WorkflowStepType.CHUNK]
-    assert ids1[WorkflowStepType.EMBED] != ids2[WorkflowStepType.EMBED]
-    assert ids1[WorkflowStepType.PARSE] == ids3[WorkflowStepType.PARSE]  # same config for parse
-    assert (
-        ids1[WorkflowStepType.EMBED] != ids3[WorkflowStepType.EMBED]
-    )  # 3 skips  chunk but parse and embed are identical this means embed needs to be different for 3
+@pytest.mark.asyncio
+async def test_param_set_comparison_same(db: Database):
+    """
+    Test comparing two param sets, the ids for the steps before the
+    difference should be the same, afterwards should be diffent
+    """
+    base_ids = await wf_ops.get_step_config_ids("test_base")
+    assert base_ids
+    same_ids = await wf_ops.get_step_config_ids("test_base_same")
+    assert same_ids
+
+    assert base_ids[WorkflowStepType.INGEST] == same_ids[WorkflowStepType.INGEST]
+    assert base_ids[WorkflowStepType.VALIDATE] == same_ids[WorkflowStepType.VALIDATE]
+    assert base_ids[WorkflowStepType.PARSE] == same_ids[WorkflowStepType.PARSE]
+    assert base_ids[WorkflowStepType.CHUNK] == same_ids[WorkflowStepType.CHUNK]
+    assert base_ids[WorkflowStepType.EMBED] == same_ids[WorkflowStepType.EMBED]
+    assert base_ids[WorkflowStepType.STORE] == same_ids[WorkflowStepType.STORE]
+    assert base_ids[WorkflowStepType.ROUTE] == same_ids[WorkflowStepType.ROUTE]
+
+
+@pytest.mark.asyncio
+async def test_param_set_comparison_diff_step(db: Database):
+    """
+    Test comparing two param sets, the ids for the steps before the
+    difference should be the same, afterwards should be diffent
+    """
+    base_ids = await wf_ops.get_step_config_ids("test_base")
+    assert base_ids
+
+    diff_ids = await wf_ops.get_step_config_ids("test_diff_chunk")
+    assert diff_ids
+
+    assert base_ids[WorkflowStepType.INGEST] == diff_ids[WorkflowStepType.INGEST]
+    assert base_ids[WorkflowStepType.VALIDATE] == diff_ids[WorkflowStepType.VALIDATE]
+    assert base_ids[WorkflowStepType.PARSE] == diff_ids[WorkflowStepType.PARSE]
+    assert base_ids[WorkflowStepType.CHUNK] != diff_ids[WorkflowStepType.CHUNK]
+    assert base_ids[WorkflowStepType.EMBED] != diff_ids[WorkflowStepType.EMBED]
+    assert base_ids[WorkflowStepType.STORE] != diff_ids[WorkflowStepType.STORE]
+    assert base_ids[WorkflowStepType.ROUTE] != diff_ids[WorkflowStepType.ROUTE]
+
+
+@pytest.mark.asyncio
+async def test_param_set_comparison_missing(db: Database):
+    """
+    Test comparing two param sets, the ids for the steps before the
+    difference should be the same, afterwards should be diffent
+    """
+    base_ids = await wf_ops.get_step_config_ids("test_base")
+    assert base_ids
+    diff_ids = await wf_ops.get_step_config_ids("test_missing_chunk")
+    assert diff_ids
+    assert base_ids[WorkflowStepType.INGEST] == diff_ids[WorkflowStepType.INGEST]
+    assert base_ids[WorkflowStepType.VALIDATE] == diff_ids[WorkflowStepType.VALIDATE]
+    assert base_ids[WorkflowStepType.PARSE] == diff_ids[WorkflowStepType.PARSE]
+    assert base_ids[WorkflowStepType.CHUNK] != diff_ids[WorkflowStepType.CHUNK]
+    assert base_ids[WorkflowStepType.EMBED] != diff_ids[WorkflowStepType.EMBED]
+    assert base_ids[WorkflowStepType.STORE] != diff_ids[WorkflowStepType.STORE]
+    assert base_ids[WorkflowStepType.ROUTE] != diff_ids[WorkflowStepType.ROUTE]
+
+
+@pytest.mark.asyncio
+async def test_param_set_comparison_missing_diff(db: Database):
+    """
+    Test comparing two param sets, the ids for the steps before the
+    difference should be the same, afterwards should be diffent
+    """
+    base_ids = await wf_ops.get_step_config_ids("test_base")
+    assert base_ids
+    diff_ids = await wf_ops.get_step_config_ids("test_missing_chunk_diff_param")
+    assert diff_ids
+    assert base_ids[WorkflowStepType.INGEST] == diff_ids[WorkflowStepType.INGEST]
+    assert base_ids[WorkflowStepType.VALIDATE] == diff_ids[WorkflowStepType.VALIDATE]
+    assert base_ids[WorkflowStepType.PARSE] != diff_ids[WorkflowStepType.PARSE]
+    assert base_ids[WorkflowStepType.CHUNK] != diff_ids[WorkflowStepType.CHUNK]
+    assert base_ids[WorkflowStepType.EMBED] != diff_ids[WorkflowStepType.EMBED]
+    assert base_ids[WorkflowStepType.STORE] != diff_ids[WorkflowStepType.STORE]
+    assert base_ids[WorkflowStepType.ROUTE] != diff_ids[WorkflowStepType.ROUTE]

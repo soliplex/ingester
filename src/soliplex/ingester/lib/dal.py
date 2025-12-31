@@ -342,7 +342,8 @@ def get_storage_operator(
         root = str(step_config.id)
 
     if target == "s3":
-        raw_op = create_s3_operator(settings.artifact_s3, root)
+        s3_root = f"/{getattr(settings, f'{st}_store_dir')}/{root}"
+        raw_op = create_s3_operator(settings.artifact_s3, s3_root)
         return OpenDALAdapter(raw_op, root)
     elif target == "fs":
         fs_root = f"{settings.file_store_dir}/{getattr(settings, f'{st}_store_dir')}/{root}"

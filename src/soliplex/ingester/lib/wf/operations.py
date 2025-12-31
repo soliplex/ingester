@@ -101,7 +101,7 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
             configset = ConfigSet(
                 yaml_id=param_set.id,
                 yaml_contents=yaml_str,
-                created_date=datetime.datetime.now(),
+                created_date=datetime.datetime.now(datetime.UTC),
             )
             session.add(configset)
             await session.flush()
@@ -198,7 +198,7 @@ async def create_run_group(
     # pull definitions from registry so defaults can be used and check if ids are invalid
     workflow_def = await get_workflow_definition(workflow_definition_id)
     param_set = await get_param_set(param_id)
-    dt = datetime.datetime.now()
+    dt = datetime.datetime.now(datetime.UTC)
 
     async with get_session() as session:
         run_group = RunGroup(
@@ -228,7 +228,7 @@ async def create_lifecycle_history(
     status_message: str | None = None,
     status_meta: dict[str, str] | None = None,
 ) -> LifecycleHistory:
-    dt = datetime.datetime.now()
+    dt = datetime.datetime.now(datetime.UTC)
     async with get_session() as session:
         run_group_history = LifecycleHistory(
             run_group_id=run_group_id,
@@ -260,7 +260,7 @@ async def update_lifecycle_history(
     status_message: str | None = None,
     status_meta: dict[str, str] | None = None,
 ) -> None:
-    dt = datetime.datetime.now()
+    dt = datetime.datetime.now(datetime.UTC)
     end_date = None
     if status == RunStatus.COMPLETED or status == RunStatus.FAILED:
         end_date = dt
@@ -328,7 +328,7 @@ async def create_workflow_run(
         raise NotFoundError(f"Batch {batch_id} not found")
     workflow_def = await get_workflow_definition(workflow_definition_id)
     parameter_ids = await get_step_config_ids(param_id)
-    created = datetime.datetime.now()
+    created = datetime.datetime.now(datetime.UTC)
     args = {
         "param_id": param_id,
         "workflow_id": workflow_definition_id,
@@ -340,7 +340,7 @@ async def create_workflow_run(
             workflow_definition_id=workflow_def.id,
             batch_id=batch_id,
             doc_id=doc_id,
-            start_date=datetime.datetime.now(),
+            start_date=datetime.datetime.now(datetime.UTC),
             priority=priority,
             created_date=created,
             run_params=args,
@@ -590,13 +590,14 @@ async def update_run_status(workflow_run_id: int, is_last_step: bool, status: Ru
         update_status = RunStatus.RUNNING
     logger.info(f"update run status {workflow_run_id} {update_status} {status}")
     if update_status is not None:
+        dt = datetime.datetime.now(datetime.UTC)
         q = select(WorkflowRun).where(WorkflowRun.id == workflow_run_id).with_for_update()
         results = await session.exec(q)
         wf = results.first()
-        wf.status_date = datetime.datetime.now()
+        wf.status_date = dt
         wf.status = update_status
         if status == RunStatus.COMPLETED or status == RunStatus.FAILED:
-            wf.completed_date = datetime.datetime.now()
+            wf.completed_date = dt
 
         session.add(wf)
         return update_status

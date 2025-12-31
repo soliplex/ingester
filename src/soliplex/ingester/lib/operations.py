@@ -44,7 +44,7 @@ class DocumentNotFoundError(ValueError):
 
 class DocumentInvalidError(ValueError):
     def __init__(self, doc_hash):
-        super().__init__(f"Document {doc_hash} not found")
+        super().__init__(f"Document {doc_hash} is invalid")
 
 
 class BatchNotFoundError(ValueError):
@@ -72,6 +72,19 @@ def guess_extension(mime_type: str) -> str:
     if guess is None:
         return MIME_OVERRIDES.get(mime_type, ".bin")
     return guess
+
+
+def _extract_hash_value(prefixed_hash: str) -> str:
+    """Extract hash value from prefixed format.
+
+    Handles formats like 'sha256-abc123' or 'md5:abc123', returning just the hash portion.
+    Returns the original string if no prefix separator is found.
+    """
+    if "-" in prefixed_hash:
+        return prefixed_hash.split("-", 1)[1]
+    if ":" in prefixed_hash:
+        return prefixed_hash.split(":", 1)[1]
+    return prefixed_hash
 
 
 async def update_doc_meta(doc_hash: str, meta: dict[str, str]):
@@ -110,8 +123,8 @@ async def get_document_uris_by_hash(doc_hash: str) -> list[models.DocumentURI]:
         q = select(models.DocumentURI).where(models.DocumentURI.doc_hash == doc_hash)
         rs = await session.exec(q)
         res = rs.all()
-        if res:
-            [session.expunge(x) for x in res]
+        for item in res:
+            session.expunge(item)
         return res
 
 
@@ -147,7 +160,7 @@ async def add_history(
         action=action,
         version=doc_uri.version,
         histmeta=histmeta,
-        process_date=datetime.datetime.now(),
+        process_date=datetime.datetime.now(datetime.UTC),
         batch_id=batch_id,
     )
     session.add(hist)
@@ -155,7 +168,7 @@ async def add_history(
     return hist
 
 
-async def handle_file(session, input_uri: str = None, file_bytes=None) -> tuple[str, int, str]:
+async def handle_file(input_uri: str = None, file_bytes: bytes = None) -> tuple[str, int, str]:
     settings = get_settings()
     if file_bytes is None:
         if input_uri is None:
@@ -163,27 +176,28 @@ async def handle_file(session, input_uri: str = None, file_bytes=None) -> tuple[
         file_bytes = await dal.read_input_url(input_uri)
 
     if file_bytes:
-        hash = models.doc_hash(file_bytes)
+        content_hash = models.doc_hash(file_bytes)
         md5_hash = hashlib.md5(file_bytes).hexdigest()
         logger.debug(
-            f"handle file {input_uri} {hash}  to {settings.file_store_target}",
-            extra=log_context(uri=input_uri, doc_hash=hash, action="handle_file"),
+            f"handle file {input_uri} {content_hash}  to {settings.file_store_target}",
+            extra=log_context(uri=input_uri, doc_hash=content_hash, action="handle_file"),
         )
 
         op = dal.get_storage_operator(models.ArtifactType.DOC)
-        exists = await op.exists(hash)
+        exists = await op.exists(content_hash)
         if not exists:
-            await op.write(hash, file_bytes)
-        return hash, len(file_bytes), md5_hash
+            await op.write(content_hash, file_bytes)
+        return content_hash, len(file_bytes), md5_hash
     else:
         raise ValueError("file_bytes must be provided")
 
 
 async def delete_file(doc_hash: str, session):
-    q = text(f"""select cs.* from stepconfig cs
+    q = text("""select cs.* from stepconfig cs
            inner join runstep rs on rs.step_config_id=cs.id
            inner join workflowrun r on r.id=rs.workflow_run_id
-           where r.doc_id='{doc_hash}'""")
+           where r.doc_id=:doc_hash""")
+    q = q.bindparams(doc_hash=doc_hash)
     res = await session.exec(q)
     for step_config in res.all():
         for st in models.ArtifactType:
@@ -196,7 +210,7 @@ async def delete_file(doc_hash: str, session):
                     extra=log_context(doc_hash=doc_hash, action="delete_file"),
                 )
 
-    await add_history_for_hash(doc_hash, "file deleted", session)
+    await add_history_for_hash(doc_hash, "file deleted")
 
 
 async def read_doc_bytes(doc_hash: str, storage_type: models.ArtifactType):
@@ -219,12 +233,12 @@ async def create_document_from_uri(
         batch = await get_batch(batch_id)
         if batch is None:
             raise BatchNotFoundError(batch_id)
-        elif batch.completed_date is not None:
+        if batch.completed_date is not None:
             raise BatchCompletedError(batch_id)
     # TODO:handle uris
     async with models.get_session() as session:
         # doc.hash = models.doc_hash(doc.file_bytes)
-        doc_hash, file_size, md5_hash = await handle_file(session, input_uri=input_uri, file_bytes=file_bytes)
+        doc_hash, file_size, md5_hash = await handle_file(input_uri=input_uri, file_bytes=file_bytes)
         if doc_meta is None:
             doc_meta = {}
         doc_meta.update({"md5": md5_hash})
@@ -301,6 +315,8 @@ async def create_document_from_uri(
                 ),
             )
             await session.refresh(docuri)
+        await session.refresh(doc)
+        await session.refresh(docuri)
         session.expunge(doc)
         session.expunge(docuri)
         await session.commit()
@@ -320,7 +336,8 @@ async def get_document_uri_history(
         )
         rs = await session.exec(q)
         res = rs.all()
-        [session.expunge(x) for x in res]
+        for item in res:
+            session.expunge(item)
         return res
 
 
@@ -351,7 +368,8 @@ async def get_uris_for_source(source: str) -> list[models.DocumentURI]:
         q = select(models.DocumentURI).where(models.DocumentURI.source == source)
         rs = await session.exec(q)
         res = rs.all()
-        [session.expunge(x) for x in res]
+        for item in res:
+            session.expunge(item)
         return res
 
 
@@ -362,25 +380,22 @@ async def get_doc_status(source: str, source_hashes: dict[str, str]):
     res = {}
     for source_uri, source_hash in source_hashes.items():
         if source_uri in stored_dict:
-            if "-" in source_hash:
-                source_hash = source_hash.split("-")[1]
-            if ":" in source_hash:
-                source_hash = source_hash.split(":")[1]
-            stored_hash = stored_dict[source_uri].split("-")[1]
-            if source_hash == stored_hash:
-                res[source_uri] = {"hash": source_hash, "status": "matched"}
+            extracted_source_hash = _extract_hash_value(source_hash)
+            stored_hash = _extract_hash_value(stored_dict[source_uri])
+            if extracted_source_hash == stored_hash:
+                res[source_uri] = {"hash": extracted_source_hash, "status": "matched"}
             else:
                 res[source_uri] = {
-                    "source_hash": source_hash,
+                    "source_hash": extracted_source_hash,
                     "stored_hash": stored_hash,
                     "status": "mismatch",
                 }
             del stored_dict[source_uri]
         else:
             res[source_uri] = {"hash": source_hash, "status": "new"}
-    for uri, hash in stored_dict.items():
+    for uri, doc_hash in stored_dict.items():
         if uri not in source_hashes:
-            to_remove.append({"uri": uri, "hash": hash, "status": "deleted"})
+            to_remove.append({"uri": uri, "hash": doc_hash, "status": "deleted"})
     return res, to_remove
 
 
@@ -389,13 +404,14 @@ async def get_uris_for_batch(batch_id: int) -> list[models.DocumentURI]:
         q = select(models.DocumentURI).where(models.DocumentURI.batch_id == batch_id)
         rs = await session.exec(q)
         res = rs.all()
-        [session.expunge(x) for x in res]
+        for item in res:
+            session.expunge(item)
         return res
 
 
 async def new_batch(source: str, name: str = None) -> int:
     async with models.get_session() as session:
-        batch = models.DocumentBatch(source=source, name=name, start_date=datetime.datetime.now())
+        batch = models.DocumentBatch(source=source, name=name, start_date=datetime.datetime.now(datetime.UTC))
         session.add(batch)
         await session.flush()
         await session.refresh(batch)
@@ -410,11 +426,12 @@ async def list_batches() -> list[models.DocumentBatch]:
         q = select(models.DocumentBatch)
         rs = await session.exec(q)
         res = rs.all()
-        [session.expunge(x) for x in res]
+        for item in res:
+            session.expunge(item)
         return res
 
 
-async def get_batch(id: int) -> models.DocumentBatch:
+async def get_batch(id: int) -> models.DocumentBatch | None:
     async with models.get_session() as session:
         q = select(models.DocumentBatch).where(models.DocumentBatch.id == id)
         rs = await session.exec(q)
@@ -430,7 +447,8 @@ async def get_documents_in_batch(id: int) -> list[models.Document]:
         q = select(models.Document).where(models.Document.batch_id == id)
         rs = await session.exec(q)
         res = rs.all()
-        [session.expunge(x) for x in res]
+        for item in res:
+            session.expunge(item)
         return res
 
 
@@ -493,32 +511,53 @@ async def get_document(doc_hash: str) -> models.Document:
 
 async def delete_orphaned_documents():
     """
-    delete orphaned documents that have no uri pointing to them
+    Delete orphaned documents that have no uri pointing to them.
     """
     async with models.get_session() as session:
-        q1 = text("""delete from document where hash not in
-            (select doc_hash from documenturi)""")
-        q2 = text("""delete from documenturihistory where hash not in
-            (select doc_hash from documenturi)""")
+        q1 = text("""DELETE FROM document WHERE hash NOT IN
+            (SELECT doc_hash FROM documenturi)""")
+        q2 = text("""DELETE FROM documenturihistory WHERE hash NOT IN
+            (SELECT doc_hash FROM documenturi)""")
 
         await session.exec(q1)
         await session.exec(q2)
         await session.commit()
 
 
-async def validate_storage():
-    filesets = {}
+async def validate_storage() -> dict[tuple[models.ArtifactType, models.ArtifactType], set[str]]:
+    """Validate storage consistency across artifact types.
+
+    Returns a dict mapping (artifact_type_1, artifact_type_2) to files present in
+    artifact_type_1 but missing from artifact_type_2.
+    """
+    filesets: dict[models.ArtifactType, set[str]] = {}
+    errors: dict[models.ArtifactType, str] = {}
+
     for st in models.ArtifactType:
-        op = dal.get_storage_operator(st)
-        files = await op.list("/")
-        files = set(files)
-        filesets[st] = files
-    diffs = {}
+        try:
+            op = dal.get_storage_operator(st)
+            files = await op.list("/")
+            filesets[st] = set(files)
+        except Exception as e:
+            logger.warning(
+                f"Failed to list files for storage type {st}: {e}",
+                extra=log_context(action="validate_storage"),
+            )
+            errors[st] = str(e)
+            filesets[st] = set()
+
+    if errors:
+        logger.warning(
+            f"Storage validation completed with errors for {len(errors)} storage types",
+            extra=log_context(action="validate_storage"),
+        )
+
+    diffs: dict[tuple[models.ArtifactType, models.ArtifactType], set[str]] = {}
     for s1 in models.ArtifactType:
         for s2 in models.ArtifactType:
             if s1 == s2:
                 continue
-            diff = set(filesets[s1]) - (set(filesets[s2]))
+            diff = filesets[s1] - filesets[s2]
             diffs[(s1, s2)] = diff
 
     return diffs

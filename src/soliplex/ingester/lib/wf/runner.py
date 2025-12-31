@@ -81,7 +81,8 @@ async def set_step_status(
     try:
         async with get_session() as session:
             q = select(RunStep).where(RunStep.id == run_step_id).with_for_update()
-            timestamp = datetime.datetime.now()
+            timestamp = datetime.datetime.now(datetime.UTC)
+
             results = await session.exec(q)
             step = results.first()
             step.status = do_state_transition(step.status, status, step.retry, step.retries, step.worker_id)
@@ -504,7 +505,7 @@ async def queue_tasks():
 async def worker_checkin(worker_id: str):
     try:
         async with get_session() as session:
-            checkin = datetime.datetime.now()
+            checkin = datetime.datetime.now(datetime.UTC)
             logger.info(f"worker {worker_id} checkin {checkin}")
             q = select(WorkerCheckin).where(WorkerCheckin.id == worker_id)
             rs = await session.exec(q)
@@ -533,7 +534,7 @@ async def check_dead_workers():
             await asyncio.sleep(checkin_interval)
             logger.info(f"checking for dead workers every {checkin_interval} seconds")
             # add a random delay to avoid herding
-            last_checkin_time = datetime.datetime.now() - datetime.timedelta(
+            last_checkin_time = datetime.now(datetime.UTC) - datetime.timedelta(
                 seconds=checkin_interval + (random.randint(1, 20) / 10)
             )
             async with get_session() as session:
@@ -543,7 +544,7 @@ async def check_dead_workers():
                 for worker in results:
                     logger.info(
                         f"worker {worker.id} last checkin {worker.last_checkin}"
-                        + f" dead for {datetime.datetime.now() - worker.last_checkin} - removing"
+                        + f" dead for {datetime.now(datetime.UTC) - worker.last_checkin} - removing"
                     )
                     # remove the checkin
                     await session.delete(worker)

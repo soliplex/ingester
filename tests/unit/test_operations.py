@@ -264,17 +264,15 @@ def test_guess_extension_known():
 @pytest.mark.asyncio
 async def test_handle_file_no_input(db):
     """Test handle_file with no input_uri or file_bytes"""
-    async with models.get_session() as session:
-        with pytest.raises(ValueError, match="input_uri or file_bytes must be provided"):
-            await operations.handle_file(session, input_uri=None, file_bytes=None)
+    with pytest.raises(ValueError, match="input_uri or file_bytes must be provided"):
+        await operations.handle_file(input_uri=None, file_bytes=None)
 
 
 @pytest.mark.asyncio
 async def test_handle_file_empty_bytes(db):
     """Test handle_file with empty file_bytes"""
-    async with models.get_session() as session:
-        with pytest.raises(ValueError, match="file_bytes must be provided"):
-            await operations.handle_file(session, input_uri=None, file_bytes=b"")
+    with pytest.raises(ValueError, match="file_bytes must be provided"):
+        await operations.handle_file(input_uri=None, file_bytes=b"")
 
 
 @pytest.mark.asyncio
@@ -290,12 +288,11 @@ async def test_handle_file_with_input_uri(db):
             mock_op.write = AsyncMock()
             mock_get_op.return_value = mock_op
 
-            async with models.get_session() as session:
-                hash_result, size, md5 = await operations.handle_file(session, input_uri="http://test.com/file.pdf")
-                assert size == len(test_bytes)
-                assert hash_result.startswith("sha256-")
-                mock_read.assert_called_once()
-                mock_op.write.assert_called_once()
+            hash_result, size, md5 = await operations.handle_file(input_uri="http://test.com/file.pdf")
+            assert size == len(test_bytes)
+            assert hash_result.startswith("sha256-")
+            mock_read.assert_called_once()
+            mock_op.write.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -603,12 +600,11 @@ async def test_handle_file_existing(db):
         mock_op.write = AsyncMock()
         mock_get_op.return_value = mock_op
 
-        async with models.get_session() as session:
-            hash_result, size, md5 = await operations.handle_file(session, file_bytes=test_bytes)
-            assert size == len(test_bytes)
-            assert hash_result.startswith("sha256-")
-            # write should not be called since file exists
-            mock_op.write.assert_not_called()
+        hash_result, size, md5 = await operations.handle_file(file_bytes=test_bytes)
+        assert size == len(test_bytes)
+        assert hash_result.startswith("sha256-")
+        # write should not be called since file exists
+        mock_op.write.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -57,7 +57,7 @@ When working on specific tasks, jump directly to:
   - aiosqlite (development, excludes version 0.22.0 due to bug)
   - psycopg 3.2+ with binary and pool support (production)
 * **Migrations:** Alembic 1.17+ (installed, but migrations not yet implemented - currently uses SQLModel.metadata.create_all())
-* **Vector Database:** LanceDB 0.25.3 ⚠️ **PINNED - exact version required for compatibility**
+* **Vector Database:** LanceDB 0.25.3 ⚠️ **PINNED via haiku-rag dependency - exact version required for compatibility**
 * **Dev Analytics:** duckdb 1.4+ (development only)
 
 ## Storage Abstraction
@@ -68,7 +68,7 @@ When working on specific tasks, jump directly to:
 ## Document Processing
 * **Document Parser:** Docling (external HTTP service)
 * **Docling Models:** docling-core 2.51+
-* **RAG System:** haiku-rag-slim 0.20+ (HaikuRAG client)
+* **RAG System:** haiku-rag-slim 0.23.0+ (HaikuRAG client)
 * **PDF Processing:**
   - pypdf 6.4+
   - pdf-splitter (custom fork from github.com/runyaga/pdf-splitter)
@@ -174,16 +174,32 @@ soliplex_ingester/
 |----------|----------|---------|-------------|
 | `DOC_DB_URL` | ✅ | - | Database connection (sqlite+aiosqlite:// or postgresql+psycopg://) |
 | `DOCLING_SERVER_URL` | No | `http://localhost:5001/v1` | Docling service endpoint |
+| `DOCLING_HTTP_TIMEOUT` | No | `600` | Docling HTTP timeout in seconds |
+| `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 | `FILE_STORE_TARGET` | No | `fs` | Storage backend: `fs`, `db`, or `s3` |
 | `FILE_STORE_DIR` | No | `file_store` | Base directory for file storage |
-| `LANCEDB_DIR` | No | `lancedb` | LanceDB vector database directory |
+| `LANCEDB_DIR` | No | `lancedb` | LanceDB vector database directory (supports filesystem paths and S3 URIs) |
 | `WORKFLOW_DIR` | No | `config/workflows` | Workflow YAML directory |
 | `DEFAULT_WORKFLOW_ID` | No | `batch_split` | Default workflow name |
+| `PARAM_DIR` | No | `config/params` | Parameter sets directory |
+| `DEFAULT_PARAM_ID` | No | `default` | Default parameter set name |
+| `INGEST_QUEUE_CONCURRENCY` | No | `20` | Max concurrent queue operations |
 | `INGEST_WORKER_CONCURRENCY` | No | `10` | Max concurrent workflow steps per worker |
 | `DOCLING_CONCURRENCY` | No | `3` | Max concurrent Docling requests |
+| `WORKER_CHECKIN_INTERVAL` | No | `120` | Worker heartbeat interval in seconds |
+| `WORKER_CHECKIN_TIMEOUT` | No | `600` | Worker timeout threshold in seconds |
+| `WORKER_TASK_COUNT` | No | `5` | Number of workflow steps to fetch per query |
+| `EMBED_BATCH_SIZE` | No | `1000` | Batch size for embedding operations |
+| `INPUT_S3__*` | No | - | Source S3 config (BUCKET, ENDPOINT_URL, ACCESS_KEY_ID, ACCESS_SECRET, REGION) |
+| `ARTIFACT_S3__*` | No | - | Artifact S3 config (BUCKET, ENDPOINT_URL, ACCESS_KEY_ID, ACCESS_SECRET, REGION) |
 | `DO_RAG` | No | `True` | Enable/disable HaikuRAG (for testing) |
 
-**Complete reference:** See [CONFIGURATION.md](docs/CONFIGURATION.md) for all 30+ environment variables with detailed descriptions.
+**S3 Configuration Notes:**
+- **LanceDB S3:** When using S3 URIs for `LANCEDB_DIR` (e.g., `s3://bucket/path`), standard AWS environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`) must be configured.
+- **Artifact/Input S3:** For artifact storage backends, use nested environment variables with `__` delimiter (e.g., `ARTIFACT_S3__BUCKET=my-bucket`, `INPUT_S3__ENDPOINT_URL=http://127.0.0.1:8333`).
+- See [CONFIGURATION.md - S3 Configuration Overview](docs/CONFIGURATION.md#s3-configuration-overview) for detailed comparison of both S3 systems.
+
+**Complete reference:** See [CONFIGURATION.md](docs/CONFIGURATION.md) for all environment variables with detailed descriptions.
 
 ---
 
@@ -196,6 +212,8 @@ soliplex_ingester/
 *   **Run the application (prod):** `si-cli serve --host 0.0.0.0 --workers 4`
 *   **Run worker only:** `si-cli worker` *(use for additional workers; serve includes one by default)*
 *   **Initialize database:** `si-cli db-init`
+*   **Bootstrap (setup all configs):** `si-cli bootstrap`
+*   **Initialize environment file:** `si-cli init-env`
 *   **Run tests:** `uv run pytest`
 *   **Run tests with coverage:** `uv run pytest --cov=soliplex --cov-report=html`
 *   **Format code:** `uv run ruff format .`
@@ -354,7 +372,7 @@ async with get_session() as session:
 *   Use pytest fixtures from `conftest.py`
 *   Mock external services (Docling, HaikuRAG) in unit tests
 *   Test files: `tests/unit/test_*.py`
-*   Coverage excludes: `cli.py`, `rag.py`, `docling.py`, `example/`
+*   Coverage excludes: `cli.py`, `docling.py`, `app.py`, `example/` (note: `rag.py` is NOT excluded)
 
 ---
 
@@ -387,6 +405,115 @@ async with get_session() as session:
 - **Utility functions:** Add to `lib/operations.py` or create new focused module
 - **Tests:** Mirror source structure in `tests/unit/`
 
+## Storage Operations
+
+**Always use DAL (Data Access Layer)** from `lib/dal.py` for artifact storage:
+- Use `get_operator(store_type)` to get storage operator for specific artifact types
+- Supported types: `raw`, `markdown`, `json`, `chunks`, `embeddings`
+- Abstracts filesystem, S3, and database storage automatically
+- Handles `FILE_STORE_TARGET` configuration without additional code
+
+**Never use** direct file I/O (`open()`, `pathlib`) for artifact storage - always go through DAL.
+
+## S3 Storage Systems
+
+This project has **two separate S3 configuration systems** - do not confuse them:
+
+**1. LanceDB S3 (Vector Storage):**
+- Configured via: `LANCEDB_DIR=s3://bucket/path` + standard AWS env vars
+- Environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_ENDPOINT` (optional), `AWS_ALLOW_HTTP` (optional)
+- Used by: HaikuRAG/LanceDB for vector embeddings
+- Code location: `lib/rag.py:75-93`
+
+**2. Artifact S3 (Processing Artifacts):**
+- Configured via: Nested Pydantic settings with `__` delimiter
+- Environment variables: `ARTIFACT_S3__BUCKET`, `ARTIFACT_S3__ACCESS_SECRET`, `INPUT_S3__BUCKET`, etc.
+- Used by: DAL layer for intermediate files (documents, markdown, chunks)
+- Code location: `lib/dal.py:96-117`, `lib/config.py:7-34`
+
+**Key Difference:** Field names differ - LanceDB uses `AWS_SECRET_ACCESS_KEY` (AWS standard), Artifact uses `ARTIFACT_S3__ACCESS_SECRET` (Pydantic nested config).
+
+## Database Access Patterns
+
+**In API endpoints (preferred):**
+```python
+from fastapi import Depends
+from sqlmodel.ext.asyncio.session import AsyncSession
+from soliplex.ingester.lib.models import get_session
+
+@router.get("/endpoint")
+async def my_endpoint(session: AsyncSession = Depends(get_session)):
+    # session auto-managed by FastAPI
+    result = await session.exec(query)
+    return result
+```
+
+**In standalone functions:**
+```python
+from soliplex.ingester.lib.models import get_session
+from sqlmodel import select
+
+async with get_session() as session:
+    query = select(Document).where(Document.hash == doc_hash)
+    result = await session.exec(query)
+    doc = result.first()
+    if doc:
+        doc.status = "processed"
+        session.add(doc)
+        await session.commit()  # Required for modifications
+```
+
+## Error Handling Pattern
+
+Follow this standard error handling pattern used throughout the codebase:
+
+```python
+from fastapi import Response, status
+import logging
+
+logger = logging.getLogger(__name__)
+
+@router.post("/endpoint")
+async def my_endpoint(response: Response):
+    try:
+        result = await perform_operation()
+    except KeyError as e:
+        logger.exception("Operation failed")
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": str(e)}
+    except Exception as ex:
+        logger.exception("Operation failed")
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(ex)}
+    else:
+        return {"status": "success", "data": result}
+```
+
+## File Upload Pattern
+
+When creating file upload endpoints, use FastAPI Form data (see `server/routes/document.py:34-45`):
+
+```python
+from fastapi import UploadFile, Form
+import json
+
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = None,           # Optional file
+    field1: str = Form(...),            # Required field
+    field2: int = Form(0),              # Optional with default
+    json_field: str = Form("{}"),       # JSON as string
+):
+    file_bytes = await file.read() if file else None
+    try:
+        meta = json.loads(json_field)   # Parse JSON field
+        if not isinstance(meta, dict):
+            raise TypeError("Metadata must be a dictionary")
+    except json.JSONDecodeError:
+        return {"error": "metadata should be valid JSON object"}
+    # Process upload...
+```
+
 ## Safety & Security
 
 - **Never commit secrets** - use environment variables
@@ -401,6 +528,49 @@ async with get_session() as session:
 - Changes affect core workflow execution logic
 - Breaking changes to existing APIs
 - New dependencies need to be added
+
+## Worker Architecture
+
+Workers automatically check in every `WORKER_CHECKIN_INTERVAL` seconds (default: 120) to maintain health status:
+- Checkin records stored in database for monitoring
+- Workers considered stale after `WORKER_CHECKIN_TIMEOUT` (default: 600 seconds)
+- Stats API endpoint (`/api/v1/stats/workers`) shows active workers with recent checkins
+- Enables monitoring of distributed worker deployments
+- Workflow steps include retry logic configured in YAML (`retries` field)
+
+## Documentation Access Strategy
+
+**Read files directly** when:
+- User asks about a specific file/function/endpoint you can locate
+- Question requires checking 1-3 specific code locations
+- You need to verify a specific configuration value
+- Looking for a specific class definition or function
+
+**Use Task tool (subagent_type='claude-code-guide')** when:
+- User asks "Can Claude Code do X?" or "How do I use Claude Code for Y?"
+- Questions about Claude Code CLI features, hooks, or MCP servers
+- Questions about the Claude Agent SDK
+
+**Use Task tool (subagent_type='Explore')** when:
+- Question requires understanding overall architecture
+- Need to trace functionality across multiple files
+- "Where is X handled?" questions without obvious file location
+- Questions like "How does the workflow system work?"
+- User asks about codebase structure or component relationships
+
+## Project Initialization Workflow
+
+When helping users set up the project for the first time, follow this sequence:
+
+1. **Installation:** `uv sync` or `pip install -e .`
+2. **Quick setup (recommended):** `si-cli bootstrap` - combines steps 3-5
+3. **Manual setup - Environment:** `si-cli init-env` (auto-generates .env file)
+4. **Manual setup - Config files:** `si-cli init-config` (creates workflow/param files)
+5. **Manual setup - HaikuRAG:** `si-cli init-haiku` (initializes RAG configuration)
+6. **Database initialization:** `si-cli db-init` (creates database tables)
+7. **Validation:** `si-cli validate-settings` (verify all configuration)
+
+The `bootstrap` command is preferred as it automates the configuration setup.
 
 ---
 

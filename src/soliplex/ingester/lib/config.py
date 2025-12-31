@@ -7,7 +7,7 @@ from pydantic_settings import SettingsConfigDict
 class S3Settings(BaseSettings):
     bucket: str = "default"
     endpoint_url: str = "default"
-    access_key: str = "default"
+    access_key_id: str = "default"
     access_secret: str = "default"
     region: str = "default"
 
@@ -30,13 +30,8 @@ class Settings(BaseSettings):
     ingest_queue_concurrency: int = 20
     ingest_worker_concurrency: int = 10
     docling_concurrency: int = 3
-    # default_s3: S3Settings = S3Settings()
-    # document_s3: S3Settings = S3Settings()
-    # parsed_markdown_s3: S3Settings = S3Settings()
-    # parsed_json_s3: S3Settings = S3Settings()
-    # chunks_s3: S3Settings = S3Settings()
-    # embeddings_s3: S3Settings = S3Settings()
-
+    input_s3: S3Settings = S3Settings()
+    artifact_s3: S3Settings = S3Settings()
     workflow_dir: str = "config/workflows"
     default_workflow_id: str = "batch_split"
     param_dir: str = "config/params"

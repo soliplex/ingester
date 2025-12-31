@@ -19,13 +19,13 @@ async def test_operators(db):
         op = dal.get_storage_operator(st, step_config)
         assert op is not None
         await op.write("test", bytea)
-        is_exist = await op.is_exist("test")
-        assert is_exist
+        exists = await op.exists("test")
+        assert exists
         read_bytea = await op.read("test")
         assert read_bytea == bytea
         lis = await op.list("/")
         logger.info(f"lis={lis} ")
         assert len(lis) == 1
         await op.delete("test")
-        ex2 = await op.is_exist("test")
+        ex2 = await op.exists("test")
         assert not ex2

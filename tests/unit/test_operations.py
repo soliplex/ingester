@@ -286,7 +286,7 @@ async def test_handle_file_with_input_uri(db):
         with patch("soliplex.ingester.lib.operations.dal.get_storage_operator") as mock_get_op:
             mock_read.return_value = test_bytes
             mock_op = AsyncMock()
-            mock_op.is_exist.return_value = False
+            mock_op.exists.return_value = False
             mock_op.write = AsyncMock()
             mock_get_op.return_value = mock_op
 
@@ -599,7 +599,7 @@ async def test_handle_file_existing(db):
 
     with patch("soliplex.ingester.lib.operations.dal.get_storage_operator") as mock_get_op:
         mock_op = AsyncMock()
-        mock_op.is_exist.return_value = True  # File already exists
+        mock_op.exists.return_value = True  # File already exists
         mock_op.write = AsyncMock()
         mock_get_op.return_value = mock_op
 

@@ -4,7 +4,7 @@ This project is designed to provide a robust system to load documents from vario
 
 Document ingestion can be a time consuming and error prone process.  Soliplex ingester aims to provide a robust, scalable and observable pathway from source systems to one or more vector databases. It provides a user interface and REST endpoints to follow the progress of documents and supports restarting failed processes.
 
-This ingester has been tested with workflows containing hundreds of documents and with pdf files containing over one thousand pages (on appropriate hardware) so scalability and reliability paramount.
+This ingester has been tested with workflows containing hundreds of documents and with pdf files containing over one thousand pages (on appropriate hardware) so scalability and reliability are paramount.
 
 Soliplex ingester has been designed alongside [agents](https://github.com/soliplex/ingester-agents) that are able do load data from filesystems and source control management systems, but other tools can be used as well.
 
@@ -285,7 +285,7 @@ si-cli validate-haiku 1                  # Validate batch
 # API
 curl http://localhost:8000/docs          # Swagger UI
 curl http://localhost:8000/api/v1/batch/ # List batches
-curl http://localhost:8000/api/v1/document/ingest-document/ # load document into database
+curl http://localhost:8000/api/v1/document/ingest-document # Load document into database
 
 ```
 

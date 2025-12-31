@@ -1,8 +1,8 @@
 import logging
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock
+from unittest.mock import Mock
 from unittest.mock import patch
-from common import do_monkeypatch  # noqa
-from common import mock_engine  # noqa
+
 import pytest
 
 from soliplex.ingester.lib import dal
@@ -103,8 +103,7 @@ async def test_read_s3_url():
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_read(monkeypatch, mock_engine):
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_db_storage_operator_read(db):
     """Test DBStorageOperator read method"""
     op = dal.DBStorageOperator("doc", "test_root")
 
@@ -118,8 +117,7 @@ async def test_db_storage_operator_read(monkeypatch, mock_engine):
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_read_not_found(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_db_storage_operator_read_not_found(db):
     """Test DBStorageOperator read method with file not found"""
     op = dal.DBStorageOperator("doc", "test_root")
 
@@ -128,9 +126,8 @@ async def test_db_storage_operator_read_not_found(monkeypatch, mock_engine):  # 
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_exists(monkeypatch, mock_engine):  # noqa F811
+async def test_db_storage_operator_exists(db):
     """Test DBStorageOperator exists method"""
-    do_monkeypatch(monkeypatch, mock_engine)
 
     op = dal.DBStorageOperator("doc", "test_root")
 
@@ -147,8 +144,7 @@ async def test_db_storage_operator_exists(monkeypatch, mock_engine):  # noqa F81
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_write(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_db_storage_operator_write(db):
     """Test DBStorageOperator write method"""
     op = dal.DBStorageOperator("doc", "test_root")
 
@@ -161,8 +157,7 @@ async def test_db_storage_operator_write(monkeypatch, mock_engine):  # noqa F811
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_list(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_db_storage_operator_list(db):
     """Test DBStorageOperator list method"""
     op = dal.DBStorageOperator("doc", "test_root")
 
@@ -188,8 +183,7 @@ async def test_db_storage_operator_get_uri():
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_delete(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_db_storage_operator_delete(db):
     """Test DBStorageOperator delete method"""
     op = dal.DBStorageOperator("doc", "test_root")
 
@@ -209,8 +203,7 @@ async def test_db_storage_operator_delete(monkeypatch, mock_engine):  # noqa F81
 
 
 @pytest.mark.asyncio
-async def test_db_storage_operator_delete_missing(monkeypatch, mock_engine):  # noqa F811
-    do_monkeypatch(monkeypatch, mock_engine)
+async def test_db_storage_operator_delete_missing(db):
     """Test DBStorageOperator delete method"""
     op = dal.DBStorageOperator("doc", "test_root")
 
@@ -420,3 +413,241 @@ def test_file_operator_store_path():
 
     op = dal.FileStorageOperator("/tmp")
     assert "tmp" in op.store_path
+
+
+# Tests for validate_s3_settings function
+def test_validate_s3_settings_missing_access_key_id():
+    """Test validate_s3_settings raises error for missing access_key_id"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = "default"
+    s3_settings.access_secret = "secret"
+    s3_settings.region = "us-east-1"
+    s3_settings.bucket = "test-bucket"
+
+    with pytest.raises(ValueError, match="s3.access_key_id is required"):
+        dal.validate_s3_settings(s3_settings)
+
+
+def test_validate_s3_settings_empty_access_key_id():
+    """Test validate_s3_settings raises error for empty access_key_id"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = ""
+    s3_settings.access_secret = "secret"
+    s3_settings.region = "us-east-1"
+    s3_settings.bucket = "test-bucket"
+
+    with pytest.raises(ValueError, match="s3.access_key_id is required"):
+        dal.validate_s3_settings(s3_settings)
+
+
+def test_validate_s3_settings_missing_access_secret():
+    """Test validate_s3_settings raises error for missing access_secret"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = "key"
+    s3_settings.access_secret = "default"
+    s3_settings.region = "us-east-1"
+    s3_settings.bucket = "test-bucket"
+
+    with pytest.raises(ValueError, match="s3.access_secret is required"):
+        dal.validate_s3_settings(s3_settings)
+
+
+def test_validate_s3_settings_empty_access_secret():
+    """Test validate_s3_settings raises error for empty access_secret"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = "key"
+    s3_settings.access_secret = ""
+    s3_settings.region = "us-east-1"
+    s3_settings.bucket = "test-bucket"
+
+    with pytest.raises(ValueError, match="s3.access_secret is required"):
+        dal.validate_s3_settings(s3_settings)
+
+
+def test_validate_s3_settings_missing_region():
+    """Test validate_s3_settings raises error for missing region"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = "key"
+    s3_settings.access_secret = "secret"
+    s3_settings.region = "default"
+    s3_settings.bucket = "test-bucket"
+
+    with pytest.raises(ValueError, match="s3.region is required"):
+        dal.validate_s3_settings(s3_settings)
+
+
+def test_validate_s3_settings_empty_region():
+    """Test validate_s3_settings raises error for empty region"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = "key"
+    s3_settings.access_secret = "secret"
+    s3_settings.region = ""
+    s3_settings.bucket = "test-bucket"
+
+    with pytest.raises(ValueError, match="s3.region is required"):
+        dal.validate_s3_settings(s3_settings)
+
+
+def test_validate_s3_settings_missing_bucket():
+    """Test validate_s3_settings raises error for missing bucket"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = "key"
+    s3_settings.access_secret = "secret"
+    s3_settings.region = "us-east-1"
+    s3_settings.bucket = "default"
+
+    with pytest.raises(ValueError, match="s3.bucket is required"):
+        dal.validate_s3_settings(s3_settings)
+
+
+def test_validate_s3_settings_empty_bucket():
+    """Test validate_s3_settings raises error for empty bucket"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = "key"
+    s3_settings.access_secret = "secret"
+    s3_settings.region = "us-east-1"
+    s3_settings.bucket = ""
+
+    with pytest.raises(ValueError, match="s3.bucket is required"):
+        dal.validate_s3_settings(s3_settings)
+
+
+def test_validate_s3_settings_valid():
+    """Test validate_s3_settings passes with valid settings"""
+    s3_settings = Mock()
+    s3_settings.access_key_id = "key"
+    s3_settings.access_secret = "secret"
+    s3_settings.region = "us-east-1"
+    s3_settings.bucket = "test-bucket"
+
+    # Should not raise
+    dal.validate_s3_settings(s3_settings)
+
+
+def test_create_s3_operator():
+    """Test create_s3_operator function"""
+    with patch("soliplex.ingester.lib.dal.opendal.AsyncOperator") as mock_op:
+        s3_settings = Mock()
+        s3_settings.access_key_id = "key"
+        s3_settings.access_secret = "secret"
+        s3_settings.region = "us-east-1"
+        s3_settings.bucket = "test-bucket"
+        s3_settings.endpoint_url = "http://localhost:9000"
+
+        dal.create_s3_operator(s3_settings, root="/test")
+
+        mock_op.assert_called_once_with(
+            "s3",
+            bucket="test-bucket",
+            endpoint="http://localhost:9000",
+            access_key_id="key",
+            secret_access_key="secret",
+            region="us-east-1",
+            root="/test",
+        )
+
+
+@pytest.mark.asyncio
+async def test_read_s3_url_bucket_mismatch():
+    """Test read_s3_url raises error when bucket doesn't match configured bucket"""
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_s3_config = Mock()
+        mock_s3_config.bucket = "configured-bucket"
+
+        mock_settings_obj = Mock()
+        mock_settings_obj.input_s3 = mock_s3_config
+        mock_settings.return_value = mock_settings_obj
+
+        with pytest.raises(ValueError, match="bucket .* does not match configured bucket"):
+            await dal.read_s3_url("s3://different-bucket/path/to/file.txt")
+
+
+# Tests for OpenDALAdapter class
+@pytest.mark.asyncio
+async def test_opendal_adapter_read():
+    """Test OpenDALAdapter read method"""
+    mock_op = AsyncMock()
+    mock_op.read.return_value = b"test content"
+
+    adapter = dal.OpenDALAdapter(mock_op, root="test-root")
+    result = await adapter.read("test/path")
+
+    assert result == b"test content"
+    mock_op.read.assert_called_once_with("test/path")
+
+
+@pytest.mark.asyncio
+async def test_opendal_adapter_write():
+    """Test OpenDALAdapter write method"""
+    mock_op = AsyncMock()
+
+    adapter = dal.OpenDALAdapter(mock_op, root="test-root")
+    await adapter.write("test/path", b"test content")
+
+    mock_op.write.assert_called_once_with("test/path", b"test content")
+
+
+@pytest.mark.asyncio
+async def test_opendal_adapter_exists():
+    """Test OpenDALAdapter exists method"""
+    mock_op = AsyncMock()
+    mock_op.exists.return_value = True
+
+    adapter = dal.OpenDALAdapter(mock_op, root="test-root")
+    result = await adapter.exists("test/path")
+
+    assert result is True
+    mock_op.exists.assert_called_once_with("test/path")
+
+
+@pytest.mark.asyncio
+async def test_opendal_adapter_delete():
+    """Test OpenDALAdapter delete method"""
+    mock_op = AsyncMock()
+
+    adapter = dal.OpenDALAdapter(mock_op, root="test-root")
+    await adapter.delete("test/path")
+
+    mock_op.delete.assert_called_once_with("test/path")
+
+
+@pytest.mark.asyncio
+async def test_opendal_adapter_list():
+    """Test OpenDALAdapter list method"""
+    mock_op = AsyncMock()
+
+    # Create mock entries
+    mock_entry1 = Mock()
+    mock_entry1.path = "file1.txt"
+    mock_entry2 = Mock()
+    mock_entry2.path = "file2.txt"
+
+    # Mock the async iterator
+    async def mock_list(prefix):
+        for entry in [mock_entry1, mock_entry2]:
+            yield entry
+
+    mock_op.list.return_value = mock_list("")
+
+    adapter = dal.OpenDALAdapter(mock_op, root="test-root")
+    result = await adapter.list("prefix/")
+
+    assert result == ["file1.txt", "file2.txt"]
+
+
+def test_opendal_adapter_get_uri_with_root():
+    """Test OpenDALAdapter get_uri method with root"""
+    mock_op = Mock()
+    adapter = dal.OpenDALAdapter(mock_op, root="test-root")
+    uri = adapter.get_uri("test/path")
+
+    assert uri == "s3://test-root/test/path"
+
+
+def test_opendal_adapter_get_uri_without_root():
+    """Test OpenDALAdapter get_uri method without root"""
+    mock_op = Mock()
+    adapter = dal.OpenDALAdapter(mock_op, root="")
+    uri = adapter.get_uri("test/path")
+
+    assert uri == "s3://test/path"

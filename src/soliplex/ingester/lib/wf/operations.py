@@ -24,8 +24,10 @@ from soliplex.ingester.lib.models import WorkflowRun
 from soliplex.ingester.lib.models import WorkflowRunWithSteps
 from soliplex.ingester.lib.models import WorkflowStepType
 from soliplex.ingester.lib.models import get_session
+from soliplex.ingester.lib.operations import DocumentNotFoundError
 from soliplex.ingester.lib.operations import get_batch
 from soliplex.ingester.lib.operations import get_document
+from soliplex.ingester.lib.operations import get_document_uris_by_hash
 from soliplex.ingester.lib.operations import get_documents_in_batch
 
 from .registry import get_param_set
@@ -290,14 +292,18 @@ async def create_single_workflow_run(
     param_id: str | None = None,
 ) -> tuple[WorkflowRun, list[RunStep]]:
     doc = await get_document(doc_id)
-    batch_id = doc.batch_id
-    run_group = await create_run_group(
-        workflow_definition_id=workflow_definition_id,
-        batch_id=batch_id,
-        name=f"single run {doc_id} ",
-        param_id=param_id,
-    )
-    return await create_workflow_run(run_group, doc_id, priority=priority)
+    if doc:
+        uris = await get_document_uris_by_hash(doc.hash)
+        batch_id = uris[0].batch_id
+        run_group = await create_run_group(
+            workflow_definition_id=workflow_definition_id,
+            batch_id=batch_id,
+            name=f"single run {doc_id} ",
+            param_id=param_id,
+        )
+        return await create_workflow_run(run_group, doc_id, priority=priority)
+    else:
+        raise DocumentNotFoundError(doc_id)
 
 
 async def create_workflow_run(

@@ -524,7 +524,6 @@ async def test_create_document_with_batch_id(db):
     )
 
     assert uri.batch_id == batch_id
-    assert doc.batch_id == batch_id
 
 
 @pytest.mark.asyncio

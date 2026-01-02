@@ -23,6 +23,7 @@ if os.getenv("DOC_DB_URL"):
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
+from soliplex.ingester.lib.models import Document
 target_metadata = SQLModel.metadata
 
 # other values from the config, defined by the needs of env.py,

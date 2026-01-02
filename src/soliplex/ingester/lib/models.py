@@ -1,5 +1,6 @@
 import datetime
 import hashlib
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import Enum
@@ -190,10 +191,12 @@ class Document(SQLModel, table=True):
     mime_type: str = Field(default=None)
     file_size: int = Field(nullable=True)
     doc_meta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
-    rag_id: str = Field(nullable=True)
-    batch_id: int = Field(nullable=True, foreign_key="documentbatch.id")
 
     def __init__(self, **kwargs):
+        if "doc_meta" in kwargs:
+            if isinstance(kwargs["doc_meta"], str):
+                kwargs["doc_meta"] = json.loads(kwargs["doc_meta"])
+
         super().__init__(**kwargs)
 
 

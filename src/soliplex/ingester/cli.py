@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import platform
@@ -11,13 +10,10 @@ from pathlib import Path
 import typer
 import uvicorn
 import uvicorn.config
-from haiku.rag.client import HaikuRAG
 from pydantic_core import ValidationError
 from rich import print
 
 import soliplex.ingester
-import soliplex.ingester.lib.models as models
-import soliplex.ingester.lib.operations as operations
 
 from .lib.config import get_settings
 
@@ -170,65 +166,6 @@ def bootstrap(haiku: bool = True, config: bool = True, env: bool = True):
         init_env()
 
     print("bootstrap complete")
-
-
-async def _validate_haiku(batch_id: int, detail: bool = False):
-    docs = await operations.get_documents_in_batch(batch_id)
-    results = []
-    read_doc_bytes = operations.read_doc_bytes
-    async with HaikuRAG() as client:
-        for doc in docs:
-            doc_hash = doc.hash
-            try:
-                _ = await read_doc_bytes(doc_hash, models.ArtifactType.PARSED_MD)
-            except Exception as e:
-                results.append(
-                    {
-                        "doc": doc.hash,
-                        "haiku": doc.rag_id,
-                        "message": str(e),
-                        "status": "md error",
-                    }
-                )
-                continue
-
-            if doc.rag_id is None:
-                results.append(
-                    {
-                        "doc": doc.hash,
-                        "haiku": None,
-                        "message": "no haiku found",
-                        "status": "no_id",
-                    }
-                )
-                continue
-
-            try:
-                hrdoc = await client.get_document_by_id(doc.rag_id)
-                results.append({"doc": doc.hash, "haiku": hrdoc.id, "status": "success"})
-            except Exception as e:
-                results.append(
-                    {
-                        "doc": doc.hash,
-                        "haiku": None,
-                        "message": str(e),
-                        "status": "haiku error",
-                    }
-                )
-                continue
-    fails = [x for x in results if x["status"] != "success"]
-    print("-----------results --------------")
-    print(f" found {len(results)} results")
-    print("-----------fails --------------")
-    print(json.dumps(fails, indent=4))
-
-
-@app.command("validate-haiku")
-def validate_haiku(batch_id: int, detail: bool = False):
-    """
-    checks haiku-rag status for a batch
-    """
-    asyncio.run(_validate_haiku(batch_id, detail))
 
 
 async def _start_worker():

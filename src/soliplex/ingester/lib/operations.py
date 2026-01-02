@@ -4,6 +4,7 @@ import logging
 import mimetypes
 import os
 
+from sqlalchemy import bindparam
 from sqlmodel import select
 from sqlmodel import text
 
@@ -138,6 +139,8 @@ async def add_history_for_hash(doc_hash: str, action: str, batch_id=None, hist_m
     doc_uris = await get_document_uris_by_hash(doc_hash)
     async with models.get_session() as session:
         for doc_uri in doc_uris:
+            # if batch_id is not None and doc_uri.batch_id != batch_id:
+            #    continue
             # use blank meta unless needed
             await add_history(doc_uri, hist_meta, action, session, batch_id=batch_id)
         await session.commit()
@@ -249,7 +252,6 @@ async def create_document_from_uri(
             mime_type=mime_type,
             file_bytes=file_bytes,
             doc_meta=doc_meta,
-            batch_id=batch_id,
             file_size=file_size,
         )
 
@@ -444,12 +446,18 @@ async def get_batch(id: int) -> models.DocumentBatch | None:
 
 async def get_documents_in_batch(id: int) -> list[models.Document]:
     async with models.get_session() as session:
-        q = select(models.Document).where(models.Document.batch_id == id)
+        # q = select(models.Document).where(models.Document.batch_id == id)
+        q = text("select * from document where hash in (select hash from documenturi where batch_id=:batch_id)").bindparams(
+            bindparam("batch_id", value=id)
+        )
+
         rs = await session.exec(q)
         res = rs.all()
-        for item in res:
-            session.expunge(item)
-        return res
+        objs = [models.Document(**row._asdict()) for row in res]
+        # check for issues
+        for o in objs:
+            o.model_validate(o)
+        return objs
 
 
 async def delete_document(doc_hash: str, session, raise_on_error=True) -> models.Document:

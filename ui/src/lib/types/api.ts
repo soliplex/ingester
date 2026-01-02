@@ -39,6 +39,19 @@ export interface DocumentURI {
 	batch_id: number;
 }
 
+export interface DocumentInfo {
+	uri: string | null;
+	source: string | null;
+	file_size: number | null;
+	mime_type: string | null;
+}
+
+export interface WorkflowRunWithDetails {
+	workflow_run: WorkflowRun;
+	steps: RunStep[] | null;
+	document_info: DocumentInfo | null;
+}
+
 // Batch Models
 export interface DocumentBatch {
 	id: number;

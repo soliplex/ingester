@@ -8,7 +8,11 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import { RunStatus } from '$lib/types/api';
 	import type { PageData } from './$types';
-	import type { PaginatedResponse, WorkflowRun } from '$lib/types/api';
+	import type {
+		PaginatedResponse,
+		WorkflowRun,
+		WorkflowRunWithDetails
+	} from '$lib/types/api';
 
 	let { data }: { data: PageData } = $props();
 
@@ -23,21 +27,24 @@
 			'items' in data.workflowRuns
 	);
 
+	// Type for workflow items (can be either WorkflowRun or WorkflowRunWithDetails)
+	type WorkflowItem = WorkflowRun | WorkflowRunWithDetails;
+
 	// Extract workflows array (works for both paginated and non-paginated)
-	const workflows = $derived<WorkflowRun[]>(
+	const workflows = $derived<WorkflowItem[]>(
 		isPaginatedResponse
-			? (data.workflowRuns as PaginatedResponse<WorkflowRun>).items
-			: (data.workflowRuns as WorkflowRun[])
+			? (data.workflowRuns as PaginatedResponse<WorkflowItem>).items
+			: (data.workflowRuns as WorkflowItem[])
 	);
 
 	// Extract pagination metadata
 	const paginationData = $derived(
 		isPaginatedResponse
 			? {
-					currentPage: (data.workflowRuns as PaginatedResponse<WorkflowRun>).page,
-					totalPages: (data.workflowRuns as PaginatedResponse<WorkflowRun>).total_pages,
-					totalItems: (data.workflowRuns as PaginatedResponse<WorkflowRun>).total,
-					itemsPerPage: (data.workflowRuns as PaginatedResponse<WorkflowRun>).rows_per_page
+					currentPage: (data.workflowRuns as PaginatedResponse<WorkflowItem>).page,
+					totalPages: (data.workflowRuns as PaginatedResponse<WorkflowItem>).total_pages,
+					totalItems: (data.workflowRuns as PaginatedResponse<WorkflowItem>).total,
+					itemsPerPage: (data.workflowRuns as PaginatedResponse<WorkflowItem>).rows_per_page
 				}
 			: null
 	);

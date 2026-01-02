@@ -447,7 +447,12 @@ async def test_get_documents_in_batch(db):
     test_bytes2 = b"test bytes 2"
 
     uri1, doc1 = await operations.create_document_from_uri(
-        test_uri1, "test_source", "application/pdf", test_bytes1, batch_id=batch_id
+        test_uri1,
+        "test_source",
+        "application/pdf",
+        test_bytes1,
+        batch_id=batch_id,
+        doc_meta={"is_valid": True, "batch_id": 1, "invalid_reason": None},
     )
     uri2, doc2 = await operations.create_document_from_uri(
         test_uri2, "test_source", "application/pdf", test_bytes2, batch_id=batch_id

@@ -14,6 +14,9 @@ from soliplex.ingester.lib.dal import get_storage_operator
 from soliplex.ingester.lib.models import ArtifactType
 from soliplex.ingester.lib.models import ConfigSet
 from soliplex.ingester.lib.models import ConfigSetItem
+from soliplex.ingester.lib.models import Document
+from soliplex.ingester.lib.models import DocumentInfo
+from soliplex.ingester.lib.models import DocumentURI
 from soliplex.ingester.lib.models import LifeCycleEvent
 from soliplex.ingester.lib.models import LifecycleHistory
 from soliplex.ingester.lib.models import RunGroup
@@ -21,7 +24,7 @@ from soliplex.ingester.lib.models import RunStatus
 from soliplex.ingester.lib.models import RunStep
 from soliplex.ingester.lib.models import StepConfig
 from soliplex.ingester.lib.models import WorkflowRun
-from soliplex.ingester.lib.models import WorkflowRunWithSteps
+from soliplex.ingester.lib.models import WorkflowRunWithDetails
 from soliplex.ingester.lib.models import WorkflowStepType
 from soliplex.ingester.lib.models import get_session
 from soliplex.ingester.lib.operations import DocumentNotFoundError
@@ -382,18 +385,73 @@ async def create_workflow_run(
         return workflow_run, new_steps
 
 
+async def get_document_info_for_workflow_runs(
+    workflow_runs: list[WorkflowRun],
+) -> dict[str, DocumentInfo]:
+    """
+    Fetch Document and DocumentURI info for a list of workflow runs.
+
+    Args:
+        workflow_runs: List of WorkflowRun objects
+
+    Returns:
+        Dict mapping doc_id -> DocumentInfo
+    """
+    if not workflow_runs:
+        return {}
+
+    # Collect unique doc_ids
+    doc_ids = list({run.doc_id for run in workflow_runs})
+
+    # Build result within session to avoid detached instance errors
+    result: dict[str, DocumentInfo] = {}
+
+    async with get_session() as session:
+        # Fetch all Documents in one query
+        doc_q = select(Document).where(Document.hash.in_(doc_ids))
+        doc_rs = await session.exec(doc_q)
+        documents = {doc.hash: doc for doc in doc_rs.all()}
+
+        # Fetch all DocumentURIs matching doc_hash
+        doc_uri_q = select(DocumentURI).where(DocumentURI.doc_hash.in_(doc_ids))
+        doc_uri_rs = await session.exec(doc_uri_q)
+        all_doc_uris = doc_uri_rs.all()
+
+        # Build a lookup by (batch_id, doc_hash)
+        doc_uris_by_batch_hash: dict[tuple[int, str], DocumentURI] = {}
+        for uri in all_doc_uris:
+            key = (uri.batch_id, uri.doc_hash)
+            doc_uris_by_batch_hash[key] = uri
+
+        # Build DocumentInfo for each workflow run's doc_id within the session
+        for run in workflow_runs:
+            doc = documents.get(run.doc_id)
+            doc_uri = doc_uris_by_batch_hash.get((run.batch_id, run.doc_id))
+
+            result[run.doc_id] = DocumentInfo(
+                uri=doc_uri.uri if doc_uri else None,
+                source=doc_uri.source if doc_uri else None,
+                file_size=doc.file_size if doc else None,
+                mime_type=doc.mime_type if doc else None,
+            )
+
+    return result
+
+
 async def get_workflows(
     batch_id: int | None,
     include_steps: bool = False,
+    include_doc_info: bool = False,
     page: int | None = None,
     rows_per_page: int | None = None,
-) -> tuple[list[WorkflowRun] | list[WorkflowRunWithSteps], int]:
+) -> tuple[list[WorkflowRun] | list[WorkflowRunWithDetails], int]:
     """
-    Get workflow runs, optionally with their associated steps.
+    Get workflow runs, optionally with their associated steps and document info.
 
     Args:
         batch_id: Optional batch ID filter
         include_steps: If True, include associated RunSteps for each workflow run
+        include_doc_info: If True, include document info (uri, source, file_size, mime_type)
         page: Page number (1-indexed). If None, returns all rows.
         rows_per_page: Number of rows per page. If None, returns all rows.
 
@@ -427,18 +485,33 @@ async def get_workflows(
         for x in res:
             session.expunge(x)
 
-        if not include_steps:
+        # If neither steps nor doc_info requested, return raw workflow runs
+        if not include_steps and not include_doc_info:
             return res, total
 
-        # Load steps for all workflow runs efficiently
-        workflow_run_ids = [run.id for run in res]
-        steps_by_run_id = await get_steps_for_workflow_runs(workflow_run_ids)
+        # Load optional data
+        steps_by_run_id = {}
+        doc_info_by_doc_id = {}
 
-        # Combine workflow runs with their steps
+        if include_steps:
+            workflow_run_ids = [run.id for run in res]
+            steps_by_run_id = await get_steps_for_workflow_runs(workflow_run_ids)
+
+        if include_doc_info:
+            doc_info_by_doc_id = await get_document_info_for_workflow_runs(res)
+
+        # Combine workflow runs with their details
         result = []
         for run in res:
-            steps = steps_by_run_id.get(run.id, [])
-            result.append(WorkflowRunWithSteps(workflow_run=run, steps=steps))
+            steps = steps_by_run_id.get(run.id, []) if include_steps else None
+            doc_info = doc_info_by_doc_id.get(run.doc_id) if include_doc_info else None
+            result.append(
+                WorkflowRunWithDetails(
+                    workflow_run=run,
+                    steps=steps,
+                    document_info=doc_info,
+                )
+            )
 
         return result, total
 
@@ -446,15 +519,17 @@ async def get_workflows(
 async def get_workflows_for_status(
     status: RunStatus,
     batch_id: int | None = None,
+    include_doc_info: bool = False,
     page: int | None = None,
     rows_per_page: int | None = None,
-) -> tuple[list[WorkflowRun], int]:
+) -> tuple[list[WorkflowRun] | list[WorkflowRunWithDetails], int]:
     """
     Get workflow runs filtered by status, optionally paginated.
 
     Args:
         status: Filter by run status
         batch_id: Optional batch ID filter
+        include_doc_info: If True, include document info (uri, source, file_size, mime_type)
         page: Page number (1-indexed). If None, returns all rows.
         rows_per_page: Number of rows per page. If None, returns all rows.
 
@@ -489,7 +564,25 @@ async def get_workflows_for_status(
         for x in res:
             session.expunge(x)
 
-        return res, total
+        if not include_doc_info:
+            return res, total
+
+        # Load document info
+        doc_info_by_doc_id = await get_document_info_for_workflow_runs(res)
+
+        # Combine workflow runs with their document info
+        result = []
+        for run in res:
+            doc_info = doc_info_by_doc_id.get(run.doc_id)
+            result.append(
+                WorkflowRunWithDetails(
+                    workflow_run=run,
+                    steps=None,
+                    document_info=doc_info,
+                )
+            )
+
+        return result, total
 
 
 async def get_workflow_run(

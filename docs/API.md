@@ -540,8 +540,7 @@ curl -X POST "http://localhost:8000/api/v1/source-status" \
   "mime_type": "application/pdf",
   "file_size": 1024000,
   "doc_meta": {"author": "John Doe"},
-  "rag_id": "doc_123",
-  "batch_id": 1
+
 }
 ```
 

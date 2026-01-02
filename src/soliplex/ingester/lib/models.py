@@ -486,11 +486,25 @@ class WorkflowParams(BaseModel):
     config: dict[WorkflowStepType, dict[str, str | int | float | bool]]
 
 
-class WorkflowRunWithSteps(BaseModel):
-    """Response model for workflow run with associated steps"""
+class DocumentInfo(BaseModel):
+    """Document information for API responses"""
+
+    uri: str | None = None
+    source: str | None = None
+    file_size: int | None = None
+    mime_type: str | None = None
+
+
+class WorkflowRunWithDetails(BaseModel):
+    """Response model for workflow run with optional steps and document info"""
 
     workflow_run: WorkflowRun
     steps: list[RunStep] | None = None
+    document_info: DocumentInfo | None = None
+
+
+# Alias for backward compatibility
+WorkflowRunWithSteps = WorkflowRunWithDetails
 
 
 # Type variable for generic pagination

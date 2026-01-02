@@ -1,7 +1,11 @@
 import { apiClient } from '$lib/services/apiClient';
 import { RunStatus } from '$lib/types/api';
 import type { PageLoad } from './$types';
-import type { WorkflowRun, PaginatedResponse } from '$lib/types/api';
+import type {
+	WorkflowRun,
+	WorkflowRunWithDetails,
+	PaginatedResponse
+} from '$lib/types/api';
 
 const DEFAULT_ROWS_PER_PAGE = 20;
 
@@ -22,17 +26,23 @@ export const load: PageLoad = async ({ url }) => {
 		}
 
 		const paginationParams = { page, rows_per_page: limit };
-		let workflowRuns: WorkflowRun[] | PaginatedResponse<WorkflowRun>;
+		const includeDocInfo = true;
+		let workflowRuns:
+			| WorkflowRun[]
+			| WorkflowRunWithDetails[]
+			| PaginatedResponse<WorkflowRun>
+			| PaginatedResponse<WorkflowRunWithDetails>;
 
-		// Call appropriate endpoint with pagination
+		// Call appropriate endpoint with pagination and doc info
 		if (statusParam && Object.values(RunStatus).includes(statusParam as RunStatus)) {
 			workflowRuns = await apiClient.getWorkflowRunsByStatus(
 				statusParam as RunStatus,
 				batchId,
-				paginationParams
+				paginationParams,
+				includeDocInfo
 			);
 		} else {
-			workflowRuns = await apiClient.getWorkflowRuns(batchId, paginationParams);
+			workflowRuns = await apiClient.getWorkflowRuns(batchId, paginationParams, includeDocInfo);
 		}
 
 		return {

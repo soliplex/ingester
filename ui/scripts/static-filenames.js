@@ -37,53 +37,59 @@ const cssFiles = findFiles(path.join(buildDir, '_app/immutable'), '.css');
 
 const renamedFiles = new Map(); // hash-based name -> static name
 
-// Identify and rename chunk files (vendor and app bundles)
+// Identify and rename chunk files
 const chunkDir = path.join(buildDir, '_app/immutable/chunks');
 const chunkRenames = new Map(); // old hash name -> new static name
 
 if (fs.existsSync(chunkDir)) {
+	// Find all chunk files (files that already have static names like vendor-*.js or svelte-vendor-*.js)
 	const chunkFiles = fs.readdirSync(chunkDir)
-		.filter(f => f.endsWith('.js') && /^[A-Za-z0-9_-]{8,}\.js$/.test(f))
+		.filter(f => f.endsWith('.js'))
 		.map(f => {
 			const fullPath = path.join(chunkDir, f);
 			const size = fs.statSync(fullPath).size;
 			return { name: f, path: fullPath, size };
-		})
-		.sort((a, b) => b.size - a.size); // Sort by size descending
+		});
 
-	// Typically: largest = vendor (node_modules), second = app
-	if (chunkFiles.length >= 2) {
-		const vendorFile = chunkFiles[0]; // Largest
-		const appFile = chunkFiles[1];    // Second largest
+	console.log(`\nProcessing ${chunkFiles.length} chunk files:`);
 
-		// Store chunk renames for content replacement
-		const vendorHash = vendorFile.name.replace('.js', '');
-		const appHash = appFile.name.replace('.js', '');
-		chunkRenames.set(vendorHash, 'vendor');
-		chunkRenames.set(appHash, 'app');
+	// Chunks with static names (from manualChunks) already have their names
+	// We just need to update hash-only files if any exist
+	chunkFiles.forEach(file => {
+		const matchWithName = file.name.match(/^(.+?)-([A-Za-z0-9_-]{8,})\.js$/);
+		if (matchWithName) {
+			const [, baseName, hash] = matchWithName;
+			const newName = `${baseName}.js`;
+			const newPath = path.join(chunkDir, newName);
 
-		// Store for HTML updates
-		const vendorOldUrl = `/_app/immutable/chunks/${vendorFile.name}`;
-		const vendorNewUrl = '/_app/immutable/chunks/vendor.js';
-		renamedFiles.set(vendorOldUrl, vendorNewUrl);
+			// Store chunk rename for import reference updates
+			chunkRenames.set(file.name.replace('.js', ''), baseName);
 
-		const appOldUrl = `/_app/immutable/chunks/${appFile.name}`;
-		const appNewUrl = '/_app/immutable/chunks/app.js';
-		renamedFiles.set(appOldUrl, appNewUrl);
+			// Store for HTML updates
+			const oldUrl = `/_app/immutable/chunks/${file.name}`;
+			const newUrl = `/_app/immutable/chunks/${newName}`;
+			renamedFiles.set(oldUrl, newUrl);
 
-		// Update import references in ALL JavaScript files before renaming
-		// This includes: chunk files, node files, and entry files
+			console.log(`Will rename: ${file.name} -> ${newName} (${(file.size / 1024).toFixed(1)}KB)`);
+		} else {
+			console.log(`Keeping: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`);
+		}
+	});
+
+	// Update import references in ALL JavaScript files before renaming
+	if (chunkRenames.size > 0) {
 		const allJsFiles = findFiles(path.join(buildDir, '_app/immutable'), '.js');
 
-		for (const [oldHash, newName] of chunkRenames) {
+		for (const [oldFullName, newName] of chunkRenames) {
 			for (const jsFile of allJsFiles) {
 				let content = fs.readFileSync(jsFile, 'utf-8');
-				// Replace import references: from"./OldHash.js" -> from"./newName.js" (same directory)
-				const regexSameDir = new RegExp(`(from\\s*["'])\\.\/${oldHash}(\\.js["'])`, 'g');
+
+				// Replace import references: from"./oldFullName.js" -> from"./newName.js"
+				const regexSameDir = new RegExp(`(from\\s*["'])\\.\/${oldFullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\.js["'])`, 'g');
 				content = content.replace(regexSameDir, `$1./${newName}$2`);
 
-				// Replace import references: from"../chunks/OldHash.js" -> from"../chunks/newName.js" (from nodes/entry)
-				const regexParentDir = new RegExp(`(from\\s*["'])\\.\\.\\/chunks\\/${oldHash}(\\.js["'])`, 'g');
+				// Replace import references: from"../chunks/oldFullName.js" -> from"../chunks/newName.js"
+				const regexParentDir = new RegExp(`(from\\s*["'])\\.\\.\\/chunks\\/${oldFullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\.js["'])`, 'g');
 				content = content.replace(regexParentDir, `$1../chunks/${newName}$2`);
 
 				fs.writeFileSync(jsFile, content);
@@ -91,13 +97,17 @@ if (fs.existsSync(chunkDir)) {
 		}
 
 		// Now rename the files
-		const vendorNewPath = path.join(chunkDir, 'vendor.js');
-		fs.renameSync(vendorFile.path, vendorNewPath);
-		console.log(`Renamed: ${vendorFile.name} -> vendor.js (vendor bundle, ${(vendorFile.size / 1024).toFixed(1)}KB)`);
+		chunkFiles.forEach(file => {
+			const matchWithName = file.name.match(/^(.+?)-([A-Za-z0-9_-]{8,})\.js$/);
+			if (matchWithName) {
+				const [, baseName] = matchWithName;
+				const newName = `${baseName}.js`;
+				const newPath = path.join(chunkDir, newName);
 
-		const appNewPath = path.join(chunkDir, 'app.js');
-		fs.renameSync(appFile.path, appNewPath);
-		console.log(`Renamed: ${appFile.name} -> app.js (app bundle, ${(appFile.size / 1024).toFixed(1)}KB)`);
+				fs.renameSync(file.path, newPath);
+				console.log(`Renamed: ${file.name} -> ${newName}`);
+			}
+		});
 	}
 }
 

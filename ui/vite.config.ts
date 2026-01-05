@@ -5,33 +5,28 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
 	plugins: [
 		sveltekit(),
-		tailwindcss(),
-		{
-			name: 'override-sveltekit-chunking',
-			enforce: 'post',
-			config: (config) => {
-				// Override SvelteKit's chunk settings after it processes
-				return {
-					build: {
-						rollupOptions: {
-							output: {
-								// Minimize code splitting
-								inlineDynamicImports: false,  // Must be false for manualChunks to work
-								manualChunks: (id) => {
-									// Bundle everything into fewer chunks
-									if (id.includes('node_modules')) {
-										return 'vendor';
-									}
-									// All app code in main bundle
-									return 'app';
-								}
-							}
+		tailwindcss()
+	],
+	build: {
+		rollupOptions: {
+			output: {
+				// Use selective chunking that preserves module initialization order
+				manualChunks: (id) => {
+					// Only chunk large vendor libraries separately
+					if (id.includes('node_modules')) {
+						// Group by major dependency to reduce chunk count while maintaining init order
+						if (id.includes('@sveltejs')) {
+							return 'svelte-vendor';
 						}
+						// All other dependencies in one vendor chunk
+						return 'vendor';
 					}
-				};
+					// Let SvelteKit handle app code chunking automatically
+					// This preserves module initialization order for Svelte components
+				}
 			}
 		}
-	],
+	},
 	server: {
 		proxy: {
 			'/api/v1': {

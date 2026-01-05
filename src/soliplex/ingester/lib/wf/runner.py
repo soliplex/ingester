@@ -534,7 +534,7 @@ async def check_dead_workers():
             await asyncio.sleep(checkin_interval)
             logger.info(f"checking for dead workers every {checkin_interval} seconds")
             # add a random delay to avoid herding
-            last_checkin_time = datetime.now(datetime.UTC) - datetime.timedelta(
+            last_checkin_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
                 seconds=checkin_interval + (random.randint(1, 20) / 10)
             )
             async with get_session() as session:
@@ -542,9 +542,11 @@ async def check_dead_workers():
                 results = await session.exec(q)
                 results = results.all()
                 for worker in results:
+                    # Make last_checkin timezone-aware (SQLite stores as naive UTC)
+                    last_checkin_aware = worker.last_checkin.replace(tzinfo=datetime.UTC)
+                    dead_duration = datetime.datetime.now(datetime.UTC) - last_checkin_aware
                     logger.info(
-                        f"worker {worker.id} last checkin {worker.last_checkin}"
-                        + f" dead for {datetime.now(datetime.UTC) - worker.last_checkin} - removing"
+                        f"worker {worker.id} last checkin {worker.last_checkin}" + f" dead for {dead_duration} - removing"
                     )
                     # remove the checkin
                     await session.delete(worker)

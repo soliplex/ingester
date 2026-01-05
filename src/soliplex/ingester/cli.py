@@ -90,6 +90,8 @@ def export_to_env(file_path: str):
         return
     print("initializing environment with default sqlite db docs.db")
     model = Settings(doc_db_url="sqlite+aiosqlite:///docs.db")
+    model.artifact_s3 = None
+    model.input_s3 = None
     with open(file_path, "w") as f:
         for field_name in Settings.model_fields.keys():
             value = getattr(model, field_name)

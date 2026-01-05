@@ -6,6 +6,7 @@ import type {
 	DocumentBatch,
 	BatchStatus,
 	WorkflowRun,
+	WorkflowRunWithDetails,
 	RunStep,
 	RunGroup,
 	RunGroupStats,
@@ -101,29 +102,53 @@ class ApiClient {
 
 	async getWorkflowRuns(
 		batchId?: number,
-		paginationParams?: PaginationParams
-	): Promise<WorkflowRun[] | PaginatedResponse<WorkflowRun>> {
-		const params: Record<string, number> = {};
+		paginationParams?: PaginationParams,
+		includeDocInfo?: boolean
+	): Promise<
+		| WorkflowRun[]
+		| WorkflowRunWithDetails[]
+		| PaginatedResponse<WorkflowRun>
+		| PaginatedResponse<WorkflowRunWithDetails>
+	> {
+		const params: Record<string, number | boolean> = {};
 		if (batchId) params.batch_id = batchId;
 		if (paginationParams) {
 			params.page = paginationParams.page;
 			params.rows_per_page = paginationParams.rows_per_page;
 		}
-		return this.get<WorkflowRun[] | PaginatedResponse<WorkflowRun>>('/workflow/', params);
+		if (includeDocInfo) params.include_doc_info = true;
+		return this.get<
+			| WorkflowRun[]
+			| WorkflowRunWithDetails[]
+			| PaginatedResponse<WorkflowRun>
+			| PaginatedResponse<WorkflowRunWithDetails>
+		>('/workflow/', params);
 	}
 
 	async getWorkflowRunsByStatus(
 		status: RunStatus,
 		batchId?: number,
-		paginationParams?: PaginationParams
-	): Promise<WorkflowRun[] | PaginatedResponse<WorkflowRun>> {
-		const params: Record<string, string | number> = { status };
+		paginationParams?: PaginationParams,
+		includeDocInfo?: boolean
+	): Promise<
+		| WorkflowRun[]
+		| WorkflowRunWithDetails[]
+		| PaginatedResponse<WorkflowRun>
+		| PaginatedResponse<WorkflowRunWithDetails>
+	> {
+		const params: Record<string, string | number | boolean> = { status };
 		if (batchId) params.batch_id = batchId;
 		if (paginationParams) {
 			params.page = paginationParams.page;
 			params.rows_per_page = paginationParams.rows_per_page;
 		}
-		return this.get<WorkflowRun[] | PaginatedResponse<WorkflowRun>>('/workflow/by-status', params);
+		if (includeDocInfo) params.include_doc_info = true;
+		return this.get<
+			| WorkflowRun[]
+			| WorkflowRunWithDetails[]
+			| PaginatedResponse<WorkflowRun>
+			| PaginatedResponse<WorkflowRunWithDetails>
+		>('/workflow/by-status', params);
 	}
 
 	async getWorkflowRunDetails(workflowId: number): Promise<WorkflowRun> {

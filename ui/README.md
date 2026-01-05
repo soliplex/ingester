@@ -41,10 +41,40 @@ Build for production:
 npm run build
 ```
 
+This command:
+1. Bundles the application with optimized chunking (vendor + app)
+2. Applies static filenames to entry points (`app.js`, `start.js`)
+3. Adds version query strings for cache busting
+
+Output is written to `build/` directory.
+
+**Build Results:**
+- 16 JavaScript files (down from 41) - optimal for SvelteKit
+  - 2 entry files with static names (app.js, start.js)
+  - 2 bundle chunks (vendor ~79KB, app ~74KB)
+  - 12 route nodes (~1KB total) - required by SvelteKit
+- ~153 KB total JavaScript
+- Static filenames with query string versioning
+
+See `README_BUILD.md` for detailed build configuration and deployment.
+
 Preview production build:
 
 ```bash
 npm run preview
+```
+
+**Deploy to FastAPI:**
+
+Use the automated build scripts from the project root:
+- Windows: `scripts\build-ui.bat`
+- Linux/macOS: `./scripts/build-ui.sh`
+- Docker: `./scripts/build_ui-docker.sh`
+
+Or manually:
+```bash
+npm run build
+cp -r build/* ../src/soliplex/ingester/server/static/
 ```
 
 ### Code Quality

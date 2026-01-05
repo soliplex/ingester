@@ -4,7 +4,6 @@ import logging
 import mimetypes
 import os
 
-from sqlalchemy import bindparam
 from sqlmodel import select
 from sqlmodel import text
 
@@ -444,20 +443,28 @@ async def get_batch(id: int) -> models.DocumentBatch | None:
         return None
 
 
-async def get_documents_in_batch(id: int) -> list[models.Document]:
+async def get_documents_in_batch(batch_id: int) -> list[models.Document]:
+    """
+    Get all documents associated with a batch via DocumentURI.
+
+    Uses a subquery to find documents whose hash exists in the documenturi
+    table for the given batch_id.
+    """
     async with models.get_session() as session:
-        # q = select(models.Document).where(models.Document.batch_id == id)
-        q = text("select * from document where hash in (select hash from documenturi where batch_id=:batch_id)").bindparams(
-            bindparam("batch_id", value=id)
-        )
+        # Build subquery to get document hashes for this batch
+        subquery = select(models.DocumentURI.doc_hash).where(models.DocumentURI.batch_id == batch_id)
+
+        # Select documents where hash is in the subquery results
+        q = select(models.Document).where(models.Document.hash.in_(subquery))
 
         rs = await session.exec(q)
         res = rs.all()
-        objs = [models.Document(**row._asdict()) for row in res]
-        # check for issues
-        for o in objs:
-            o.model_validate(o)
-        return objs
+
+        # Expunge objects so they can be used outside the session
+        for doc in res:
+            session.expunge(doc)
+
+        return res
 
 
 async def delete_document(doc_hash: str, session, raise_on_error=True) -> models.Document:

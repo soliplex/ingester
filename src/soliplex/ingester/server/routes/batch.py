@@ -8,6 +8,7 @@ from fastapi import status
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib import workflow as workflow
+from soliplex.ingester.lib.models import RunStatus
 from soliplex.ingester.lib.wf import operations as wf_ops
 
 batch_router = APIRouter(prefix="/api/v1/batch", tags=["batch"])
@@ -72,15 +73,16 @@ async def batch_status(batch_id: int, response: Response):
             wf_ops.get_workflows(batch_id),
         )
         docs, workflows = await grp
-        parsed = [x for x in docs if x.rag_id is not None]
-        stat_counts = collections.Counter([x.status.value for x in workflows])
+
+        completed = [x for x in workflows[0] if x.status == RunStatus.COMPLETED]
+        stat_counts = collections.Counter([x.status.value for x in workflows[0]])
         batchres = {
             "batch": batch,
             "document_count": len(docs),
             "workflow_count": stat_counts,
             "workflows": workflows,
-            "parsed": len(parsed),
-            "remaining": len(docs) - len(parsed),
+            "parsed": len(completed),
+            "remaining": len(docs) - len(completed),
         }
         return batchres
     else:

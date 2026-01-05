@@ -10,7 +10,7 @@ from soliplex.ingester.lib.models import PaginatedResponse
 from soliplex.ingester.lib.models import RunGroup
 from soliplex.ingester.lib.models import WorkflowParams
 from soliplex.ingester.lib.models import WorkflowRun
-from soliplex.ingester.lib.models import WorkflowRunWithSteps
+from soliplex.ingester.lib.models import WorkflowRunWithDetails
 from soliplex.ingester.lib.models import WorkflowStepType
 from soliplex.ingester.lib.wf import operations as wf_ops
 from soliplex.ingester.lib.wf import registry as wf_registry
@@ -28,10 +28,14 @@ wf_router = APIRouter(prefix="/api/v1/workflow", tags=["workflow"])
 async def get_workflows(
     batch_id: int | None = None,
     include_steps: bool = False,
+    include_doc_info: bool = False,
     page: int | None = None,
     rows_per_page: int | None = None,
 ) -> (
-    list[WorkflowRun] | list[WorkflowRunWithSteps] | PaginatedResponse[WorkflowRun] | PaginatedResponse[WorkflowRunWithSteps]
+    list[WorkflowRun]
+    | list[WorkflowRunWithDetails]
+    | PaginatedResponse[WorkflowRun]
+    | PaginatedResponse[WorkflowRunWithDetails]
 ):
     """
     Get workflow runs with optional pagination.
@@ -53,7 +57,13 @@ async def get_workflows(
         raise ValueError("rows_per_page must be >= 1")
 
     # Get data from operations layer
-    items, total = await wf_ops.get_workflows(batch_id, include_steps=include_steps, page=page, rows_per_page=rows_per_page)
+    items, total = await wf_ops.get_workflows(
+        batch_id,
+        include_steps=include_steps,
+        include_doc_info=include_doc_info,
+        page=page,
+        rows_per_page=rows_per_page,
+    )
 
     # If pagination not requested, return raw list (backward compatibility)
     if page is None and rows_per_page is None:
@@ -63,8 +73,8 @@ async def get_workflows(
     total_pages = (total + rows_per_page - 1) // rows_per_page if rows_per_page > 0 else 0
 
     # Return paginated response
-    if include_steps:
-        return PaginatedResponse[WorkflowRunWithSteps](
+    if include_steps or include_doc_info:
+        return PaginatedResponse[WorkflowRunWithDetails](
             items=items,
             total=total,
             page=page or 1,
@@ -89,9 +99,15 @@ async def get_workflows(
 async def get_workflows_for_status(
     status: wf_ops.RunStatus,
     batch_id: int | None = None,
+    include_doc_info: bool = False,
     page: int | None = None,
     rows_per_page: int | None = None,
-) -> list[WorkflowRun] | PaginatedResponse[WorkflowRun]:
+) -> (
+    list[WorkflowRun]
+    | list[WorkflowRunWithDetails]
+    | PaginatedResponse[WorkflowRun]
+    | PaginatedResponse[WorkflowRunWithDetails]
+):
     """
     Get workflow runs filtered by status with optional pagination.
 
@@ -112,7 +128,13 @@ async def get_workflows_for_status(
         raise ValueError("rows_per_page must be >= 1")
 
     # Get data from operations layer
-    items, total = await wf_ops.get_workflows_for_status(status, batch_id, page=page, rows_per_page=rows_per_page)
+    items, total = await wf_ops.get_workflows_for_status(
+        status,
+        batch_id,
+        include_doc_info=include_doc_info,
+        page=page,
+        rows_per_page=rows_per_page,
+    )
 
     # If pagination not requested, return raw list (backward compatibility)
     if page is None and rows_per_page is None:
@@ -122,6 +144,14 @@ async def get_workflows_for_status(
     total_pages = (total + rows_per_page - 1) // rows_per_page if rows_per_page > 0 else 0
 
     # Return paginated response
+    if include_doc_info:
+        return PaginatedResponse[WorkflowRunWithDetails](
+            items=items,
+            total=total,
+            page=page or 1,
+            rows_per_page=rows_per_page or 10,
+            total_pages=total_pages,
+        )
     return PaginatedResponse[WorkflowRun](
         items=items,
         total=total,
@@ -251,7 +281,7 @@ async def get_workflow_runs(batch_id: int):
 )
 async def get_workflow(workflow_id: int):
     try:
-        result = await wf_ops.get_workflow_run(workflow_id, get_steps=True)
+        result = await wf_ops.get_workflow_run(workflow_id, include_steps=True)
         # get_workflow_run returns a tuple (run, steps) when get_steps=True
         run, steps = result
         # Convert to dict and add steps

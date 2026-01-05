@@ -74,8 +74,7 @@ Represents a unique document identified by content hash.
 - `mime_type` (str) - Document MIME type
 - `file_size` (int, nullable) - Size in bytes
 - `doc_meta` (dict[str, str]) - JSON metadata
-- `rag_id` (str, nullable) - HaikuRAG document ID
-- `batch_id` (int, foreign key, nullable) - Associated batch
+
 
 **Relationships:**
 - Multiple `DocumentURI` records can reference the same document

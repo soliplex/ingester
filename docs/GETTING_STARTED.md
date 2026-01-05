@@ -22,7 +22,7 @@ The postgres configuration includes references to startup scripts to create samp
 
 ### docling-serve
 
-Docling-serve is used to convert pdf documents into markdown and docling JSON documents for use in the pipelline. In order to allow for higher concurrency, the example file shows how to use multiple instances of docling that are load balanced using cookies. The docling client in the ingester handles the cookies to ensure the full request cycle stays on the same server. 
+Docling-serve is used to convert pdf documents into markdown and docling JSON documents for use in the pipelline. In order to allow for higher concurrency, the example file shows how to use multiple instances of docling that are load balanced using cookies. The docling client in the ingester handles the cookies to ensure the full request cycle stays on the same server.
 
 The configuration also shows how to provision GPUs for use in parsing.  Depending on server hardware, the device ids may have to be changed. Multiple instances can share a single GPU but testing is required to determine the optimal configuration.
 
@@ -32,7 +32,7 @@ Docling serve is prone to leak memory so constraining its memory allocation is n
 
 SeaweedFS is provided as a simple S3 compatible storage if desired for either the intermediate artifacts or the final LanceDB databases. An initialization script is provided to create the necessary bucket and authentication information. A production configuration should use a more robust secrets confugration.  Cloud providers can also be used for storage if desired.
 
-### 
+###
 
 
 
@@ -250,7 +250,7 @@ Once processing completes, check the document:
 curl "http://localhost:8000/api/v1/document/?batch_id=1"
 ```
 
-Look for the `rag_id` field - if present, the document was successfully processed and stored in the RAG system.
+
 
 ## Next Steps
 

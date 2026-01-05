@@ -7,7 +7,11 @@ const config = {
 	kit: {
 		adapter: adapter({
 			fallback: 'index.html'  // SPA mode - serve index.html for all routes
-		})
+		}),
+		version: {
+			// Use name-based versioning instead of content hash
+			name: Date.now().toString()
+		}
 	}
 };
 

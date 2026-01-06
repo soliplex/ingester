@@ -118,13 +118,17 @@
 						class="text-lg {getEventColor(record.event, record.status)}"
 						aria-hidden="true"
 					>
-						{getEventIcon(record.event)}
+						{getEventIcon(record.event)}-
 					</span>
 					<div class="flex-1">
 						<div class="flex items-center gap-2">
 							<span class="font-medium text-gray-900">
 								{getEventLabel(record.event)}
+								{#if record.handler_name}-
+								{record.handler_name}
+								{/if}
 							</span>
+
 							<StatusBadge status={record.status} compact={true} />
 						</div>
 						<div class="mt-1 text-xs text-gray-500">

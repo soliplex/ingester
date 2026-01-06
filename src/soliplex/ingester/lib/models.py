@@ -314,6 +314,7 @@ class LifecycleHistory(SQLModel, table=True):
         sa_column_kwargs={"autoincrement": True},
     )
     event: LifeCycleEvent = Field(default=None)
+    handler_name: str | None = Field(default=None, nullable=True)
     run_group_id: int = Field(default=None, foreign_key="rungroup.id")
     workflow_run_id: int = Field(default=None, foreign_key="workflowrun.id")
     step_id: int | None = Field(default=None, nullable=True)

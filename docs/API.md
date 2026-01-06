@@ -447,6 +447,49 @@ curl "http://localhost:8000/api/v1/workflow/runs/42"
 
 ---
 
+### GET /api/v1/workflow/runs/{workflow_id}/lifecycle
+
+Get lifecycle history events for a specific workflow run.
+
+**Path Parameters:**
+- `workflow_id` (integer, required) - Workflow run ID
+
+**Response:**
+- `200 OK` - Array of LifecycleHistory objects ordered by start_date
+- `400 Bad Request` - Invalid workflow ID
+- `500 Internal Server Error` - Processing error
+
+**Response Body:**
+```json
+[
+  {
+    "id": 1,
+    "event": "item_start",
+    "run_group_id": 5,
+    "workflow_run_id": 42,
+    "step_id": null,
+    "start_date": "2025-01-15T10:00:00",
+    "completed_date": "2025-01-15T10:01:30",
+    "status": "COMPLETED",
+    "status_date": "2025-01-15T10:01:30",
+    "status_message": "Item processing completed successfully",
+    "status_meta": {}
+  }
+]
+```
+
+**Event Types:**
+- `group_start` / `group_end` - Run group lifecycle
+- `item_start` / `item_end` / `item_failed` - Item processing lifecycle
+- `step_start` / `step_end` / `step_failed` - Individual step lifecycle
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/v1/workflow/runs/42/lifecycle"
+```
+
+---
+
 ### POST /api/v1/workflow/
 
 Start a new workflow run for a single document.

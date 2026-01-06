@@ -2,6 +2,7 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import StepTimeline from '$lib/components/StepTimeline.svelte';
+	import LifecycleHistoryTimeline from '$lib/components/LifecycleHistoryTimeline.svelte';
 	import { formatDateTime, formatDuration, truncateText } from '$lib/utils/format';
 	import type { PageData } from './$types';
 
@@ -12,6 +13,9 @@
 		data.workflow.steps?.filter((s) => s.status === 'COMPLETED').length || 0
 	);
 	const totalSteps = $derived(data.workflow.steps?.length || 0);
+	const hasLifecycleHistory = $derived(
+		data.lifecycleHistory && data.lifecycleHistory.length > 0
+	);
 </script>
 
 <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -130,6 +134,17 @@
 			<div class="mt-8">
 				<h2 class="mb-4 text-lg font-semibold text-gray-900">Workflow Steps</h2>
 				<StepTimeline steps={data.workflow.steps || []} />
+			</div>
+		{/if}
+
+		{#if hasLifecycleHistory}
+			<div class="mt-8">
+				<h2 class="mb-4 text-lg font-semibold text-gray-900">Lifecycle History</h2>
+				<div class="overflow-hidden rounded-lg bg-white shadow">
+					<div class="px-6 py-5">
+						<LifecycleHistoryTimeline history={data.lifecycleHistory} />
+					</div>
+				</div>
 			</div>
 		{/if}
 	</div>

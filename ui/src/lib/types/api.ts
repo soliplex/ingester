@@ -20,6 +20,17 @@ export enum WorkflowStepType {
 	ROUTE = 'route'
 }
 
+export enum LifeCycleEvent {
+	GROUP_START = 'group_start',
+	GROUP_END = 'group_end',
+	ITEM_START = 'item_start',
+	ITEM_END = 'item_end',
+	ITEM_FAILED = 'item_failed',
+	STEP_START = 'step_start',
+	STEP_END = 'step_end',
+	STEP_FAILED = 'step_failed'
+}
+
 // Document Models
 export interface Document {
 	hash: string;
@@ -130,6 +141,21 @@ export interface RunGroupStats {
 	avg_duration: number | null;
 	min_duration: number | null;
 	max_duration: number | null;
+}
+
+export interface LifecycleHistory {
+	id: number;
+	event: LifeCycleEvent;
+	handler_name: string | null;
+	run_group_id: number;
+	workflow_run_id: number;
+	step_id: number | null;
+	start_date: string;
+	completed_date: string | null;
+	status: RunStatus;
+	status_date: string | null;
+	status_message: string | null;
+	status_meta: Record<string, unknown>;
 }
 
 // Workflow Definition Models

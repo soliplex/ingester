@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**soliplex-ingester-ui** is a Svelte-based front-end application for interacting with REST APIs. This project uses Svelte 5 with the modern runes syntax and TypeScript. This application connects to a REST server located at http://127.0.0.1/api/v1. It has a specification file located at http://127.0.0.1:8000/openapi.json. Documentation for this application is located at ../soliplex_ingester/README.md. The user interface is intended to montor the status of workflows and interrogate workflow and parameter definitions. It should also display results from all endpoints in the stats group.
+**soliplex-ingester-ui** is a Svelte-based front-end application for interacting with REST APIs. This project uses Svelte 5 with the modern runes syntax and TypeScript. This application connects to a REST server located at http://127.0.0.1/api/v1. It has a specification file located at http://127.0.0.1:8000/openapi.json. Documentation for this application is located at ../soliplex_ingester/README.md. The user interface is intended to monitor the status of workflows and interrogate workflow and parameter definitions. It should also display results from all endpoints in the stats group.
+
+## Key Features
+
+- **Workflow Monitoring**: View workflow runs with detailed status information
+- **Lifecycle History**: Track workflow execution events (start, end, failures) with timestamps and metadata
+- **Batch Management**: Monitor document batches and their processing status
+- **Statistics Dashboard**: View system-wide statistics and performance metrics
+- **Workflow/Parameter Definitions**: Browse and inspect workflow and parameter configurations
 
 ## Common Commands
 
@@ -31,6 +39,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Clean and maintainable code with re-usable Svelte components
 
 Please read all the latest documentation for (Svelte Kit)[svelte.dev/llms.txt] and Tailwind CSS to ensure you are familiar with the latest features and best practices before implementing any new features or changes in these areas.
+
+# Project Structure
+
+## Key Components
+
+- **PageHeader.svelte**: Reusable page header with title and optional actions
+- **StatusBadge.svelte**: Color-coded status indicators for workflow states
+- **StepTimeline.svelte**: Expandable timeline view for workflow steps
+- **LifecycleHistoryTimeline.svelte**: Timeline view for lifecycle events with event type indicators
+
+## API Integration
+
+The application uses a centralized API client (`src/lib/services/apiClient.ts`) that provides:
+- Type-safe method calls for all backend endpoints
+- Consistent error handling
+- Request timeout management
+- Automatic URL construction with query parameters
+
+## Type Definitions
+
+All API types are defined in `src/lib/types/api.ts` and should match the backend Pydantic models:
+- `WorkflowRun`, `RunStep`, `RunGroup` - Workflow execution types
+- `LifecycleHistory`, `LifeCycleEvent` - Lifecycle tracking types
+- `DocumentBatch`, `DocumentURI` - Document management types
+- `RunStatus` - Shared status enum across all entities
 
 # Code style
 

@@ -38,6 +38,7 @@ When working on specific tasks, jump directly to:
 - **Configure environment** → [CONFIGURATION.md](docs/CONFIGURATION.md)
 - **Troubleshoot workflows** → [WORKFLOWS.md - Troubleshooting](docs/WORKFLOWS.md#troubleshooting)
 - **Query database** → [DATABASE.md - Query Examples](docs/DATABASE.md#query-examples)
+- **View lifecycle history** → [API.md - Lifecycle Endpoint](docs/API.md#get-apiv1workflowrunsworkflow_idlifecycle)
 - **Deploy to production** → [CLI.md - Deployment](docs/CLI.md#deployment)
 - **UI development** → [ui/CLAUDE.md](ui/CLAUDE.md)
 

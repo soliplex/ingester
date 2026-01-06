@@ -17,7 +17,8 @@ import type {
 	DocumentURI,
 	RunStatus,
 	PaginatedResponse,
-	PaginationParams
+	PaginationParams,
+	LifecycleHistory
 } from '$lib/types/api';
 
 class ApiClient {
@@ -52,7 +53,7 @@ class ApiClient {
 		}
 	}
 
-	private async get<T>(endpoint: string, params?: Record<string, string | number>): Promise<T> {
+	private async get<T>(endpoint: string, params?: Record<string, string | number | boolean>): Promise<T> {
 		let url = `${this.baseUrl}${endpoint}`;
 
 		if (params) {
@@ -157,6 +158,10 @@ class ApiClient {
 
 	async getWorkflowSteps(status: RunStatus): Promise<RunStep[]> {
 		return this.get<RunStep[]>('/workflow/steps', { status });
+	}
+
+	async getWorkflowLifecycleHistory(workflowId: number): Promise<LifecycleHistory[]> {
+		return this.get<LifecycleHistory[]>(`/workflow/runs/${workflowId}/lifecycle`);
 	}
 
 	// Workflow Definition Endpoints

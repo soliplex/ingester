@@ -230,6 +230,7 @@ async def create_lifecycle_history(
     event: LifeCycleEvent,
     status: RunStatus,
     step_id: int | None = None,
+    handler_name: str | None = None,
     status_message: str | None = None,
     status_meta: dict[str, str] | None = None,
 ) -> LifecycleHistory:
@@ -240,6 +241,7 @@ async def create_lifecycle_history(
             workflow_run_id=workflow_run_id,
             step_id=step_id,
             event=event,
+            handler_name=handler_name,
             status=status,
             status_date=dt,
             start_date=dt,
@@ -257,11 +259,8 @@ async def create_lifecycle_history(
 
 
 async def update_lifecycle_history(
-    run_group_id: int,
-    workflow_run_id: int,
-    event: LifeCycleEvent,
+    hist_id: int,
     status: RunStatus,
-    step_id: int | None = None,
     status_message: str | None = None,
     status_meta: dict[str, str] | None = None,
 ) -> None:
@@ -272,10 +271,7 @@ async def update_lifecycle_history(
     async with get_session() as session:
         q = (
             update(LifecycleHistory)
-            .where(LifecycleHistory.run_group_id == run_group_id)
-            .where(LifecycleHistory.workflow_run_id == workflow_run_id)
-            .where(LifecycleHistory.step_id == step_id)
-            .where(LifecycleHistory.event == event)
+            .where(LifecycleHistory.id == hist_id)
             .values(
                 status=status,
                 status_date=dt,
@@ -286,6 +282,50 @@ async def update_lifecycle_history(
         )
         await session.exec(q)
         await session.commit()
+
+
+async def get_lifecycle_history(
+    workflow_run_id: int | None = None,
+    run_group_id: int | None = None,
+) -> list[LifecycleHistory]:
+    """
+    Get lifecycle history records for a workflow run or run group.
+
+    Parameters
+    ----------
+    workflow_run_id : int | None
+        Filter by workflow run ID
+    run_group_id : int | None
+        Filter by run group ID
+
+    Returns
+    -------
+    list[LifecycleHistory]
+        List of LifecycleHistory records ordered by start_date
+
+    Raises
+    ------
+    ValueError
+        If neither workflow_run_id nor run_group_id is provided
+    """
+    async with get_session() as session:
+        q = select(LifecycleHistory)
+
+        if workflow_run_id:
+            q = q.where(LifecycleHistory.workflow_run_id == workflow_run_id)
+        elif run_group_id:
+            q = q.where(LifecycleHistory.run_group_id == run_group_id)
+        else:
+            raise ValueError("Must provide either workflow_run_id or run_group_id")
+
+        q = q.order_by(LifecycleHistory.start_date)
+        rs = await session.exec(q)
+        history = rs.all()
+
+        for record in history:
+            session.expunge(record)
+
+        return history
 
 
 async def create_single_workflow_run(

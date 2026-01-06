@@ -489,6 +489,7 @@ async def test_create_lifecycle_history(db):
         event=LifeCycleEvent.ITEM_START,
         status=RunStatus.RUNNING,
         step_id=steps[0].id,
+        handler_name="test_handler",
         status_message="Test message",
         status_meta={"key": "value"},
     )
@@ -499,6 +500,7 @@ async def test_create_lifecycle_history(db):
     assert history.event == LifeCycleEvent.ITEM_START
     assert history.status == RunStatus.RUNNING
     assert history.step_id == steps[0].id
+    assert history.handler_name == "test_handler"
     assert history.status_message == "Test message"
 
 
@@ -656,7 +658,7 @@ async def test_update_lifecycle_history(db):
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # First create lifecycle history
-    await wf_ops.create_lifecycle_history(
+    hist = await wf_ops.create_lifecycle_history(
         run_group_id=run_group.id,
         workflow_run_id=workflow_run.id,
         event=LifeCycleEvent.ITEM_START,
@@ -666,11 +668,8 @@ async def test_update_lifecycle_history(db):
 
     # Then update it
     await wf_ops.update_lifecycle_history(
-        run_group_id=run_group.id,
-        workflow_run_id=workflow_run.id,
-        event=LifeCycleEvent.ITEM_START,
+        hist_id=hist.id,
         status=RunStatus.COMPLETED,
-        step_id=steps[0].id,
         status_message="Completed successfully",
         status_meta={"result": "success"},
     )
@@ -692,7 +691,7 @@ async def test_update_lifecycle_history_failed(db):
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # First create lifecycle history
-    await wf_ops.create_lifecycle_history(
+    hist = await wf_ops.create_lifecycle_history(
         run_group_id=run_group.id,
         workflow_run_id=workflow_run.id,
         event=LifeCycleEvent.ITEM_START,
@@ -702,11 +701,8 @@ async def test_update_lifecycle_history_failed(db):
 
     # Then update it with FAILED status
     await wf_ops.update_lifecycle_history(
-        run_group_id=run_group.id,
-        workflow_run_id=workflow_run.id,
-        event=LifeCycleEvent.ITEM_START,
+        hist_id=hist.id,
         status=RunStatus.FAILED,
-        step_id=steps[0].id,
         status_message="Failed with error",
     )
 
@@ -727,7 +723,7 @@ async def test_update_lifecycle_history_running(db):
     workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
 
     # First create lifecycle history
-    await wf_ops.create_lifecycle_history(
+    hist = await wf_ops.create_lifecycle_history(
         run_group_id=run_group.id,
         workflow_run_id=workflow_run.id,
         event=LifeCycleEvent.STEP_START,
@@ -737,11 +733,8 @@ async def test_update_lifecycle_history_running(db):
 
     # Then update it with RUNNING status (should not set end_date)
     await wf_ops.update_lifecycle_history(
-        run_group_id=run_group.id,
-        workflow_run_id=workflow_run.id,
-        event=LifeCycleEvent.STEP_START,
+        hist_id=hist.id,
         status=RunStatus.RUNNING,
-        step_id=steps[0].id,
     )
 
 
@@ -1112,3 +1105,182 @@ async def test_reset_failed_steps(db):
 
     # Verify steps were reset (no exception means success)
     # The function doesn't return anything, so we just verify it doesn't raise
+
+
+@pytest.mark.asyncio
+async def test_get_lifecycle_history_by_workflow_run_id(db):
+    """Test retrieving lifecycle history by workflow run ID"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/lifecycle_history_test.pdf"
+    test_bytes = b"test bytes for lifecycle history"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # Create lifecycle history records
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.ITEM_START,
+        status=RunStatus.RUNNING,
+    )
+
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.STEP_START,
+        status=RunStatus.RUNNING,
+        step_id=steps[0].id,
+    )
+
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.STEP_END,
+        status=RunStatus.COMPLETED,
+        step_id=steps[0].id,
+    )
+
+    # Create a record for different workflow run
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id, workflow_run_id=999, event=LifeCycleEvent.ITEM_START, status=RunStatus.RUNNING
+    )
+
+    # Retrieve history for workflow run
+    history = await wf_ops.get_lifecycle_history(workflow_run_id=workflow_run.id)
+
+    # Should return 3 records, sorted by start_date
+    assert len(history) == 3
+    assert all(h.workflow_run_id == workflow_run.id for h in history)
+
+    # Verify events are in order
+    assert history[0].event == LifeCycleEvent.ITEM_START
+    assert history[1].event == LifeCycleEvent.STEP_START
+    assert history[2].event == LifeCycleEvent.STEP_END
+
+
+@pytest.mark.asyncio
+async def test_get_lifecycle_history_by_run_group_id(db):
+    """Test retrieving lifecycle history by run group ID"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri1 = "/tmp/lifecycle_group_test1.pdf"
+    test_uri2 = "/tmp/lifecycle_group_test2.pdf"
+    test_bytes1 = b"test bytes for lifecycle group 1"
+    test_bytes2 = b"test bytes for lifecycle group 2"
+
+    _, doc1 = await doc_ops.create_document_from_uri(
+        test_uri1, "test_source", "application/pdf", test_bytes1, batch_id=batch_id
+    )
+    _, doc2 = await doc_ops.create_document_from_uri(
+        test_uri2, "test_source", "application/pdf", test_bytes2, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    workflow_run1, _ = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc1.hash)
+    workflow_run2, _ = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc2.hash)
+
+    # Create lifecycle history for multiple workflow runs in the same group
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id, workflow_run_id=workflow_run1.id, event=LifeCycleEvent.ITEM_START, status=RunStatus.RUNNING
+    )
+
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id, workflow_run_id=workflow_run2.id, event=LifeCycleEvent.ITEM_START, status=RunStatus.RUNNING
+    )
+
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id, workflow_run_id=workflow_run1.id, event=LifeCycleEvent.ITEM_END, status=RunStatus.COMPLETED
+    )
+
+    # Retrieve history for run group
+    history = await wf_ops.get_lifecycle_history(run_group_id=run_group.id)
+
+    # Should return 3 records for run group
+    assert len(history) == 3
+    assert all(h.run_group_id == run_group.id for h in history)
+
+    # Verify both workflow runs are represented
+    workflow_run_ids = {h.workflow_run_id for h in history}
+    assert workflow_run_ids == {workflow_run1.id, workflow_run2.id}
+
+
+@pytest.mark.asyncio
+async def test_get_lifecycle_history_empty_result(db):
+    """Test retrieving lifecycle history when no records exist"""
+
+    # Try to get history for non-existent workflow run
+    history = await wf_ops.get_lifecycle_history(workflow_run_id=999)
+
+    # Should return empty list
+    assert len(history) == 0
+    assert history == []
+
+
+@pytest.mark.asyncio
+async def test_get_lifecycle_history_no_parameters(db):
+    """Test that get_lifecycle_history raises ValueError when no parameters provided"""
+
+    with pytest.raises(ValueError, match="Must provide either workflow_run_id or run_group_id"):
+        await wf_ops.get_lifecycle_history()
+
+
+@pytest.mark.asyncio
+async def test_get_lifecycle_history_with_metadata(db):
+    """Test retrieving lifecycle history with status messages and metadata"""
+
+    # Create test data
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/lifecycle_metadata_test.pdf"
+    test_bytes = b"test bytes for lifecycle metadata"
+    uri, doc = await doc_ops.create_document_from_uri(
+        test_uri, "test_source", "application/pdf", test_bytes, batch_id=batch_id
+    )
+
+    run_group = await wf_ops.create_run_group(workflow_definition_id="batch", batch_id=batch_id, param_id="test_base")
+    workflow_run, _ = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # Create lifecycle history with status info
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.ITEM_START,
+        status=RunStatus.RUNNING,
+        handler_name="start_handler",
+        status_message="Processing started",
+        status_meta={"batch_size": "10", "priority": "high"},
+    )
+
+    await wf_ops.create_lifecycle_history(
+        run_group_id=run_group.id,
+        workflow_run_id=workflow_run.id,
+        event=LifeCycleEvent.ITEM_FAILED,
+        status=RunStatus.FAILED,
+        handler_name="error_handler",
+        status_message="Processing failed due to timeout",
+        status_meta={"error_code": "TIMEOUT", "retry_count": "3"},
+    )
+
+    # Retrieve history
+    history = await wf_ops.get_lifecycle_history(workflow_run_id=workflow_run.id)
+
+    assert len(history) == 2
+
+    # Verify first record
+    assert history[0].handler_name == "start_handler"
+    assert history[0].status_message == "Processing started"
+    assert history[0].status_meta["batch_size"] == "10"
+    assert history[0].status_meta["priority"] == "high"
+
+    # Verify second record
+    assert history[1].event == LifeCycleEvent.ITEM_FAILED
+    assert history[1].status == RunStatus.FAILED
+    assert history[1].handler_name == "error_handler"
+    assert history[1].status_message == "Processing failed due to timeout"
+    assert history[1].status_meta["error_code"] == "TIMEOUT"

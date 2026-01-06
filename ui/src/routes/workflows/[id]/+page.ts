@@ -10,10 +10,15 @@ export const load: PageLoad = async ({ params }) => {
 			throw error(400, 'Invalid workflow ID');
 		}
 
-		const workflow = await apiClient.getWorkflowRunDetails(workflowId);
+		// Fetch both workflow details and lifecycle history in parallel
+		const [workflow, lifecycleHistory] = await Promise.all([
+			apiClient.getWorkflowRunDetails(workflowId),
+			apiClient.getWorkflowLifecycleHistory(workflowId)
+		]);
 
 		return {
-			workflow
+			workflow,
+			lifecycleHistory
 		};
 	} catch (err) {
 		console.error('Failed to load workflow:', err);

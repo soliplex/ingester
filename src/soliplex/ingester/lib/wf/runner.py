@@ -231,17 +231,20 @@ async def run_lifecycle_event(
 ):
     evt_list = get_lifecycle_event(workflow_def, event)
     if evt_list is not None and len(evt_list) > 0:
-        try:
-            await operations.create_lifecycle_history(
-                run_group.id,
-                workflow_run.id,
-                event,
-                RunStatus.RUNNING,
-                run_step.id,
-            )
-            step_config = await operations.get_step_config_by_id(run_step.step_config_id)
-            for evt in evt_list:
+        step_config = await operations.get_step_config_by_id(run_step.step_config_id)
+        for evt in evt_list:
+            hist_id = None
+            try:
                 logger.info(f"executing lifecycle event {evt.name} for {workflow_def.name}")
+                hist = await operations.create_lifecycle_history(
+                    run_group.id,
+                    workflow_run.id,
+                    event,
+                    RunStatus.RUNNING,
+                    run_step.id,
+                    evt.name,
+                )
+                hist_id = hist.id
                 res = await build_coro(
                     evt,
                     run_step,
@@ -253,28 +256,23 @@ async def run_lifecycle_event(
                 )
                 if res is None or not isinstance(res, dict):
                     res = {"result": str(res)}
-            await operations.update_lifecycle_history(
-                run_group.id,
-                workflow_run.id,
-                event,
-                RunStatus.COMPLETED,
-                run_step.id,
-                status_meta=res,
-            )
-        except Exception as e:
-            logger.exception(f"step start {workflow_run.doc_id} failed", exc_info=e)
-            try:
                 await operations.update_lifecycle_history(
-                    run_group.id,
-                    workflow_run.id,
-                    event,
-                    RunStatus.FAILED,
-                    run_step.id,
-                    status_meta={"error": str(e)},
-                    status_message=str(e),
+                    hist_id,
+                    RunStatus.COMPLETED,
+                    status_message="success",
+                    status_meta=res,
                 )
-            except Exception:
-                logger.exception("update lifecycle history failed", exc_info=e)
+            except Exception as e:
+                logger.exception(f"step start {workflow_run.doc_id} failed", exc_info=e)
+                try:
+                    await operations.update_lifecycle_history(
+                        hist_id,
+                        RunStatus.FAILED,
+                        status_meta={"error": str(e)},
+                        status_message=str(e),
+                    )
+                except Exception:
+                    logger.exception("update lifecycle history failed", exc_info=e)
 
 
 async def run_wf_step(run_step: RunStep, coro_id: int = None):

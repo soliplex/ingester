@@ -325,3 +325,26 @@ async def retry_workflow(response: Response, run_group_id: int):
     except Exception as e:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {"error": str(e)}
+
+
+@wf_router.get(
+    "/runs/{workflow_id}/lifecycle",
+    status_code=status.HTTP_200_OK,
+    summary="get lifecycle history for workflow run",
+)
+async def get_workflow_lifecycle_history(workflow_id: int, response: Response):
+    """
+    Get lifecycle history events for a specific workflow run.
+
+    Returns events ordered by start_date.
+    """
+    try:
+        history = await wf_ops.get_lifecycle_history(workflow_run_id=workflow_id)
+        return [record.model_dump() for record in history]
+    except ValueError as e:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": str(e)}
+    except Exception as e:
+        logger.exception("error getting lifecycle history", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}

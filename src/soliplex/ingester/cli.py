@@ -226,10 +226,21 @@ def dump_param(param_def_id: str = "default"):
 
 
 async def _list_workflows():
-    from .lib.wf.registry import load_workflow_registry
+    from .lib.wf.registry import load_workflow_definition
 
-    workflows = await load_workflow_registry()
-    for wf in workflows.keys():
+    settings = get_settings()
+    wf_ids = []
+    for p in Path(settings.workflow_dir).glob("*.yaml"):
+        try:
+            wf = await load_workflow_definition(p)
+            wf_ids.append(wf.id)
+        except ValidationError as ve:
+            print(f"invalid workflow {p}: ")
+            for e in ve.errors():
+                print(f"loc: {e['loc']}\t msg: {e['msg']}")
+            return
+
+    for wf in wf_ids:
         print(wf)
 
 
@@ -241,10 +252,21 @@ def list_workflows():
 
 
 async def _list_params():
-    from .lib.wf.registry import load_param_registry
+    from .lib.wf.registry import load_param_set
 
-    params = await load_param_registry()
-    for wf in params.keys():
+    settings = get_settings()
+    set_ids = []
+    for p in Path(settings.param_dir).glob("*.yaml"):
+        try:
+            pset = await load_param_set(p)
+            set_ids.append(pset.id)
+        except ValidationError as ve:
+            print(f"invalid param set {p}: ")
+            for e in ve.errors():
+                print(f"loc: {e['loc']}\t msg: {e['msg']}")
+            return
+
+    for wf in set_ids:
         print(wf)
 
 

@@ -141,7 +141,7 @@ async def save_to_rag(
     doc: models.Document,
     chunks: list[Chunk],
     docling_json: str,
-    source_uri: str,
+    source_uri: models.DocumentURI,
     step_config: StepConfig,
     embed_config: StepConfig,
     _log_con=None,
@@ -157,16 +157,20 @@ async def save_to_rag(
     # TODO: step config may need to be more predictable
     docling_document = DoclingDocument.model_validate_json(docling_json)
     config = build_storage_config(config, config_dict)
+
+    # TODO: decide what to do about doc title/uri
+    # title = doc_hash  # we don't have a title yet
+    title = None
+    uri = source_uri.uri
+    source = source_uri.source
+
     meta = doc.doc_meta.copy()
 
     meta["doc_id"] = doc_hash
     meta["md5"] = md5_hash
     meta["content_type"] = doc.mime_type
 
-    # TODO: decide what to do about doc title/uri
-    # title = doc_hash  # we don't have a title yet
-    title = None
-    uri = source_uri
+    meta["source"] = source
     # FIXME: move create to batch start
     # lock writes to avoid concurrent writes
     logger.info(f"bytes docling={len(docling_json)}", extra=_log_con)

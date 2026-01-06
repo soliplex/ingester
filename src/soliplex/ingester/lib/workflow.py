@@ -465,7 +465,7 @@ async def save_to_rag(
             extra=_log_con,
         )
         return
-    source_uri = doc_uris[0].uri
+    source_uri = doc_uris[0]
     logger.info(
         f"ingesting {doc_hash} batch={batch_id}  file_size={file_size} uri={source_uri}",  # noqa: E501
         extra=_log_con,

@@ -59,7 +59,7 @@ async def test_session_init():
 
 @pytest.mark.asyncio
 async def test_engine_init():
-    Database.close()
+    await Database.close()
     Database._initialized = False
     Database._engine = None
     await get_engine()

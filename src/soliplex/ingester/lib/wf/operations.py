@@ -693,7 +693,7 @@ async def find_operator_for_workflow_run(
 async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: WorkflowStepType) -> StepConfig:
     # PostgreSQL requires explicit cast to enum type; SQLite doesn't support enums
     dialect = Database.engine().dialect.name
-    step_type_cast = ":step_type::workflowsteptype" if dialect == "postgresql" else ":step_type"
+    step_type_cast = "::workflowsteptype" if dialect == "postgresql" else ""
 
     async with get_session() as session:
         q = text(
@@ -701,7 +701,7 @@ async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: Work
             stepconfig s inner join runstep r
             on r.step_config_id=s.id
             where r.workflow_run_id=:workflow_run_id
-            and r.step_type={step_type_cast}"""
+            and r.step_type=:step_type{step_type_cast}"""
         ).bindparams(
             bindparam("workflow_run_id", value=workflow_run_id),
             bindparam("step_type", value=step_type.value.upper()),

@@ -288,7 +288,7 @@ async def test_save_to_rag():
             doc=mock_doc,
             chunks=chunks,
             docling_json=docling_json,
-            source_uri=source_uri,
+            source_uri=models.DocumentURI(uri=source_uri, source="test"),
             step_config=step_config,
             embed_config=embed_config,
         )
@@ -335,7 +335,7 @@ async def test_save_to_rag_missing_data_dir():
             doc=mock_doc,
             chunks=[],
             docling_json='{"test": "data"}',
-            source_uri="http://example.com/doc.pdf",
+            source_uri=models.DocumentURI(uri="http://example.com/doc.pdf", source="test"),
             step_config=step_config,
             embed_config=embed_config,
         )

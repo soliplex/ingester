@@ -692,14 +692,11 @@ async def find_operator_for_workflow_run(
 async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: WorkflowStepType) -> StepConfig:
     async with get_session() as session:
         q = text(
-            """select s.id from
+            f"""select s.id from
             stepconfig s inner join runstep r
             on r.step_config_id=s.id
-            where r.workflow_run_id=:workflow_run_id
-            and r.step_type=:step_type"""
-        ).bindparams(
-            bindparam("workflow_run_id", value=workflow_run_id),
-            bindparam("step_type", value=step_type.value.upper()),
+            where r.workflow_run_id={workflow_run_id}
+            and r.step_type='{step_type.value.upper()}'"""
         )
 
         rs = await session.exec(q)

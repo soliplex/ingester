@@ -7,7 +7,7 @@ COPY ui/ ./
 RUN npm run build
 
 # Stage 2: Python base
-FROM python:3.13-slim-trixie AS base
+FROM python:3.14-slim-trixie AS base
 FROM base AS builder
 
 RUN apt-get update && apt-get -y upgrade

@@ -24,7 +24,8 @@ SMALLEST_PNG = (
 
 DESC_DEFAULTS = {
     "prompt": "Describe this image in detail. Be precise and concise.",
-    "model": "ministral-3",
+    # "model": "ministral-3",
+    "model": "ministral-3:3b",
     "timeout": 90,
     "max_tokens": 200,
 }

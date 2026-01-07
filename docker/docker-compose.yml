@@ -134,6 +134,23 @@ services:
               capabilities: [gpu]
     networks:
       - soliplex_net
+  ollama_img:
+    image: ollama/ollama:latest
+    container_name: ollama_img
+    volumes:
+      - ollama_img_data:/root/.ollama
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 32000M
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['3']
+              capabilities: [gpu]
+    networks:
+      - soliplex_net
 # optional for s3 storage
   seaweedfs:
     image: ghcr.io/chrislusf/seaweedfs
@@ -168,6 +185,7 @@ volumes:
   postgres_data:
   seaweedfs_data:
   docling_artifacts:
+  ollama_img_data:
 
 
 networks:

@@ -43,7 +43,7 @@ research:
   max_concurrency: 1
 processing:
   chunk_size: 256
-  
+
   max_context_items: 25
   max_context_chars: 10000
   converter: docling-local
@@ -60,6 +60,14 @@ processing:
     table_mode: accurate
     table_cell_matching: true
     images_scale: 2.0
+    picture_description:
+      enabled: true                  # Enable VLM picture description
+      model:
+        provider: ollama             # ollama, openai, or custom
+        name: ministral-3            # VLM model name
+      prompt: "Describe this image in detail. Be precise and concise."
+      timeout: 90                    # Request timeout in seconds
+
 search:
   vector_index_metric: cosine
   vector_refine_factor: 30

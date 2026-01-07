@@ -59,6 +59,7 @@ services:
         DOCLING_SERVE_ENABLE_UI: 1
         DOCLING_SERVE_MAX_SYNC_WAIT: 9999
         NVIDIA_VISIBLE_DEVICES: "all"
+        DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True
     restart: "unless-stopped"
     runtime: "nvidia"
     volumes:
@@ -87,6 +88,7 @@ services:
         DOCLING_SERVE_ENABLE_UI: 1
         DOCLING_SERVE_MAX_SYNC_WAIT: 9999
         NVIDIA_VISIBLE_DEVICES: "all"
+        DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True
 
     restart: "unless-stopped"
     runtime: "nvidia"
@@ -116,6 +118,7 @@ services:
         DOCLING_SERVE_ENABLE_UI: 1
         DOCLING_SERVE_MAX_SYNC_WAIT: 9999
         NVIDIA_VISIBLE_DEVICES: "all"
+        DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True
     restart: "unless-stopped"
     runtime: "nvidia"
     volumes:
@@ -131,7 +134,7 @@ services:
               capabilities: [gpu]
     networks:
       - soliplex_net
-
+# optional for s3 storage
   seaweedfs:
     image: ghcr.io/chrislusf/seaweedfs
     command: server -s3 -s3.config=/config/config.json

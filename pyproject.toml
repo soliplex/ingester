@@ -28,7 +28,7 @@ dependencies = [
     "docling-core>=2.51.1",
     "fastapi[standard]>=0.125.0",
     "fsspec>=2025.12.0",
-    "haiku-rag-slim>=0.23.0",
+    "haiku-rag-slim>=0.24.0",
     "opendal>=0.46.0",
     "pdf-splitter",
     "psycopg[binary,pool]>=3.3.2",

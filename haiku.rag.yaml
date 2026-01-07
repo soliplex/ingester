@@ -46,7 +46,7 @@ processing:
 
   max_context_items: 25
   max_context_chars: 10000
-  converter: docling-local
+  converter: docling-serve
   chunker: docling-local
   chunker_type: hybrid
   chunking_tokenizer: Qwen/Qwen3-Embedding-0.6B

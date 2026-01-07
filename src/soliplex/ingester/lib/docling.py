@@ -21,6 +21,13 @@ SMALLEST_PNG = (
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 )
 
+
+DESC_DEFAULTS = {
+    "prompt": "Describe this image in detail. Be precise and concise.",
+    "model": "ministral-3",
+    "timeout": 90,
+    "max_tokens": 200,
+}
 _http_sem = None
 
 
@@ -70,6 +77,28 @@ async def docling_convert(
             # this param needs to be a list
             config_dict["ocr_lang"] = [config_dict["ocr_lang"]]
         parameters.update(config_dict)
+        # remove picture description
+        for k in parameters.keys():
+            if k.startswith("picture_description_"):
+                del parameters[k]
+        if "do_picture_description" in config_dict and config_dict["do_picture_description"] is True:
+            parameters["do_picture_description"] = True
+            prompt = config_dict.get("picture_description_prompt", DESC_DEFAULTS["prompt"])
+            model = config_dict.get("picture_description_model", DESC_DEFAULTS["model"])
+            ollama_url = env.ollama_base_url.rstrip("/") + "/v1/chat/completions"
+            picture_description_api = {
+                "url": ollama_url,
+                "params": {
+                    "model": model,
+                    "max_completion_tokens": config_dict.get("picture_description_max_tokens", DESC_DEFAULTS["max_tokens"]),
+                },
+                "prompt": prompt,
+                "timeout": DESC_DEFAULTS["timeout"],
+            }
+
+            parameters["picture_description_api"] = json.dumps(picture_description_api)
+        else:
+            parameters["do_picture_description"] = False
 
         file_name = source_uri.split("/")[-1]
         if mime_type and "markdown" in mime_type and not file_name.endswith(".md"):

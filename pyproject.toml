@@ -64,7 +64,7 @@ DOC_DB_URL = "sqlite+aiosqlite:///:memory:"
 FILE_STORE_TARGET="db"
 FILE_STORE_DIR="./file-store"
 LANCEDB_DIR="./lancedb"
-DOCLING_SERVER_URL="http://localhost:5004/v1"
+DOCLING_SERVER_URL="http://localhost:5001/v1"
 
 [tool.pytest.ini_options]
 log_cli = true

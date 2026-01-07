@@ -7,6 +7,7 @@ config:
     ocr_lang: en
     pdf_backend: pypdfium2
     table_mode: accurate
+    do_picture_description: True
   chunk:
     chunker: docling-serve
     chunk_size: 256

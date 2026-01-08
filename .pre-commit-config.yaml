@@ -19,3 +19,11 @@ repos:
         args: [--fix]
       # Run the formatter (reads line-length from pyproject.toml).
       - id: ruff-format
+  - repo: local
+    hooks:
+      - id: pip-audit
+        name: pip-audit
+        entry: uv run --with pip-audit pip-audit
+        language: system
+        pass_filenames: false
+        files: (^pyproject\.toml$|^uv\.lock$)

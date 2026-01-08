@@ -2,7 +2,8 @@
 	import type { RunStep } from '$lib/types/api';
 	import { RunStatus } from '$lib/types/api';
 	import StatusBadge from './StatusBadge.svelte';
-	import { formatDuration, formatDateTime } from '$lib/utils/format';
+	import Timestamp from './Timestamp.svelte';
+	import { formatDuration } from '$lib/utils/format';
 
 	interface Props {
 		steps: RunStep[];
@@ -110,11 +111,11 @@
 						</div>
 						<div>
 							<dt class="font-medium text-gray-700">Started</dt>
-							<dd class="mt-1 text-gray-900">{formatDateTime(step.start_date)}</dd>
+							<dd class="mt-1"><Timestamp date={step.start_date} /></dd>
 						</div>
 						<div>
 							<dt class="font-medium text-gray-700">Completed</dt>
-							<dd class="mt-1 text-gray-900">{formatDateTime(step.completed_date)}</dd>
+							<dd class="mt-1"><Timestamp date={step.completed_date} /></dd>
 						</div>
 						<div>
 							<dt class="font-medium text-gray-700">Duration</dt>

@@ -2,7 +2,8 @@
 	import type { LifecycleHistory } from '$lib/types/api';
 	import { LifeCycleEvent, RunStatus } from '$lib/types/api';
 	import StatusBadge from './StatusBadge.svelte';
-	import { formatDuration, formatDateTime } from '$lib/utils/format';
+	import Timestamp from './Timestamp.svelte';
+	import { formatDuration, formatDateTimeLocal } from '$lib/utils/format';
 
 	interface Props {
 		history: LifecycleHistory[];
@@ -132,7 +133,7 @@
 							<StatusBadge status={record.status} compact={true} />
 						</div>
 						<div class="mt-1 text-xs text-gray-500">
-							{formatDateTime(record.start_date)}
+							{formatDateTimeLocal(record.start_date)}
 							{#if record.completed_date}
 								{@const duration = calculateDuration(record)}
 								{#if duration !== null}
@@ -175,11 +176,11 @@
 						{/if}
 						<div>
 							<dt class="font-medium text-gray-700">Started</dt>
-							<dd class="mt-1 text-gray-900">{formatDateTime(record.start_date)}</dd>
+							<dd class="mt-1"><Timestamp date={record.start_date} /></dd>
 						</div>
 						<div>
 							<dt class="font-medium text-gray-700">Completed</dt>
-							<dd class="mt-1 text-gray-900">{formatDateTime(record.completed_date)}</dd>
+							<dd class="mt-1"><Timestamp date={record.completed_date} /></dd>
 						</div>
 						{#if record.step_id}
 							<div>
@@ -194,7 +195,7 @@
 						{#if record.status_date}
 							<div>
 								<dt class="font-medium text-gray-700">Status Updated</dt>
-								<dd class="mt-1 text-gray-900">{formatDateTime(record.status_date)}</dd>
+								<dd class="mt-1"><Timestamp date={record.status_date} /></dd>
 							</div>
 						{/if}
 						{#if calculateDuration(record) !== null}

@@ -26,7 +26,7 @@ def build_docling_config(start_config: AppConfig, config_dict: dict[str, str | i
     env = get_settings()
     # may cause issues if they go to v2
     config.providers.docling_serve.base_url = env.docling_server_url.replace("/v1", "")
-    config.providers.docling_serve.timeout = env.docling_http_timeout
+    # config.providers.docling_serve.timeout = env.docling_http_timeout
     return config
 
 

@@ -1,4 +1,6 @@
-# Soliplex Ingester Documentation
+# Soliplex Ingester
+
+[![CI](https://github.com/soliplex/ingester/actions/workflows/soliplex.yaml/badge.svg)](https://github.com/soliplex/ingester/actions/workflows/soliplex.yaml)
 
 This project is designed to provide a robust system to load documents from various sources into RAG systems.  The default configuration is intended to provide populated databases for the [Soliplex](https://github.com/soliplex/soliplex) RAG (Retrieval Augmented Generation) system but it can be customized to support other storage systems and language models.
 

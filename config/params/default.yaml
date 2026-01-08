@@ -5,7 +5,7 @@ config:
     force_ocr: False
     ocr_engine: easyocr
     ocr_lang: en
-    pdf_backend: dlparse_v4
+    pdf_backend: pypdfium2
     table_mode: accurate
   chunk:
     chunker: docling-serve

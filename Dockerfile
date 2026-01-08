@@ -1,5 +1,5 @@
 # Stage 1: Build UI
-FROM node:20-slim AS ui-builder
+FROM node:25-slim AS ui-builder
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci

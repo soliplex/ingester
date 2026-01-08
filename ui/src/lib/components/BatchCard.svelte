@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { DocumentBatch } from '$lib/types/api';
-	import { formatDateTime, formatDuration } from '$lib/utils/format';
+	import Timestamp from './Timestamp.svelte';
+	import { formatDuration } from '$lib/utils/format';
 
 	interface Props {
 		batch: DocumentBatch;
@@ -79,7 +80,7 @@
 			</div>
 		</div>
 		<div class="ml-4 text-right text-xs text-gray-500">
-			<div>Started: {formatDateTime(batch.start_date)}</div>
+			<div>Started: <Timestamp date={batch.start_date} compact={true} showUtc={false} /></div>
 			{#if batch.duration !== null}
 				<div class="mt-1 font-medium">{formatDuration(batch.duration)}</div>
 			{/if}

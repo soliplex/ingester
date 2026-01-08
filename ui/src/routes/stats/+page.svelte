@@ -3,7 +3,7 @@
 	import StatsCard from '$lib/components/StatsCard.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
-	import { formatDuration, formatDateTime } from '$lib/utils/format';
+	import { formatDuration, formatDateTimeLocal } from '$lib/utils/format';
 	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 
@@ -14,7 +14,7 @@
 			runGroupId: item.runGroup.id,
 			batchId: item.runGroup.batch_id,
 			workflow: item.runGroup.workflow_definition_id,
-			created: formatDateTime(item.runGroup.created_date),
+			created: formatDateTimeLocal(item.runGroup.created_date),
 			totalRuns: item.stats.total_runs,
 			completed: item.stats.status_counts.COMPLETED || 0,
 			failed: (item.stats.status_counts.FAILED || 0) + (item.stats.status_counts.ERROR || 0),

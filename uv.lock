@@ -1245,7 +1245,7 @@ wheels = [
 
 [[package]]
 name = "haiku-rag-slim"
-version = "0.23.1"
+version = "0.24.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docling-core" },
@@ -1260,9 +1260,9 @@ dependencies = [
     { name = "typer" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/44/c4/3730752c334634dc5cf68accbc6517f402c3d27997a28ba462b27216d247/haiku_rag_slim-0.23.1.tar.gz", hash = "sha256:d134d0496f8134f1ae10fdd2e4a766a06a645eb1696fe47f15d06a589f88e051", size = 93867, upload-time = "2025-12-29T16:46:17.766Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/c2/fd97d94ab42acc7e4bd5f0ea4ec4e56351857e9f4de96f140fb4b414a19e/haiku_rag_slim-0.24.0.tar.gz", hash = "sha256:a39fd8b5688352b2a38da17ef3f51486c7eead9b0dc18847807532e4ac29182d", size = 95402, upload-time = "2026-01-07T09:25:09.707Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/44/e303ce4309fe4859f512560959a806b073c31d37f9fe3a03ff698c0c2256/haiku_rag_slim-0.23.1-py3-none-any.whl", hash = "sha256:0f91c0cbeaad8ba5d218c683f758f9a158849fa77a6ccf4ce31e1051422953ad", size = 129021, upload-time = "2025-12-29T16:46:16.718Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/d8/a1b312c8442c87c2accd7baf4e484ff05459e168ed053e522edacdd501c5/haiku_rag_slim-0.24.0-py3-none-any.whl", hash = "sha256:5e96a8744c7cdb04c5f967e256d9660b2419b4ecb7103b94433e963f73ca627b", size = 131158, upload-time = "2026-01-07T09:25:08.129Z" },
 ]
 
 [[package]]
@@ -4259,7 +4259,7 @@ requires-dist = [
     { name = "docling-core", specifier = ">=2.51.1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.125.0" },
     { name = "fsspec", specifier = ">=2025.12.0" },
-    { name = "haiku-rag-slim", specifier = ">=0.23.0" },
+    { name = "haiku-rag-slim", specifier = ">=0.24.0" },
     { name = "opendal", specifier = ">=0.46.0" },
     { name = "pdf-splitter", git = "https://github.com/runyaga/pdf-splitter.git?branch=main" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.2" },

@@ -39,6 +39,25 @@ async def test_docling_convert():
 
 
 @pytest.mark.asyncio
+async def test_docling_convert_img_desc():
+    input_file = "tests/files/picture_classification.pdf"
+    async with aiofiles.open(input_file, "rb") as f:
+        ba = await f.read()
+    test_config = {
+        "do_ocr": True,
+        "force_ocr": False,
+        "ocr_engine": "easyocr",
+        "ocr_lang": "en",
+        "pdf_backend": "dlparse_v2",
+        "table_mode": "accurate",
+        "do_picture_description": True,
+    }
+
+    js = await docling.docling_convert(ba, input_file, "application/pdf", config_dict=test_config)
+    assert js
+
+
+@pytest.mark.asyncio
 async def test_docling_convert_no_img():
     input_file = "tests/files/amt_handbook_sample.pdf"
     async with aiofiles.open(input_file, "rb") as f:

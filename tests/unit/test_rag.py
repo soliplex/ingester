@@ -54,7 +54,7 @@ def test_build_docling_config(mock_app_config, mock_settings):
 
         # Verify docling_serve configuration is updated
         assert result.providers.docling_serve.base_url == "http://localhost:5004"
-        assert result.providers.docling_serve.timeout == 60
+        assert result.providers.docling_serve.timeout == 30
 
 
 def test_build_embed_config(mock_app_config):

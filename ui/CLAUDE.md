@@ -1,96 +1,98 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working with this Svelte UI project.
 
 ## Project Overview
 
-**soliplex-ingester-ui** is a Svelte-based front-end application for interacting with REST APIs. This project uses Svelte 5 with the modern runes syntax and TypeScript. This application connects to a REST server located at http://127.0.0.1/api/v1. It has a specification file located at http://127.0.0.1:8000/openapi.json. Documentation for this application is located at ../soliplex_ingester/README.md. The user interface is intended to monitor the status of workflows and interrogate workflow and parameter definitions. It should also display results from all endpoints in the stats group.
+**soliplex-ingester-ui** - Svelte 5 frontend for monitoring document ingestion workflows.
 
-## Key Features
+- **Stack:** Svelte 5 (runes syntax), TypeScript, Tailwind CSS v4, SvelteKit
+- **API:** Connects to REST server at `/api/v1` (spec: `http://127.0.0.1:8000/openapi.json`)
+- **Backend docs:** `../CLAUDE.md`
 
-- **Workflow Monitoring**: View workflow runs with detailed status information
-- **Lifecycle History**: Track workflow execution events (start, end, failures) with timestamps and metadata
-- **Batch Management**: Monitor document batches and their processing status
-- **Statistics Dashboard**: View system-wide statistics and performance metrics
-- **Workflow/Parameter Definitions**: Browse and inspect workflow and parameter configurations
+## Commands
 
-## Common Commands
+```bash
+npm install          # Install dependencies
+npm run dev          # Dev server (http://localhost:5173)
+npm run build        # Production build
+npm run check        # TypeScript + Svelte type checking
+npm run format       # Prettier formatting
+npm run lint         # ESLint
+```
 
-**Development:**
+## Project Structure
 
-- `npm install` - Install all dependencies
-- `npm run dev` - Start development server (opens at http://localhost:5173)
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build locally
-
-**Code Quality:**
-
-- `npm run check` - Run TypeScript and Svelte type checking
-- `npm run check:watch` - Run type checking in watch mode
-- `npm run lint` - Lint code with ESLint
-- `npm run format` - Format code with Prettier
-
-# Technical Requirements
-
-- Svelte v5
-- Tailwind CSS V4
-- Accessibility (a11y) AA compliant
-- Responsive design (mobile-first)
-- Clean and maintainable code with re-usable Svelte components
-
-Please read all the latest documentation for (Svelte Kit)[svelte.dev/llms.txt] and Tailwind CSS to ensure you are familiar with the latest features and best practices before implementing any new features or changes in these areas.
-
-# Project Structure
+```
+src/
+├── lib/
+│   ├── components/     # Reusable UI components
+│   ├── services/       # API client (apiClient.ts)
+│   ├── types/          # TypeScript definitions (api.ts)
+│   ├── utils/          # Helpers (format.ts, errors.ts)
+│   └── config/         # Configuration (api.ts)
+└── routes/             # SvelteKit pages
+```
 
 ## Key Components
 
-- **PageHeader.svelte**: Reusable page header with title and optional actions
-- **StatusBadge.svelte**: Color-coded status indicators for workflow states
-- **StepTimeline.svelte**: Expandable timeline view for workflow steps
-- **LifecycleHistoryTimeline.svelte**: Timeline view for lifecycle events with event type indicators
+| Component | Purpose |
+|-----------|---------|
+| `PageHeader.svelte` | Page title with optional actions |
+| `StatusBadge.svelte` | Color-coded status indicators |
+| `StepTimeline.svelte` | Expandable workflow steps view |
+| `LifecycleHistoryTimeline.svelte` | Lifecycle events timeline |
+| `Pagination.svelte` | Table pagination controls |
+
+## Code Style
+
+### Naming
+- **Variables/functions:** camelCase
+- **Components:** PascalCase
+- **Event handlers:** `handle` prefix (e.g., `handleClick`)
+- **Constants:** camelCase with `Value` suffix for objects
+
+### TypeScript
+- No `any` type or unsafe casting
+- Destructure imports: `import { foo } from 'bar'`
+- Each component declares its own prop types
+
+### Svelte 5
+- Use runes: `$state`, `$derived`, `$props`, `$effect`
+- Props: `let { prop1, prop2 }: Props = $props();`
+- Derived: `const value = $derived(expression);`
+
+### Styling
+- Tailwind CSS only - no inline styles
+- Mobile-first responsive design
+
+### Files
+- Max 200 lines per component - split if larger
+- Trailing newline required
+- TypeScript files: camelCase (e.g., `myService.ts`)
 
 ## API Integration
 
-The application uses a centralized API client (`src/lib/services/apiClient.ts`) that provides:
-- Type-safe method calls for all backend endpoints
-- Consistent error handling
-- Request timeout management
-- Automatic URL construction with query parameters
+```typescript
+import { apiClient } from '$lib/services/apiClient';
 
-## Type Definitions
+// All methods are type-safe
+const batches = await apiClient.getBatches();
+const workflow = await apiClient.getWorkflowRunDetails(id);
+```
 
-All API types are defined in `src/lib/types/api.ts` and should match the backend Pydantic models:
-- `WorkflowRun`, `RunStep`, `RunGroup` - Workflow execution types
-- `LifecycleHistory`, `LifeCycleEvent` - Lifecycle tracking types
-- `DocumentBatch`, `DocumentURI` - Document management types
-- `RunStatus` - Shared status enum across all entities
+Types in `src/lib/types/api.ts` must match backend Pydantic models.
 
-# Code style
+## Accessibility Requirements
 
-- Use ES modules (import/export) syntax, not CommonJS (require)
-- Destructure imports when possible (eg. import { foo } from 'bar')
-- Each Svelte component should declare its own prop types using TypeScript within the same file
-- Svelte component files should have constants declared outside the component function
-- Use camelCase for variable and function names
-- Use PascalCase for Svelte components
-- Avoid use of inline styles, prefer Tailwind CSS classes
-- Avoid using `any` type in Typescript or casting with as
-- Declare constant values and objects using `const`
-- Constant values that are objects, do not use CAPS for the variable name, use camelCase instead suffixed with 'Value'
-- Event handlers should be named with the `handle` prefix (e.g. `handleClick`)
-- Only write code comments when the code is not clear and keep it conscise, avoid commenting out code
-- Avoid magic numbers and strings, use constants instead
-- Each file should have line break at the end
-- Try to limit components and modules up to 200 lines and split in to different components to manage complexity
-- Typescript files should be camelCase e.g. myService.ts
+- WCAG AA compliant
+- Include `aria-label` on interactive elements
+- Use `aria-expanded` for expandable sections
+- Never rely on color alone for status indication
+- Proper focus indicators (`focus:ring-2`)
 
-# Workflow
+## Before Committing
 
-- Be sure to run `npm run check` when you're done making a series of code changes
-- Use `npm run format` whenever the format is not correct
-- Prefer running single tests, and not the whole test suite, for performance
-
-# Dependency management
-
-- Ensure to find the latest version of a package before adding it
-- Avoid using deprecated packages or APIs
+1. Run `npm run check` - fix all type errors
+2. Run `npm run format` - ensure consistent formatting
+3. Verify components under 200 lines

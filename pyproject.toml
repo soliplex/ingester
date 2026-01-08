@@ -5,14 +5,13 @@ description = "ingestion workflow manager for soliplex"
 authors = [{ name = "Enfold Systems", email = "info@enfoldsystems.net" }]
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 keywords = ["pdf", "docling", "document-processing", "parallel-processing","workflow","soliplex","ingester","document-conversion"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Text Processing :: General",
@@ -28,7 +27,7 @@ dependencies = [
     "docling-core>=2.51.1",
     "fastapi[standard]>=0.125.0",
     "fsspec>=2025.12.0",
-    "haiku-rag-slim>=0.23.0",
+    "haiku-rag-slim>=0.24.0",
     "opendal>=0.46.0",
     "pdf-splitter",
     "psycopg[binary,pool]>=3.3.2",
@@ -64,7 +63,7 @@ DOC_DB_URL = "sqlite+aiosqlite:///:memory:"
 FILE_STORE_TARGET="db"
 FILE_STORE_DIR="./file-store"
 LANCEDB_DIR="./lancedb"
-DOCLING_SERVER_URL="http://localhost:5004/v1"
+DOCLING_SERVER_URL="http://localhost:5001/v1"
 
 [tool.pytest.ini_options]
 log_cli = true

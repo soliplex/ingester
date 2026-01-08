@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     logger.info("Starting soliplex-ingester")
 
     # Initialize database before starting worker

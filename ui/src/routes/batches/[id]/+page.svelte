@@ -3,8 +3,9 @@
 	import WorkflowList from '$lib/components/WorkflowList.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import StartWorkflowsForm from '$lib/components/StartWorkflowsForm.svelte';
+	import Timestamp from '$lib/components/Timestamp.svelte';
 	import { RunStatus } from '$lib/types/api';
-	import { formatDateTime, formatDuration } from '$lib/utils/format';
+	import { formatDuration } from '$lib/utils/format';
 	import { invalidateAll } from '$app/navigation';
 	import type { PageData } from './$types';
 
@@ -75,15 +76,15 @@
 					<div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
 						<div>
 							<dt class="text-sm font-medium text-gray-500">Started</dt>
-							<dd class="mt-1 text-sm text-gray-900">
-								{formatDateTime(data.batch.start_date)}
+							<dd class="mt-1 text-sm">
+								<Timestamp date={data.batch.start_date} />
 							</dd>
 						</div>
 						{#if data.batch.completed_date}
 							<div>
 								<dt class="text-sm font-medium text-gray-500">Completed</dt>
-								<dd class="mt-1 text-sm text-gray-900">
-									{formatDateTime(data.batch.completed_date)}
+								<dd class="mt-1 text-sm">
+									<Timestamp date={data.batch.completed_date} />
 								</dd>
 							</div>
 						{/if}

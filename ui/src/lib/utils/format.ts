@@ -59,6 +59,40 @@ export function formatDateTime(dateString: string | null): string {
 	return date.toLocaleString();
 }
 
+export function formatDateTimeLocal(dateString: string | null): string {
+	if (!dateString) {
+		return '—';
+	}
+
+	const date = new Date(dateString);
+	return date.toLocaleString(undefined, {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit'
+	});
+}
+
+export function formatDateTimeUTC(dateString: string | null): string {
+	if (!dateString) {
+		return '—';
+	}
+
+	const date = new Date(dateString);
+	return date.toLocaleString(undefined, {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		timeZone: 'UTC',
+		timeZoneName: 'short'
+	});
+}
+
 export function formatDate(dateString: string | null): string {
 	if (!dateString) {
 		return '—';

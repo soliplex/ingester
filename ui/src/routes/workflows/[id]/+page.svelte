@@ -3,7 +3,8 @@
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import StepTimeline from '$lib/components/StepTimeline.svelte';
 	import LifecycleHistoryTimeline from '$lib/components/LifecycleHistoryTimeline.svelte';
-	import { formatDateTime, formatDuration, truncateText } from '$lib/utils/format';
+	import Timestamp from '$lib/components/Timestamp.svelte';
+	import { formatDuration, truncateText } from '$lib/utils/format';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -78,20 +79,20 @@
 					</div>
 					<div>
 						<dt class="text-sm font-medium text-gray-500">Created</dt>
-						<dd class="mt-1 text-sm text-gray-900">
-							{formatDateTime(data.workflow.created_date)}
+						<dd class="mt-1 text-sm">
+							<Timestamp date={data.workflow.created_date} />
 						</dd>
 					</div>
 					<div>
 						<dt class="text-sm font-medium text-gray-500">Started</dt>
-						<dd class="mt-1 text-sm text-gray-900">
-							{formatDateTime(data.workflow.start_date)}
+						<dd class="mt-1 text-sm">
+							<Timestamp date={data.workflow.start_date} />
 						</dd>
 					</div>
 					<div>
 						<dt class="text-sm font-medium text-gray-500">Completed</dt>
-						<dd class="mt-1 text-sm text-gray-900">
-							{formatDateTime(data.workflow.completed_date)}
+						<dd class="mt-1 text-sm">
+							<Timestamp date={data.workflow.completed_date} />
 						</dd>
 					</div>
 					<div>

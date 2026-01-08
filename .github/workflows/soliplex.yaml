@@ -1,4 +1,4 @@
-name: Run soliplex unit tests / linting
+name: Run soliplex validation
 
 on:
   push:
@@ -69,12 +69,23 @@ jobs:
       - name: Check linting
         run: uv run ruff check
 
+  security:
+    needs: paths-filter
+    if: needs.paths-filter.outputs.should_test == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          inputs: .
+
   # This job always runs and provides a status for branch protection
   # It succeeds if checks passed OR if checks were skipped (no relevant changes)
   # Named "test-soliplex" to match existing branch protection rule
   test-soliplex:
     runs-on: ubuntu-latest
-    needs: [paths-filter, test, lint]
+    needs: [paths-filter, test, lint, security]
     if: always()
     steps:
       - name: Check results
@@ -82,17 +93,17 @@ jobs:
           if [[ "${{ needs.paths-filter.outputs.should_test }}" != "true" ]]; then
             echo "Checks skipped - no relevant file changes"
             exit 0
-          elif [[ "${{ needs.test.result }}" == "success" && "${{ needs.lint.result }}" == "success" ]]; then
+          elif [[ "${{ needs.test.result }}" == "success" && "${{ needs.lint.result }}" == "success" && "${{ needs.security.result }}" == "success" ]]; then
             echo "All checks passed"
             exit 0
           else
-            echo "Checks failed: test=${{ needs.test.result }}, lint=${{ needs.lint.result }}"
+            echo "Checks failed: test=${{ needs.test.result }}, lint=${{ needs.lint.result }}, security=${{ needs.security.result }}"
             exit 1
           fi
 
   notify-failure:
     runs-on: ubuntu-latest
-    needs: [test, lint]
+    needs: [test, lint, security]
     if: failure()
     timeout-minutes: 2
     steps:

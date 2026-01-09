@@ -134,4 +134,4 @@ include = ["soliplex.ingester*"]
 
 [tool.uv.sources]
 
-pdf-splitter = { git = "https://github.com/runyaga/pdf-splitter.git" ,branch="main" }
+pdf-splitter = { git = "https://github.com/soliplex/pdf-splitter.git" ,tag="0.4.0" }

@@ -17,4 +17,4 @@ config:
     model: qwen3-embedding:4b
     vector_dim: 2560
   store:
-    data_dir: s3://soliplex-lancedb/s3_default2
+    data_dir: default_db

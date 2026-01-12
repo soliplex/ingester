@@ -37,6 +37,7 @@ def mock_settings():
     """Create a mock settings object"""
     settings = MagicMock()
     settings.docling_server_url = "http://localhost:5004/v1"
+    settings.docling_chunk_server_url = "http://localhost:5004/v1"
     settings.docling_http_timeout = 60
     settings.lancedb_dir = "/tmp/lancedb"
     settings.embed_batch_size = 10

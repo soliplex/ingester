@@ -48,7 +48,8 @@ Ingest a new document into the system.
 - `priority` (integer, optional) - Processing priority (default: 0)
 
 **Response:**
-- `201 Created` - Document ingested successfully
+- `201 Created` - Document ingested successfully (new document)
+- `203 Non-Authoritative Information` - Document already exists in a different batch
 - `400 Bad Request` - Invalid parameters or metadata
 - `500 Internal Server Error` - Processing error
 
@@ -62,6 +63,11 @@ Ingest a new document into the system.
   "uri_id": 42
 }
 ```
+
+**Notes:**
+- The `batch_id` in the response reflects the batch where the document URI actually resides
+- If a document with the same hash already exists in a different batch, the response returns `203` with the original batch ID
+- This prevents duplicate processing while informing the caller that the document was previously ingested
 
 **Example:**
 ```bash

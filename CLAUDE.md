@@ -61,7 +61,12 @@ src/soliplex/ingester/
 │   ├── operations.py  # Document CRUD operations
 │   ├── workflow.py    # Built-in step handlers
 │   └── wf/            # Workflow execution engine
-├── server/routes/     # API endpoints
+├── server/routes/
+│   ├── batch.py       # Batch management endpoints
+│   ├── document.py    # Document ingestion endpoints
+│   ├── workflow.py    # Workflow control endpoints
+│   ├── lancedb.py     # Vector database management
+│   └── stats.py       # System statistics endpoints
 └── cli.py             # CLI commands
 ```
 

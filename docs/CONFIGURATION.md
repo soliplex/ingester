@@ -47,6 +47,23 @@ DOCLING_SERVER_URL="http://docling.internal.company.com/v1"
 - Must be accessible from worker nodes
 - Health check: `GET {url}/health`
 
+#### DOCLING_CHUNK_SERVER_URL
+
+Docling service endpoint for chunking operations.
+
+**Default:** `http://localhost:5001/v1`
+
+**Example:**
+```bash
+DOCLING_CHUNK_SERVER_URL="http://docling-chunker.internal.company.com/v1"
+```
+
+**Notes:**
+- Used by haiku.rag for document chunking via docling-serve
+- Can point to a different Docling instance than `DOCLING_SERVER_URL` for load distribution
+- If not set, defaults to the same endpoint as parsing
+- Useful when running separate Docling instances for parsing vs chunking
+
 #### DOCLING_HTTP_TIMEOUT
 
 HTTP timeout for Docling requests in seconds.
@@ -814,7 +831,8 @@ env:
 | Variable | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
 | `DOC_DB_URL` | str | Yes | - | Database connection URL |
-| `DOCLING_SERVER_URL` | str | No | `http://localhost:5001/v1` | Docling service URL |
+| `DOCLING_SERVER_URL` | str | No | `http://localhost:5001/v1` | Docling parsing service URL |
+| `DOCLING_CHUNK_SERVER_URL` | str | No | `http://localhost:5001/v1` | Docling chunking service URL |
 | `DOCLING_HTTP_TIMEOUT` | int | No | `600` | Docling timeout (seconds) |
 | `LOG_LEVEL` | str | No | `INFO` | Logging level |
 | `FILE_STORE_TARGET` | str | No | `fs` | Storage backend type |

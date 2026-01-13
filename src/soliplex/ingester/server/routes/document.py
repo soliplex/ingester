@@ -68,14 +68,23 @@ async def ingest_document(
             input_uri=input_uri,
             mime_type=mime_type,
         )
-
-        res = {
-            "batch_id": batch_id,
-            "document_uri": source_uri,
-            "document_hash": doc.hash,
-            "source": source,
-            "uri_id": docuri.id,
-        }
+        if docuri.batch_id == batch_id:
+            res = {
+                "batch_id": docuri.batch_id,
+                "document_uri": source_uri,
+                "document_hash": doc.hash,
+                "source": source,
+                "uri_id": docuri.id,
+            }
+        else:
+            response.status_code = status.HTTP_203_NON_AUTHORITATIVE_INFORMATION
+            res = {
+                "batch_id": docuri.batch_id,
+                "document_uri": source_uri,
+                "document_hash": doc.hash,
+                "source": source,
+                "uri_id": docuri.id,
+            }
 
     except KeyError as e:
         logger.exception("Error ingesting document")

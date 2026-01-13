@@ -14,9 +14,7 @@
 		data.workflow.steps?.filter((s) => s.status === 'COMPLETED').length || 0
 	);
 	const totalSteps = $derived(data.workflow.steps?.length || 0);
-	const hasLifecycleHistory = $derived(
-		data.lifecycleHistory && data.lifecycleHistory.length > 0
-	);
+	const hasLifecycleHistory = $derived(data.lifecycleHistory && data.lifecycleHistory.length > 0);
 </script>
 
 <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">

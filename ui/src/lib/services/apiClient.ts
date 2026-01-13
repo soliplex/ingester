@@ -14,11 +14,17 @@ import type {
 	WorkflowDefinitionSummary,
 	WorkflowParams,
 	ParamSetSummary,
+	UploadParamSetResponse,
+	DeleteParamSetResponse,
 	DocumentURI,
 	RunStatus,
 	PaginatedResponse,
 	PaginationParams,
-	LifecycleHistory
+	LifecycleHistory,
+	LanceDBListResponse,
+	LanceDBInfoResponse,
+	LanceDBDocumentsResponse,
+	LanceDBVacuumResponse
 } from '$lib/types/api';
 
 class ApiClient {
@@ -53,7 +59,10 @@ class ApiClient {
 		}
 	}
 
-	private async get<T>(endpoint: string, params?: Record<string, string | number | boolean>): Promise<T> {
+	private async get<T>(
+		endpoint: string,
+		params?: Record<string, string | number | boolean>
+	): Promise<T> {
 		let url = `${this.baseUrl}${endpoint}`;
 
 		if (params) {
@@ -188,6 +197,27 @@ class ApiClient {
 		return this.get<WorkflowParams[]>(`/workflow/param-sets/target/${target}`);
 	}
 
+	async uploadParamSet(yamlContent: string): Promise<UploadParamSetResponse> {
+		const formData = new URLSearchParams();
+		formData.append('yaml_content', yamlContent);
+
+		const response = await this.fetchWithTimeout(`${this.baseUrl}/workflow/param-sets`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: formData.toString()
+		});
+
+		return response.json();
+	}
+
+	async deleteParamSet(setId: string): Promise<DeleteParamSetResponse> {
+		const response = await this.fetchWithTimeout(`${this.baseUrl}/workflow/param-sets/${setId}`, {
+			method: 'DELETE'
+		});
+
+		return response.json();
+	}
+
 	// Run Group Endpoints
 
 	async getRunGroups(batchId?: number): Promise<RunGroup[]> {
@@ -224,6 +254,33 @@ class ApiClient {
 		});
 
 		return response.json();
+	}
+
+	// LanceDB Endpoints
+
+	async getLanceDBList(): Promise<LanceDBListResponse> {
+		return this.get<LanceDBListResponse>('/lancedb/list');
+	}
+
+	async getLanceDBInfo(dbName: string): Promise<LanceDBInfoResponse> {
+		return this.get<LanceDBInfoResponse>('/lancedb/info', { db: dbName });
+	}
+
+	async getLanceDBDocuments(
+		dbName: string,
+		limit?: number,
+		offset?: number,
+		filter?: string
+	): Promise<LanceDBDocumentsResponse> {
+		const params: Record<string, string | number> = { db: dbName };
+		if (limit !== undefined) params.limit = limit;
+		if (offset !== undefined) params.offset = offset;
+		if (filter) params.filter = filter;
+		return this.get<LanceDBDocumentsResponse>('/lancedb/documents', params);
+	}
+
+	async vacuumLanceDB(dbName: string): Promise<LanceDBVacuumResponse> {
+		return this.get<LanceDBVacuumResponse>('/lancedb/vacuum', { db: dbName });
 	}
 }
 

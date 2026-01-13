@@ -8,14 +8,8 @@
 		onPageSizeChange?: (pageSize: number) => void;
 	}
 
-	let {
-		currentPage,
-		totalPages,
-		totalItems,
-		itemsPerPage,
-		onPageChange,
-		onPageSizeChange
-	}: Props = $props();
+	let { currentPage, totalPages, totalItems, itemsPerPage, onPageChange, onPageSizeChange }: Props =
+		$props();
 
 	const pageSizeOptions = [20, 50, 100];
 
@@ -120,17 +114,11 @@
 			disabled={currentPage === 1}
 			class="inline-flex items-center justify-center px-3 py-2 text-sm font-medium rounded-md
         {currentPage === 1
-					? 'text-gray-400 cursor-not-allowed'
-					: 'text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'}"
+				? 'text-gray-400 cursor-not-allowed'
+				: 'text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'}"
 			aria-label="Previous page"
 		>
-			<svg
-				class="h-5 w-5"
-				fill="none"
-				stroke="currentColor"
-				viewBox="0 0 24 24"
-				aria-hidden="true"
-			>
+			<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
 			</svg>
 		</button>
@@ -162,17 +150,11 @@
 			disabled={currentPage === totalPages}
 			class="inline-flex items-center justify-center px-3 py-2 text-sm font-medium rounded-md
         {currentPage === totalPages
-					? 'text-gray-400 cursor-not-allowed'
-					: 'text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'}"
+				? 'text-gray-400 cursor-not-allowed'
+				: 'text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'}"
 			aria-label="Next page"
 		>
-			<svg
-				class="h-5 w-5"
-				fill="none"
-				stroke="currentColor"
-				viewBox="0 0 24 24"
-				aria-hidden="true"
-			>
+			<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 			</svg>
 		</button>

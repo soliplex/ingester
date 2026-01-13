@@ -17,11 +17,13 @@ The Svelte UI build has been optimized to minimize JavaScript files and use stat
 - **Node Files:** 12 route entry points (~1KB total) - required by SvelteKit
 
 **Why 16 JavaScript files?**
+
 - 2 main entry files (app.js, start.js) with static names
 - 2 bundle chunks (vendor.js, app.js) with static names
 - 12 route node files (0.js - 11.js) - required by SvelteKit's routing system
 
 **Note:** Both chunks and entries have `app.js`, but they're in different directories:
+
 - Entry: `_app/immutable/entry/app.js` (entry point, 0.23KB)
 - Chunk: `_app/immutable/chunks/app.js` (app bundle, ~73KB)
 
@@ -58,12 +60,14 @@ Custom plugin overrides SvelteKit's default chunking strategy:
 ```
 
 This creates two main bundles:
+
 - `vendor` - Third-party dependencies
 - `app` - Application code
 
 ### 2. Post-Build Script (`scripts/static-filenames.js`)
 
 After Vite build completes, this script:
+
 1. Finds all JavaScript files with hash-based names (e.g., `app.ChWf7yR6.js`)
 2. Renames them to static names (e.g., `app.js`)
 3. Updates `index.html` to reference static names with version query strings
@@ -73,9 +77,9 @@ After Vite build completes, this script:
 
 ```json
 {
-  "scripts": {
-    "build": "vite build && node scripts/static-filenames.js"
-  }
+	"scripts": {
+		"build": "vite build && node scripts/static-filenames.js"
+	}
 }
 ```
 
@@ -107,26 +111,27 @@ build/
 
 ```html
 <!-- CSS with static name and version query string -->
-<link href="/_app/immutable/assets/app.css?v=1767399045204" rel="stylesheet">
+<link href="/_app/immutable/assets/app.css?v=1767399045204" rel="stylesheet" />
 
 <!-- JavaScript module preloads (entries and chunks) -->
-<link rel="modulepreload" href="/_app/immutable/entry/start.js?v=1767399045204">
-<link rel="modulepreload" href="/_app/immutable/chunks/app.js?v=1767399045204">
-<link rel="modulepreload" href="/_app/immutable/chunks/vendor.js?v=1767399045204">
-<link rel="modulepreload" href="/_app/immutable/entry/app.js?v=1767399045204">
+<link rel="modulepreload" href="/_app/immutable/entry/start.js?v=1767399045204" />
+<link rel="modulepreload" href="/_app/immutable/chunks/app.js?v=1767399045204" />
+<link rel="modulepreload" href="/_app/immutable/chunks/vendor.js?v=1767399045204" />
+<link rel="modulepreload" href="/_app/immutable/entry/app.js?v=1767399045204" />
 
 <!-- SvelteKit initialization -->
 <script>
-  Promise.all([
-    import("/_app/immutable/entry/start.js?v=1767399045204"),
-    import("/_app/immutable/entry/app.js?v=1767399045204")
-  ]).then(([kit, app]) => {
-    kit.start(app, element);
-  });
+	Promise.all([
+		import('/_app/immutable/entry/start.js?v=1767399045204'),
+		import('/_app/immutable/entry/app.js?v=1767399045204')
+	]).then(([kit, app]) => {
+		kit.start(app, element);
+	});
 </script>
 ```
 
 **All assets use static names with query string versioning:**
+
 - Entries: `entry/app.js`, `entry/start.js`
 - Chunks: `chunks/vendor.js`, `chunks/app.js`
 - Assets: `assets/app.css`
@@ -168,17 +173,21 @@ Or add to your deployment automation pipeline.
 ## Troubleshooting
 
 **Build fails with "Cannot find module" error:**
+
 - Ensure you're running `npm run build` from the `ui/` directory
 - Check that `scripts/static-filenames.js` exists
 
 **Files not renamed:**
+
 - Check build output - script runs after "Using @sveltejs/adapter-static"
 - Verify `ui/build/_app/version.json` exists
 
 **HTML not updated:**
+
 - Script should print "Updated build\index.html with static filenames"
 - Check that renamed files match the pattern in the script
 
 **Runtime errors:**
+
 - Verify all referenced files in `index.html` exist in `build/_app/`
 - Check browser console for 404 errors

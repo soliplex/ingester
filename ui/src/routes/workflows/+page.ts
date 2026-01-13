@@ -1,11 +1,7 @@
 import { apiClient } from '$lib/services/apiClient';
 import { RunStatus } from '$lib/types/api';
 import type { PageLoad } from './$types';
-import type {
-	WorkflowRun,
-	WorkflowRunWithDetails,
-	PaginatedResponse
-} from '$lib/types/api';
+import type { WorkflowRun, WorkflowRunWithDetails, PaginatedResponse } from '$lib/types/api';
 
 const DEFAULT_ROWS_PER_PAGE = 20;
 

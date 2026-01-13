@@ -63,7 +63,9 @@
 						<span>Source: <span class="font-medium">{documentInfo.source}</span></span>
 					{/if}
 					{#if documentInfo.file_size !== null}
-						<span>Size: <span class="font-medium">{formatFileSize(documentInfo.file_size)}</span></span>
+						<span
+							>Size: <span class="font-medium">{formatFileSize(documentInfo.file_size)}</span></span
+						>
 					{/if}
 					{#if documentInfo.mime_type}
 						<span>Type: <span class="font-medium">{documentInfo.mime_type}</span></span>

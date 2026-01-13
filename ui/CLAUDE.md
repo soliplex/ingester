@@ -31,8 +31,18 @@ src/
 │   ├── types/          # TypeScript definitions (api.ts)
 │   ├── utils/          # Helpers (format.ts, errors.ts)
 │   └── config/         # Configuration (api.ts)
-└── routes/             # SvelteKit pages
+└── routes/
+    ├── batches/        # Batch management pages
+    ├── workflows/      # Workflow monitoring pages
+    ├── lancedb/        # Vector database browser
+    ├── definitions/    # Workflow/param definitions
+    └── stats/          # System statistics
 ```
+
+## Routing Notes
+
+- Use `[id]` for single-segment dynamic routes (e.g., `/batches/[id]`)
+- Use `[...name]` (rest parameter) for paths with slashes (e.g., `/lancedb/[...name]` matches `/lancedb/project/data.lancedb`)
 
 ## Key Components
 
@@ -43,6 +53,9 @@ src/
 | `StepTimeline.svelte`             | Expandable workflow steps view   |
 | `LifecycleHistoryTimeline.svelte` | Lifecycle events timeline        |
 | `Pagination.svelte`               | Table pagination controls        |
+| `LanceDBList.svelte`              | Vector database list display     |
+| `LanceDBCard.svelte`              | Individual database card         |
+| `LanceDBDocumentTable.svelte`     | Documents table for LanceDB      |
 
 ## Code Style
 

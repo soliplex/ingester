@@ -567,6 +567,170 @@ curl -X POST "http://localhost:8000/api/v1/source-status" \
 
 ---
 
+## LanceDB Endpoints
+
+### GET /api/v1/lancedb/list
+
+List all LanceDB vector databases in the configured directory.
+
+**Response:**
+- `200 OK` - List of databases with metadata
+
+**Response Body:**
+```json
+{
+  "status": "ok",
+  "lancedb_dir": "/data/lancedb",
+  "database_count": 2,
+  "databases": [
+    {
+      "name": "default.lancedb",
+      "path": "default.lancedb",
+      "size_bytes": 1048576,
+      "size_human": "1.00 MB"
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/v1/lancedb/list"
+```
+
+---
+
+### GET /api/v1/lancedb/info
+
+Get detailed information about a specific LanceDB database.
+
+**Query Parameters:**
+- `db` (string, required) - Database name relative to lancedb_dir
+
+**Response:**
+- `200 OK` - Database information
+- `404 Not Found` - Database does not exist
+- `500 Internal Server Error` - Failed to open database
+
+**Response Body:**
+```json
+{
+  "status": "ok",
+  "path": "/data/lancedb/default.lancedb",
+  "versions": {
+    "lancedb": "0.25.3",
+    "haiku_rag": "0.5.0",
+    "stored_version": "0.5.0"
+  },
+  "embeddings": {
+    "provider": "openai",
+    "model": "text-embedding-3-small",
+    "vector_dim": 1536
+  },
+  "documents": {
+    "count": 100,
+    "size_bytes": 512000,
+    "size_human": "500.00 KB",
+    "versions": 5
+  },
+  "chunks": {
+    "count": 1500,
+    "size_bytes": 2048000,
+    "size_human": "2.00 MB",
+    "versions": 5
+  },
+  "vector_index": {
+    "exists": true,
+    "indexed_rows": 1450,
+    "unindexed_rows": 50
+  },
+  "tables": ["documents", "chunks", "settings"]
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/v1/lancedb/info?db=default.lancedb"
+```
+
+**Note:** The `db` parameter supports nested paths (e.g., `project/data.lancedb`).
+
+---
+
+### GET /api/v1/lancedb/documents
+
+List documents stored in a LanceDB database.
+
+**Query Parameters:**
+- `db` (string, required) - Database name relative to lancedb_dir
+- `limit` (integer, optional) - Maximum number of documents to return
+- `offset` (integer, optional) - Number of documents to skip
+- `filter` (string, optional) - SQL WHERE clause to filter documents
+
+**Response:**
+- `200 OK` - List of documents
+- `404 Not Found` - Database does not exist
+- `500 Internal Server Error` - Query error
+
+**Response Body:**
+```json
+{
+  "status": "ok",
+  "path": "/data/lancedb/default.lancedb",
+  "document_count": 10,
+  "documents": [
+    {
+      "id": "doc-abc123",
+      "uri": "/documents/report.pdf",
+      "title": "Q4 Financial Report",
+      "created_at": "2025-01-15T10:00:00",
+      "updated_at": "2025-01-15T12:00:00",
+      "chunk_count": 25,
+      "metadata": {"author": "John Doe"}
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/v1/lancedb/documents?db=default.lancedb&limit=10"
+```
+
+**Example with filter:**
+```bash
+curl "http://localhost:8000/api/v1/lancedb/documents?db=default.lancedb&filter=uri%20LIKE%20'%25report%25'"
+```
+
+---
+
+### GET /api/v1/lancedb/vacuum
+
+Optimize and clean up database tables to reduce disk usage.
+
+**Query Parameters:**
+- `db` (string, required) - Database name relative to lancedb_dir
+
+**Response:**
+- `200 OK` - Vacuum completed successfully
+- `500 Internal Server Error` - Vacuum failed
+
+**Response Body:**
+```json
+{
+  "status": "ok"
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/v1/lancedb/vacuum?db=default.lancedb"
+```
+
+**Note:** Vacuum removes deleted rows and compacts table files. Run periodically after bulk deletions.
+
+---
+
 ## Data Models
 
 ### DocumentBatch

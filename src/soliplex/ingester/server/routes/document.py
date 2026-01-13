@@ -2,6 +2,7 @@ import json
 import logging
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import Form
 from fastapi import Response
 from fastapi import UploadFile
@@ -9,10 +10,11 @@ from fastapi import status
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib import workflow as workflow
+from soliplex.ingester.lib.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
-doc_router = APIRouter(prefix="/api/v1/document", tags=["document"])
+doc_router = APIRouter(prefix="/api/v1/document", tags=["document"], dependencies=[Depends(get_current_user)])
 
 
 @doc_router.get("/", status_code=status.HTTP_200_OK)

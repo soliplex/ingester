@@ -26,6 +26,7 @@ Comprehensive docs in `docs/` folder - **always check these first**:
 | Workflows | [WORKFLOWS.md](docs/WORKFLOWS.md) | Custom steps, troubleshooting |
 | Database | [DATABASE.md](docs/DATABASE.md) | Schema, query examples |
 | Configuration | [CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables |
+| Authentication | [AUTHENTICATION.md](docs/AUTHENTICATION.md) | OIDC setup, OAuth2 Proxy |
 | CLI | [CLI.md](docs/CLI.md) | Command reference |
 
 ---

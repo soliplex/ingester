@@ -1,0 +1,74 @@
+# Docker Compose overlay for OAuth2 Proxy authentication
+# Usage: docker compose -f docker-compose.yml -f docker-compose.auth.yml up
+#
+# This adds OAuth2 Proxy in front of the soliplex_ingester service.
+# Requires environment variables set in .env.auth or exported:
+#   - OAUTH2_PROXY_CLIENT_ID
+#   - OAUTH2_PROXY_CLIENT_SECRET
+#   - OAUTH2_PROXY_COOKIE_SECRET
+#   - OAUTH2_PROXY_OIDC_ISSUER_URL
+#   - OAUTH2_PROXY_REDIRECT_URL
+
+services:
+  # OAuth2 Proxy - handles OIDC authentication
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.9.0
+    container_name: oauth2-proxy
+    depends_on:
+      - soliplex_ingester
+    ports:
+      - "4180:4180"
+    volumes:
+      - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
+    command:
+      - --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+    environment:
+      # Required - set these in .env.auth or export them
+      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${OAUTH2_PROXY_OIDC_ISSUER_URL}
+      OAUTH2_PROXY_REDIRECT_URL: ${OAUTH2_PROXY_REDIRECT_URL:-http://localhost:4180/oauth2/callback}
+
+      # Optional overrides
+      OAUTH2_PROXY_EMAIL_DOMAINS: ${OAUTH2_PROXY_EMAIL_DOMAINS:-*}
+      OAUTH2_PROXY_COOKIE_SECURE: ${OAUTH2_PROXY_COOKIE_SECURE:-false}
+    networks:
+      - soliplex_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4180/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Redis for session storage (optional but recommended for production)
+  redis:
+    image: redis:7-alpine
+    container_name: oauth2-proxy-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - soliplex_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Override soliplex_ingester to add auth environment variables
+  # Note: To hide the direct port (8002), remove the ports mapping from docker-compose.yml
+  # or use a separate profile. The overlay merges ports, it cannot remove them.
+  soliplex_ingester:
+    environment:
+      # Enable auth header trust
+      AUTH_TRUST_PROXY_HEADERS: "true"
+      # Optional: also allow API key for programmatic access
+      API_KEY: ${API_KEY:-}
+      API_KEY_ENABLED: ${API_KEY_ENABLED:-false}
+
+volumes:
+  redis_data:

@@ -44,6 +44,11 @@ class Settings(BaseSettings):
 
     do_rag: bool = True  # used for testing to turn off haiku rag
 
+    # Authentication settings
+    api_key: str | None = None  # Static API key for programmatic access
+    api_key_enabled: bool = False  # Enable API key authentication
+    auth_trust_proxy_headers: bool = False  # Trust X-Auth-Request-* headers from OAuth2 Proxy
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

@@ -1,6 +1,6 @@
 [project]
 name = "soliplex-ingester"
-version = "0.1.0"
+version = "0.2.0"
 description = "ingestion workflow manager for soliplex"
 authors = [{ name = "Enfold Systems", email = "info@enfoldsystems.net" }]
 readme = "README.md"
@@ -27,12 +27,12 @@ dependencies = [
     "docling-core>=2.51.1",
     "fastapi[standard]>=0.125.0",
     "fsspec>=2025.12.0",
-    "haiku-rag-slim>=0.24.0",
+    "haiku-rag-slim>=0.26.0",
     "opendal>=0.46.0",
     "pdf-splitter",
     "psycopg[binary,pool]>=3.3.2",
     "pydantic-settings>=2.12.0",
-    "pypdf>=6.4.2",
+    "pypdf>=6.6.0",
     "sqlmodel>=0.0.27",
     "tenacity>=9.1.2",
     "typer-slim>=0.20.1",
@@ -64,6 +64,8 @@ FILE_STORE_TARGET="db"
 FILE_STORE_DIR="./file-store"
 LANCEDB_DIR="./lancedb"
 DOCLING_SERVER_URL="http://localhost:5001/v1"
+DOCLING_CHUNK_SERVER_URL="http://localhost:5001/v1"
+
 
 [tool.pytest.ini_options]
 log_cli = true
@@ -134,4 +136,4 @@ include = ["soliplex.ingester*"]
 
 [tool.uv.sources]
 
-pdf-splitter = { git = "https://github.com/runyaga/pdf-splitter.git" ,branch="main" }
+pdf-splitter = { git = "https://github.com/soliplex/pdf-splitter.git" ,tag="0.4.0" }

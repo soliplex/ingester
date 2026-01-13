@@ -351,6 +351,7 @@ async def chunk_document(
         )
         json_text = json_bytes.decode("utf-8")
         docling_document = DoclingDocument.model_validate_json(json_text)
+
         chunk_objs = await rag.get_chunk_objs(docling_document, step_config.config_json)
         chunk_dicts = [x.model_dump() for x in chunk_objs]
         chunk_json = json.dumps(chunk_dicts)

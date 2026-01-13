@@ -2,6 +2,7 @@ import json
 import logging
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import Form
 from fastapi import Response
 from fastapi import UploadFile
@@ -9,10 +10,11 @@ from fastapi import status
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib import workflow as workflow
+from soliplex.ingester.lib.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
-doc_router = APIRouter(prefix="/api/v1/document", tags=["document"])
+doc_router = APIRouter(prefix="/api/v1/document", tags=["document"], dependencies=[Depends(get_current_user)])
 
 
 @doc_router.get("/", status_code=status.HTTP_200_OK)
@@ -66,14 +68,23 @@ async def ingest_document(
             input_uri=input_uri,
             mime_type=mime_type,
         )
-
-        res = {
-            "batch_id": batch_id,
-            "document_uri": source_uri,
-            "document_hash": doc.hash,
-            "source": source,
-            "uri_id": docuri.id,
-        }
+        if docuri.batch_id == batch_id:
+            res = {
+                "batch_id": docuri.batch_id,
+                "document_uri": source_uri,
+                "document_hash": doc.hash,
+                "source": source,
+                "uri_id": docuri.id,
+            }
+        else:
+            response.status_code = status.HTTP_203_NON_AUTHORITATIVE_INFORMATION
+            res = {
+                "batch_id": docuri.batch_id,
+                "document_uri": source_uri,
+                "document_hash": doc.hash,
+                "source": source,
+                "uri_id": docuri.id,
+            }
 
     except KeyError as e:
         logger.exception("Error ingesting document")

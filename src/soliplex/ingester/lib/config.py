@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_nested_delimiter="__", env_nested_max_split=1)
     doc_db_url: str
     docling_server_url: str = "http://localhost:5001/v1"
+    docling_chunk_server_url: str = "http://localhost:5001/v1"
     docling_http_timeout: int = 600
     log_level: str = "INFO"
     file_store_target: str = "fs"
@@ -43,6 +44,11 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://ollama_img:11434"
 
     do_rag: bool = True  # used for testing to turn off haiku rag
+
+    # Authentication settings
+    api_key: str | None = None  # Static API key for programmatic access
+    api_key_enabled: bool = False  # Enable API key authentication
+    auth_trust_proxy_headers: bool = False  # Trust X-Auth-Request-* headers from OAuth2 Proxy
 
 
 @lru_cache(maxsize=1)

@@ -26,6 +26,7 @@ Comprehensive docs in `docs/` folder - **always check these first**:
 | Workflows | [WORKFLOWS.md](docs/WORKFLOWS.md) | Custom steps, troubleshooting |
 | Database | [DATABASE.md](docs/DATABASE.md) | Schema, query examples |
 | Configuration | [CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables |
+| Authentication | [AUTHENTICATION.md](docs/AUTHENTICATION.md) | OIDC setup, OAuth2 Proxy |
 | CLI | [CLI.md](docs/CLI.md) | Command reference |
 
 ---
@@ -69,7 +70,8 @@ src/soliplex/ingester/
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DOC_DB_URL` | Yes | Database connection string |
-| `DOCLING_SERVER_URL` | No | Docling service endpoint |
+| `DOCLING_SERVER_URL` | No | Docling parsing service endpoint |
+| `DOCLING_CHUNK_SERVER_URL` | No | Docling chunking service endpoint (can differ from parsing) |
 | `FILE_STORE_TARGET` | No | Storage: `fs`, `db`, or `s3` |
 | `LANCEDB_DIR` | No | Vector database directory |
 

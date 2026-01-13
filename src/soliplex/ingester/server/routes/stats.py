@@ -1,14 +1,16 @@
 import logging
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import Response
 from fastapi import status
 
+from soliplex.ingester.lib.auth import get_current_user
 from soliplex.ingester.lib.wf import operations as wf_ops
 
 logger = logging.getLogger(__name__)
 
-stats_router = APIRouter(prefix="/api/v1/stats", tags=["stats"])
+stats_router = APIRouter(prefix="/api/v1/stats", tags=["stats"], dependencies=[Depends(get_current_user)])
 
 
 @stats_router.get(

@@ -11,8 +11,8 @@ from fastapi import Response
 from fastapi import status
 from haiku.rag.app import HaikuRAGApp
 from haiku.rag.config import get_config
-from soliplex.ingester.lib.auth import get_current_user
 
+from soliplex.ingester.lib.auth import get_current_user
 from soliplex.ingester.lib.config import get_settings
 
 logger = logging.getLogger(__name__)

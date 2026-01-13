@@ -70,8 +70,6 @@ def resolve_lancedb_path(db_name: str, lancedb_dir: str) -> Path:
     Appends '/haiku.rag.lancedb' if not already present.
     """
     db_path = Path(lancedb_dir) / db_name
-    if not db_name.endswith(".lancedb"):
-        db_path = db_path / "haiku.rag.lancedb"
     return db_path
 
 
@@ -95,13 +93,14 @@ async def list_databases():
 
     databases = []
     try:
-        for entry in sorted(lancedb_dir.iterdir()):
+        for entry in sorted(lancedb_dir.rglob("chunks.lance")):
             if entry.is_dir():
-                size_bytes = get_folder_size(entry)
+                adj_path = entry.relative_to(lancedb_dir).parent
+                size_bytes = get_folder_size(entry.parent)
                 databases.append(
                     {
-                        "name": entry.name,
-                        "path": str(entry),
+                        "name": str(adj_path),
+                        "path": str(adj_path),
                         "size_bytes": size_bytes,
                         "size_human": format_bytes(size_bytes),
                     }
@@ -157,7 +156,8 @@ async def get_info(
     # Connect to database
     try:
         db_conn = lancedb.connect(db_path)
-        table_names = set(db_conn.table_names())
+        table_names = set(db_conn.list_tables().tables)
+
     except Exception as e:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {

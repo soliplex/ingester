@@ -110,6 +110,24 @@ class ApiClient {
 
 	// Workflow Endpoints
 
+	// Overload: without pagination returns array
+	async getWorkflowRuns(batchId?: number): Promise<WorkflowRun[]>;
+	async getWorkflowRuns(
+		batchId: number | undefined,
+		paginationParams: undefined,
+		includeDocInfo: true
+	): Promise<WorkflowRunWithDetails[]>;
+	// Overload: with pagination returns paginated response
+	async getWorkflowRuns(
+		batchId: number | undefined,
+		paginationParams: PaginationParams
+	): Promise<PaginatedResponse<WorkflowRun>>;
+	async getWorkflowRuns(
+		batchId: number | undefined,
+		paginationParams: PaginationParams,
+		includeDocInfo: true
+	): Promise<PaginatedResponse<WorkflowRunWithDetails>>;
+	// Implementation
 	async getWorkflowRuns(
 		batchId?: number,
 		paginationParams?: PaginationParams,

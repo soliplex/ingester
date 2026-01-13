@@ -11,7 +11,7 @@
 <div class="border-b border-gray-200 bg-white px-4 py-5 sm:px-6 lg:px-8">
 	<div class="-ml-4 -mt-2 flex flex-wrap items-center justify-between sm:flex-nowrap">
 		<div class="ml-4 mt-2">
-			<h1 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl">
+			<h1 class="text-2xl font-bold leading-tight text-gray-900 sm:truncate sm:text-3xl">
 				{title}
 			</h1>
 			{#if description}

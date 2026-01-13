@@ -1,11 +1,7 @@
 import { apiClient } from '$lib/services/apiClient';
 import { RunStatus } from '$lib/types/api';
 import type { PageLoad } from './$types';
-import type {
-	WorkflowRun,
-	WorkflowRunWithDetails,
-	PaginatedResponse
-} from '$lib/types/api';
+import type { WorkflowRun, WorkflowRunWithDetails, PaginatedResponse } from '$lib/types/api';
 
 export const load: PageLoad = async () => {
 	try {
@@ -42,9 +38,7 @@ export const load: PageLoad = async () => {
 		const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 		const completedToday = workflowItems.filter((w) => {
 			const run = getWorkflowRun(w);
-			return (
-				run.status === RunStatus.COMPLETED && new Date(run.completed_date || '') >= todayStart
-			);
+			return run.status === RunStatus.COMPLETED && new Date(run.completed_date || '') >= todayStart;
 		}).length;
 
 		const totalCompleted = workflowsByStatus.completed;

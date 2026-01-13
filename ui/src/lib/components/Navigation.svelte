@@ -13,6 +13,7 @@
 		{ href: '/workflows', label: 'Workflows', icon: '⚙️' },
 		{ href: '/definitions/workflows', label: 'Workflow Definitions', icon: '📋' },
 		{ href: '/definitions/params', label: 'Parameter ', icon: '⚙️' },
+		{ href: '/lancedb', label: 'Vector DBs', icon: '🗄️' },
 		{ href: '/stats', label: 'Statistics', icon: '📈' }
 	];
 

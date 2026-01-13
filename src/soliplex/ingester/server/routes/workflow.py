@@ -1,5 +1,6 @@
 import logging
 
+import yaml
 from fastapi import APIRouter
 from fastapi import Form
 from fastapi import Response
@@ -184,7 +185,7 @@ async def get_workflow_def(workflow_id: str, response: Response):
 @wf_router.get("/param-sets", summary="get param sets")
 async def list_params():
     wf = await wf_registry.load_param_registry()
-    res = [{"id": x.id, "name": x.name} for x in wf.values()]
+    res = [{"id": x.id, "name": x.name, "source": x.source} for x in wf.values()]
     return res
 
 
@@ -212,6 +213,98 @@ async def get_param_set_by_target(target: str, response: Response) -> list[Workf
             if "data_dir" in store_step and store_step["data_dir"] == target:
                 ret.append(pset)
     return ret
+
+
+@wf_router.post(
+    "/param-sets",
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload new parameter set from YAML content",
+)
+async def upload_param_set(
+    response: Response,
+    yaml_content: str = Form(...),
+) -> dict:
+    """
+    Create a new parameter set from YAML content.
+
+    Parameters
+    ----------
+    yaml_content : str
+        Raw YAML content as string
+
+    Returns
+    -------
+    dict
+        Success message with parameter set ID
+    """
+    try:
+        # Parse YAML
+        try:
+            loaded = yaml.safe_load(yaml_content)
+        except yaml.YAMLError as e:
+            response.status_code = status.HTTP_400_BAD_REQUEST
+            return {"error": f"Invalid YAML syntax: {str(e)}"}
+
+        # Validate against Pydantic model
+        try:
+            param_set = WorkflowParams.model_validate(loaded)
+        except Exception as e:
+            response.status_code = status.HTTP_400_BAD_REQUEST
+            return {"error": f"Invalid parameter set format: {str(e)}"}
+
+        # Force source to 'user' for uploaded params
+        param_set.source = "user"
+
+        # Check for duplicate ID
+        existing_registry = await wf_registry.load_param_registry()
+        if param_set.id in existing_registry:
+            response.status_code = status.HTTP_409_CONFLICT
+            return {
+                "error": f"Parameter set with ID '{param_set.id}' already exists",
+                "existing_source": existing_registry[param_set.id].source,
+            }
+
+        # Save to file
+        file_path = await wf_registry.save_param_set(param_set, overwrite=False)
+
+        return {"message": "Parameter set created successfully", "id": param_set.id, "file_path": str(file_path)}
+
+    except ValueError as e:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": str(e)}
+    except Exception as e:
+        logger.exception("Error uploading parameter set", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": f"Internal server error: {str(e)}"}
+
+
+@wf_router.delete(
+    "/param-sets/{set_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete a user-uploaded parameter set",
+)
+async def delete_param_set_endpoint(set_id: str, response: Response) -> dict:
+    """
+    Delete a user-uploaded parameter set.
+
+    Only parameter sets with source='user' can be deleted.
+    Built-in parameter sets cannot be deleted via API.
+    Parameter sets currently in use by run groups cannot be deleted.
+    """
+    try:
+        deleted = await wf_registry.delete_param_set(set_id)
+        if deleted:
+            return {"message": f"Parameter set '{set_id}' deleted successfully"}
+        else:
+            response.status_code = status.HTTP_404_NOT_FOUND
+            return {"error": f"Parameter set '{set_id}' not found"}
+    except ValueError as e:
+        response.status_code = status.HTTP_403_FORBIDDEN
+        return {"error": str(e)}
+    except Exception as e:
+        logger.exception("Error deleting parameter set", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}
 
 
 @wf_router.get("/steps", status_code=status.HTTP_200_OK, summary="get run steps by status")

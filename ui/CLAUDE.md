@@ -36,37 +36,42 @@ src/
 
 ## Key Components
 
-| Component | Purpose |
-|-----------|---------|
-| `PageHeader.svelte` | Page title with optional actions |
-| `StatusBadge.svelte` | Color-coded status indicators |
-| `StepTimeline.svelte` | Expandable workflow steps view |
-| `LifecycleHistoryTimeline.svelte` | Lifecycle events timeline |
-| `Pagination.svelte` | Table pagination controls |
+| Component                         | Purpose                          |
+| --------------------------------- | -------------------------------- |
+| `PageHeader.svelte`               | Page title with optional actions |
+| `StatusBadge.svelte`              | Color-coded status indicators    |
+| `StepTimeline.svelte`             | Expandable workflow steps view   |
+| `LifecycleHistoryTimeline.svelte` | Lifecycle events timeline        |
+| `Pagination.svelte`               | Table pagination controls        |
 
 ## Code Style
 
 ### Naming
+
 - **Variables/functions:** camelCase
 - **Components:** PascalCase
 - **Event handlers:** `handle` prefix (e.g., `handleClick`)
 - **Constants:** camelCase with `Value` suffix for objects
 
 ### TypeScript
+
 - No `any` type or unsafe casting
 - Destructure imports: `import { foo } from 'bar'`
 - Each component declares its own prop types
 
 ### Svelte 5
+
 - Use runes: `$state`, `$derived`, `$props`, `$effect`
 - Props: `let { prop1, prop2 }: Props = $props();`
 - Derived: `const value = $derived(expression);`
 
 ### Styling
+
 - Tailwind CSS only - no inline styles
 - Mobile-first responsive design
 
 ### Files
+
 - Max 200 lines per component - split if larger
 - Trailing newline required
 - TypeScript files: camelCase (e.g., `myService.ts`)

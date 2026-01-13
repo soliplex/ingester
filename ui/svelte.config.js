@@ -6,7 +6,7 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		adapter: adapter({
-			fallback: 'index.html'  // SPA mode - serve index.html for all routes
+			fallback: 'index.html' // SPA mode - serve index.html for all routes
 		})
 		// Version is determined by content hash (SvelteKit default)
 	}

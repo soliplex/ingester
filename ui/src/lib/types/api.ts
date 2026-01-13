@@ -189,6 +189,7 @@ export interface WorkflowDefinitionSummary {
 export interface WorkflowParams {
 	id: string;
 	name: string;
+	source?: string;
 	target: string;
 	embedding?: {
 		model: string;
@@ -214,6 +215,17 @@ export interface WorkflowParams {
 export interface ParamSetSummary {
 	id: string;
 	name: string;
+	source?: string;
+}
+
+export interface UploadParamSetResponse {
+	message: string;
+	id: string;
+	file_path: string;
+}
+
+export interface DeleteParamSetResponse {
+	message: string;
 }
 
 // API Response Models
@@ -259,4 +271,78 @@ export interface PaginatedResponse<T> {
 export interface PaginationParams {
 	page: number;
 	rows_per_page: number;
+}
+
+// LanceDB Types
+export interface LanceDBDatabase {
+	name: string;
+	path: string;
+	size_bytes: number;
+	size_human: string;
+}
+
+export interface LanceDBListResponse {
+	status: string;
+	lancedb_dir: string;
+	database_count: number;
+	databases: LanceDBDatabase[];
+	message?: string;
+}
+
+export interface LanceDBVersions {
+	lancedb: string;
+	haiku_rag: string;
+	stored_version: string;
+}
+
+export interface LanceDBEmbeddings {
+	provider: string | null;
+	model: string | null;
+	vector_dim: number | null;
+}
+
+export interface LanceDBTableStats {
+	count: number;
+	size_bytes: number;
+	size_human: string;
+	versions: number;
+}
+
+export interface LanceDBVectorIndex {
+	exists: boolean;
+	indexed_rows: number;
+	unindexed_rows: number;
+}
+
+export interface LanceDBInfoResponse {
+	status: string;
+	path: string;
+	versions: LanceDBVersions;
+	embeddings: LanceDBEmbeddings;
+	documents: LanceDBTableStats;
+	chunks: LanceDBTableStats;
+	vector_index: LanceDBVectorIndex;
+	tables: string[];
+}
+
+export interface LanceDBDocument {
+	id: string;
+	uri: string;
+	title: string | null;
+	created_at: string | null;
+	updated_at: string | null;
+	chunk_count: number | null;
+	metadata?: Record<string, unknown>;
+}
+
+export interface LanceDBDocumentsResponse {
+	status: string;
+	path: string;
+	document_count: number;
+	documents: LanceDBDocument[];
+}
+
+export interface LanceDBVacuumResponse {
+	status: string;
+	error?: string;
 }

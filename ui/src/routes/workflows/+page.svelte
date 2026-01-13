@@ -8,17 +8,11 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import { RunStatus } from '$lib/types/api';
 	import type { PageData } from './$types';
-	import type {
-		PaginatedResponse,
-		WorkflowRun,
-		WorkflowRunWithDetails
-	} from '$lib/types/api';
+	import type { PaginatedResponse, WorkflowRun, WorkflowRunWithDetails } from '$lib/types/api';
 
 	let { data }: { data: PageData } = $props();
 
-	const currentStatus = $derived<RunStatus | 'all'>(
-		(data.filters.status as RunStatus) || 'all'
-	);
+	const currentStatus = $derived<RunStatus | 'all'>((data.filters.status as RunStatus) || 'all');
 
 	// Determine if we have paginated data
 	const isPaginatedResponse = $derived(

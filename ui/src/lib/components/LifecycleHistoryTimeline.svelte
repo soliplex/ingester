@@ -99,11 +99,13 @@
 		return (end - start) / 1000;
 	}
 
-	const sortedHistory = $derived([...history].sort((a, b) => {
-		const dateA = new Date(a.start_date).getTime();
-		const dateB = new Date(b.start_date).getTime();
-		return dateA - dateB;
-	}));
+	const sortedHistory = $derived(
+		[...history].sort((a, b) => {
+			const dateA = new Date(a.start_date).getTime();
+			const dateB = new Date(b.start_date).getTime();
+			return dateA - dateB;
+		})
+	);
 </script>
 
 <div class="space-y-2">
@@ -115,10 +117,7 @@
 				onclick={() => handleToggleRecord(record.id)}
 			>
 				<div class="flex items-center gap-3">
-					<span
-						class="text-lg {getEventColor(record.event, record.status)}"
-						aria-hidden="true"
-					>
+					<span class="text-lg {getEventColor(record.event, record.status)}" aria-hidden="true">
 						{getEventIcon(record.event)}-
 					</span>
 					<div class="flex-1">
@@ -126,7 +125,7 @@
 							<span class="font-medium text-gray-900">
 								{getEventLabel(record.event)}
 								{#if record.handler_name}-
-								{record.handler_name}
+									{record.handler_name}
 								{/if}
 							</span>
 

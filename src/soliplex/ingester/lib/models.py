@@ -485,6 +485,7 @@ class WorkflowParams(BaseModel):
     name: str | None = None
     meta: dict[str, str] | None = None
     config: dict[WorkflowStepType, dict[str, str | int | float | bool]]
+    source: str = "app"
 
 
 class DocumentInfo(BaseModel):

@@ -1,6 +1,6 @@
 [project]
 name = "soliplex-ingester"
-version = "0.2.0"
+version = "0.3.0"
 description = "ingestion workflow manager for soliplex"
 authors = [{ name = "Enfold Systems", email = "info@enfoldsystems.net" }]
 readme = "README.md"

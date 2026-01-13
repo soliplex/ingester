@@ -2439,7 +2439,7 @@ wheels = [
 [[package]]
 name = "pdf-splitter"
 version = "0.4.0"
-source = { git = "https://github.com/runyaga/pdf-splitter.git?branch=main#3c7bd2535a5e76a8add27e7a9caa0193f48b5b8b" }
+source = { git = "https://github.com/soliplex/pdf-splitter.git?tag=0.4.0#01355082da748dbd794f50eb22ea7c2d091849d3" }
 dependencies = [
     { name = "docling" },
     { name = "pypdf" },
@@ -3896,7 +3896,7 @@ requires-dist = [
     { name = "fsspec", specifier = ">=2025.12.0" },
     { name = "haiku-rag-slim", specifier = ">=0.24.0" },
     { name = "opendal", specifier = ">=0.46.0" },
-    { name = "pdf-splitter", git = "https://github.com/runyaga/pdf-splitter.git?branch=main" },
+    { name = "pdf-splitter", git = "https://github.com/soliplex/pdf-splitter.git?tag=0.4.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.2" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
     { name = "pypdf", specifier = ">=6.4.2" },

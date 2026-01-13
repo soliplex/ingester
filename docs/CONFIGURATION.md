@@ -402,6 +402,60 @@ DO_RAG=false
 
 ---
 
+### Authentication
+
+#### API_KEY
+
+Static API key for programmatic access.
+
+**Default:** None (disabled)
+
+**Example:**
+```bash
+API_KEY=your-secret-api-key-here
+```
+
+**Notes:**
+- Generate with: `openssl rand -hex 32`
+- Must also set `API_KEY_ENABLED=true` to enforce
+- Clients pass via `Authorization: Bearer <token>` header
+- Keep this value secure - do not commit to version control
+
+#### API_KEY_ENABLED
+
+Enable API key authentication.
+
+**Default:** `False`
+
+**Example:**
+```bash
+API_KEY_ENABLED=true
+```
+
+**Notes:**
+- When `true`, all API requests require valid `Authorization: Bearer` header
+- When `false`, API is open (or protected by OAuth2 Proxy)
+- Can be combined with `AUTH_TRUST_PROXY_HEADERS` for hybrid auth
+
+#### AUTH_TRUST_PROXY_HEADERS
+
+Trust user identity headers from OAuth2 Proxy.
+
+**Default:** `False`
+
+**Example:**
+```bash
+AUTH_TRUST_PROXY_HEADERS=true
+```
+
+**Notes:**
+- Enable when running behind OAuth2 Proxy
+- Reads user identity from `X-Auth-Request-User`, `X-Auth-Request-Email` headers
+- **Security:** Only enable when behind a trusted reverse proxy
+- See [AUTHENTICATION.md](AUTHENTICATION.md) for OAuth2 Proxy setup
+
+---
+
 ## Configuration File
 
 While the system uses environment variables, you can organize them in a `.env` file:
@@ -808,3 +862,6 @@ env:
 | `ARTIFACT_S3__*` | nested | Conditional | - | Artifact S3 config (BUCKET, ACCESS_SECRET, etc.) |
 | `INPUT_S3__*` | nested | Conditional | - | Input S3 config (BUCKET, ACCESS_SECRET, etc.) |
 | `DO_RAG` | bool | No | `True` | Enable RAG integration |
+| `API_KEY` | str | Conditional | - | Static API key (required if API_KEY_ENABLED) |
+| `API_KEY_ENABLED` | bool | No | `False` | Enable API key authentication |
+| `AUTH_TRUST_PROXY_HEADERS` | bool | No | `False` | Trust OAuth2 Proxy headers |

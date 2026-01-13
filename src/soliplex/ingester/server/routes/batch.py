@@ -2,16 +2,18 @@ import asyncio
 import collections
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import Form
 from fastapi import Response
 from fastapi import status
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib import workflow as workflow
+from soliplex.ingester.lib.auth import get_current_user
 from soliplex.ingester.lib.models import RunStatus
 from soliplex.ingester.lib.wf import operations as wf_ops
 
-batch_router = APIRouter(prefix="/api/v1/batch", tags=["batch"])
+batch_router = APIRouter(prefix="/api/v1/batch", tags=["batch"], dependencies=[Depends(get_current_user)])
 
 
 @batch_router.get("/", status_code=status.HTTP_200_OK, summary="Get all batches")

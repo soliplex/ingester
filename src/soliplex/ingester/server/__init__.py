@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Form
 from fastapi import Request
@@ -11,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from soliplex.ingester.lib import operations
+from soliplex.ingester.lib.auth import get_current_user
 from soliplex.ingester.lib.config import get_settings
 from soliplex.ingester.lib.models import Database
 
@@ -49,7 +51,9 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
-v1_router = APIRouter(prefix="/api/v1")
+# API router with authentication dependency
+# Auth is only enforced when API_KEY_ENABLED=true or AUTH_TRUST_PROXY_HEADERS=true
+v1_router = APIRouter(prefix="/api/v1", dependencies=[Depends(get_current_user)])
 
 
 @v1_router.post("/source-status")

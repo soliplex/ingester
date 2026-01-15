@@ -79,7 +79,8 @@ async def docling_convert(
             config_dict["ocr_lang"] = [config_dict["ocr_lang"]]
         parameters.update(config_dict)
         # remove picture description
-        for k in parameters.keys():
+        pcopy = parameters.copy()
+        for k in pcopy.keys():
             if k.startswith("picture_description_"):
                 del parameters[k]
         if "do_picture_description" in config_dict and config_dict["do_picture_description"] is True:

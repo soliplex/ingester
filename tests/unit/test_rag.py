@@ -300,7 +300,7 @@ async def test_save_to_rag():
         mock_docling_class.model_validate_json.assert_called_once_with(docling_json)
 
         # Verify HaikuRAG was initialized and import_document was called
-        mock_haiku_rag.assert_called_once_with(config=mock_config, create=True)
+        mock_haiku_rag.assert_called_once_with(config=mock_config, create=True, db_path=None)
         mock_client.import_document.assert_called_once()
 
         # Verify the metadata passed to import_document

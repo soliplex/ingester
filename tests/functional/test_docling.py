@@ -32,6 +32,7 @@ async def test_docling_convert():
         "ocr_lang": "en",
         "pdf_backend": "dlparse_v2",
         "table_mode": "accurate",
+        "do_picture_description": False,
     }
 
     js = await docling.docling_convert(ba, input_file, "application/pdf", config_dict=test_config)
@@ -40,6 +41,25 @@ async def test_docling_convert():
 
 @pytest.mark.asyncio
 async def test_docling_convert_img_desc():
+    input_file = "tests/files/basic_ocr.pdf"
+    async with aiofiles.open(input_file, "rb") as f:
+        ba = await f.read()
+    test_config = {
+        "do_ocr": False,
+        "force_ocr": False,
+        "ocr_engine": "easyocr",
+        "ocr_lang": "en",
+        "pdf_backend": "pypdfium2",
+        "table_mode": "accurate",
+        "do_picture_description": True,
+    }
+
+    js = await docling.docling_convert(ba, input_file, "application/pdf", config_dict=test_config)
+    assert js
+
+
+@pytest.mark.asyncio
+async def test_docling_convert_img_desc_invalid_model():
     input_file = "tests/files/picture_classification.pdf"
     async with aiofiles.open(input_file, "rb") as f:
         ba = await f.read()
@@ -51,10 +71,11 @@ async def test_docling_convert_img_desc():
         "pdf_backend": "dlparse_v2",
         "table_mode": "accurate",
         "do_picture_description": True,
+        "picture_description_model": "not-a-valid-model",
     }
 
-    js = await docling.docling_convert(ba, input_file, "application/pdf", config_dict=test_config)
-    assert js
+    with pytest.raises(ValueError, match="response"):
+        _ = await docling.docling_convert(ba, input_file, "application/pdf", config_dict=test_config)
 
 
 @pytest.mark.asyncio

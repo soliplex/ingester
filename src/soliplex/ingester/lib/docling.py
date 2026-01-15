@@ -42,7 +42,7 @@ def do_repl(data):
     return data
 
 
-@retry(stop=stop_after_attempt(4), wait=wait_exponential_jitter(), reraise=True)
+@retry(stop=stop_after_attempt(2), wait=wait_exponential_jitter(), reraise=True)
 async def docling_convert(
     file_bytes: bytes,
     mime_type: str,
@@ -87,7 +87,9 @@ async def docling_convert(
             parameters["do_picture_description"] = True
             prompt = config_dict.get("picture_description_prompt", DESC_DEFAULTS["prompt"])
             model = config_dict.get("picture_description_model", DESC_DEFAULTS["model"])
-            ollama_url = env.ollama_base_url.rstrip("/") + "/v1/chat/completions"
+            # provide a backup if 2 ollama instances are needed
+            ollama_url = env.ollama_base_url_docling or env.ollama_base_url
+            ollama_url = ollama_url.rstrip("/") + "/v1/chat/completions"
             picture_description_api = {
                 "url": ollama_url,
                 "params": {
@@ -133,7 +135,7 @@ async def docling_convert(
             if "errors" in payload["task"]:
                 logger.error(f"errors: {payload['task']['errors']}")
             else:
-                logger.error(f"no errors in response: {payload}")
+                logger.error(f"no error message in response: {payload}")
         result_url = f"{env.docling_server_url}/result/{task_id}"
         response = await _async_client.get(result_url)
         res = response.json()

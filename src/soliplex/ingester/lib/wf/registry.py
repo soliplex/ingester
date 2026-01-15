@@ -108,7 +108,7 @@ async def load_param_registry(
     return reg
 
 
-async def save_param_set(param_set: WorkflowParams, overwrite: bool = False) -> Path:
+async def save_param_set(yaml_content: str, source: str, param_id: str, overwrite: bool = False) -> Path:
     """
     Save a parameter set to YAML file.
 
@@ -133,21 +133,21 @@ async def save_param_set(param_set: WorkflowParams, overwrite: bool = False) -> 
     param_dir = Path(settings.param_dir)
 
     # Use different naming for user-uploaded files
-    if param_set.source == "user":
-        filename = f"user_{param_set.id}.yaml"
+    if source == "user":
+        filename = f"user_{param_id}.yaml"
     else:
-        filename = f"{param_set.id}.yaml"
+        filename = f"{param_id}.yaml"
 
     file_path = param_dir / filename
 
     # Check for duplicates
     if file_path.exists() and not overwrite:
-        raise ValueError(f"Parameter set '{param_set.id}' already exists")
+        raise ValueError(f"Parameter set '{param_id}' already exists")
 
-    # Convert to dict and save as YAML
-    param_dict = param_set.model_dump(exclude_none=True)
-    yaml_content = yaml.safe_dump(param_dict, sort_keys=False)
-
+    # make sure source is in file content as this is raw yaml,
+    # but we want to keep comments, etc.
+    if "source:" not in yaml_content:
+        yaml_content = f"source: {source}\n{yaml_content}"
     async with aiofiles.open(file_path, "w") as f:
         await f.write(yaml_content)
 

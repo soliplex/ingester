@@ -267,7 +267,7 @@ async def upload_param_set(
             }
 
         # Save to file
-        file_path = await wf_registry.save_param_set(param_set, overwrite=False)
+        file_path = await wf_registry.save_param_set(yaml_content, param_set.source, param_set.id, overwrite=False)
 
         return {"message": "Parameter set created successfully", "id": param_set.id, "file_path": str(file_path)}
 

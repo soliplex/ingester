@@ -10,6 +10,7 @@ from haiku.rag.client import HaikuRAG
 from haiku.rag.config import Config as HRConfig
 from haiku.rag.config.models import AppConfig
 from haiku.rag.embeddings import embed_chunks
+from haiku.rag.store.engine import DocumentRecord
 from haiku.rag.store.models.chunk import Chunk
 
 from . import models
@@ -128,6 +129,7 @@ async def embed(
 ) -> list[Chunk]:
     env = get_settings()
     config = build_embed_config(HRConfig, config_dict)
+
     ret = []
     # don't use gather to avoid overloading ollama
     for batch in itertools.batched(chunks, n=env.embed_batch_size, strict=False):
@@ -135,6 +137,10 @@ async def embed(
         logger.info(f"{doc_hash}embedded {len(batch_chunks)} chunks of {len(chunks)} total")
         ret.extend(batch_chunks)
     return ret
+
+
+def _find_docs_by_hash(doc_hash: str, tbl) -> list[DocumentRecord]:
+    return tbl.search().where(f"metadata like '%{doc_hash}%'").to_pydantic(DocumentRecord)
 
 
 async def save_to_rag(
@@ -169,13 +175,23 @@ async def save_to_rag(
     meta["doc_id"] = doc_hash
     meta["md5"] = md5_hash
     meta["content_type"] = doc.mime_type
+    db_path = None
+    if "lancedb_dir" in config_dict:
+        db_path = pathlib.Path(config_dict["lancedb_dir"])
 
     meta["source"] = source
     # FIXME: move create to batch start
     # lock writes to avoid concurrent writes
     logger.info(f"bytes docling={len(docling_json)}", extra=_log_con)
     async with _rag_lock:
-        async with HaikuRAG(config=config, create=True) as client:
+        async with HaikuRAG(config=config, create=True, db_path=db_path) as client:
+            # try to find the document
+            found = _find_docs_by_hash(doc_hash, client.document_repository.store.documents_table)
+            if found and len(found) != 0:
+                doc_id = found[0].id
+                # delete the document
+                await client.delete_document(doc_id)
+
             new_doc = await client.import_document(
                 chunks=chunks,
                 title=title,

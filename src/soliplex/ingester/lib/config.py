@@ -41,7 +41,10 @@ class Settings(BaseSettings):
     worker_checkin_timeout: int = 600
     worker_task_count: int = 5
     embed_batch_size: int = 1000
-    ollama_base_url: str = "http://ollama_img:11434"
+    ollama_base_url: str = "http://ollama:11434"
+    ollama_base_url_docling: str | None = (
+        "http://ollama:11434"  # in case docling needs a different ollama server to spread models
+    )
 
     do_rag: bool = True  # used for testing to turn off haiku rag
 

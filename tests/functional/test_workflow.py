@@ -243,7 +243,7 @@ async def test_ingestion(db):
         force=True,
         workflow_run=wf_run,
     )
-    """
+
     await workflow.embed_document(
         batch_id,
         doc1.hash,
@@ -252,6 +252,7 @@ async def test_ingestion(db):
         force=True,
         workflow_run=wf_run,
     )
+    """
     await workflow.save_to_rag(
         batch_id,
         doc1.hash,

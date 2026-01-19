@@ -576,3 +576,104 @@ async def validate_storage() -> dict[tuple[models.ArtifactType, models.ArtifactT
             diffs[(s1, s2)] = diff
 
     return diffs
+
+
+# ----------------------- Sync State Operations -----------------------
+
+
+class SyncStateNotFoundError(ValueError):
+    def __init__(self, source_id):
+        super().__init__(f"Sync state for {source_id} not found")
+
+
+async def get_sync_state(source_id: str) -> models.SyncState | None:
+    """
+    Get sync state for a source.
+
+    Args:
+        source_id: Source identifier (e.g., "gitea:admin:myrepo")
+
+    Returns:
+        SyncState object or None if not found
+    """
+    async with models.get_session() as session:
+        statement = select(models.SyncState).where(models.SyncState.source_id == source_id)
+        result = await session.exec(statement)
+        state = result.first()
+        if state:
+            session.expunge(state)
+        return state
+
+
+async def update_sync_state(
+    source_id: str,
+    commit_sha: str,
+    branch: str = "main",
+    metadata: dict[str, int | str] | None = None,
+) -> models.SyncState:
+    """
+    Update or create sync state after successful sync.
+
+    Args:
+        source_id: Source identifier
+        commit_sha: Latest processed commit SHA
+        branch: Branch name
+        metadata: Optional sync metadata
+
+    Returns:
+        Updated SyncState object
+    """
+    async with models.get_session() as session:
+        # Get existing state or create new
+        statement = select(models.SyncState).where(models.SyncState.source_id == source_id)
+        result = await session.exec(statement)
+        state = result.first()
+
+        if state:
+            # Update existing
+            state.last_commit_sha = commit_sha
+            state.last_sync_date = datetime.datetime.now(datetime.UTC)
+            state.branch = branch
+            if metadata:
+                # Merge metadata - must reassign entire dict for SQLAlchemy to track changes
+                merged_metadata = state.sync_metadata.copy()
+                merged_metadata.update(metadata)
+                state.sync_metadata = merged_metadata
+            session.add(state)
+        else:
+            # Create new
+            state = models.SyncState(
+                source_id=source_id,
+                last_commit_sha=commit_sha,
+                last_sync_date=datetime.datetime.now(datetime.UTC),
+                branch=branch,
+                sync_metadata=metadata or {},
+            )
+            session.add(state)
+
+        await session.flush()
+        await session.refresh(state)
+        session.expunge(state)
+        return state
+
+
+async def delete_sync_state(source_id: str) -> None:
+    """
+    Delete sync state for a source (forces full sync on next run).
+
+    Args:
+        source_id: Source identifier
+
+    Raises:
+        SyncStateNotFoundError: If sync state not found
+    """
+    async with models.get_session() as session:
+        statement = select(models.SyncState).where(models.SyncState.source_id == source_id)
+        result = await session.exec(statement)
+        state = result.first()
+
+        if not state:
+            raise SyncStateNotFoundError(source_id)
+
+        await session.delete(state)
+        await session.flush()

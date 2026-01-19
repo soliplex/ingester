@@ -32,7 +32,7 @@ def build_docling_config(start_config: AppConfig, config_dict: dict[str, str | i
 
 def build_embed_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
     config = copy.deepcopy(start_config)
-
+    env = get_settings()
     required_keys = ["model", "vector_dim"]
     for key in required_keys:
         if key not in config_dict:
@@ -42,7 +42,7 @@ def build_embed_config(start_config: AppConfig, config_dict: dict[str, str | int
     config.embeddings.model.name = config_dict["model"]
     config.embeddings.model.vector_dim = config_dict["vector_dim"]
     config.embeddings.model.provider = config_dict["provider"]
-
+    config.providers.ollama.base_url = env.ollama_base_url
     return config
 
 

@@ -1044,10 +1044,15 @@ async def test_get_run_group_durations(db):
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("soliplex.ingester.lib.wf.operations.get_session", return_value=mock_session):
-        durations = await wf_ops.get_run_group_durations(1)
-        assert isinstance(durations, list)
-        assert len(durations) == 1
+    # Mock get_settings to return a PostgreSQL URL (required for this function)
+    mock_settings = MagicMock()
+    mock_settings.doc_db_url = "postgresql+asyncpg://user:pass@localhost/test"
+
+    with patch("soliplex.ingester.lib.config.get_settings", return_value=mock_settings):
+        with patch("soliplex.ingester.lib.wf.operations.get_session", return_value=mock_session):
+            durations = await wf_ops.get_run_group_durations(1)
+            assert isinstance(durations, list)
+            assert len(durations) == 1
 
 
 @pytest.mark.asyncio
@@ -1066,10 +1071,15 @@ async def test_get_step_stats(db):
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("soliplex.ingester.lib.wf.operations.get_session", return_value=mock_session):
-        stats = await wf_ops.get_step_stats(1)
-        assert isinstance(stats, list)
-        assert len(stats) == 1
+    # Mock get_settings to return a PostgreSQL URL (required for this function)
+    mock_settings = MagicMock()
+    mock_settings.doc_db_url = "postgresql+asyncpg://user:pass@localhost/test"
+
+    with patch("soliplex.ingester.lib.config.get_settings", return_value=mock_settings):
+        with patch("soliplex.ingester.lib.wf.operations.get_session", return_value=mock_session):
+            stats = await wf_ops.get_step_stats(1)
+            assert isinstance(stats, list)
+            assert len(stats) == 1
 
 
 @pytest.mark.asyncio

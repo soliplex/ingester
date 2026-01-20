@@ -90,3 +90,28 @@ async def batch_status(batch_id: int, response: Response):
     else:
         response.status_code = status.HTTP_404_NOT_FOUND
         return {"error": f"Batch {batch_id} not found"}
+
+
+@batch_router.get(
+    "/{batch_id}/steps",
+    status_code=status.HTTP_200_OK,
+    summary="Get all workflow steps for a batch",
+)
+async def get_batch_steps(batch_id: int, response: Response):
+    """
+    Retrieve all workflow run steps for documents in a batch.
+
+    Useful for monitoring batch progress and debugging issues.
+
+    Parameters:
+        batch_id: The batch ID to get steps for
+
+    Returns:
+        list[RunStep]: All run steps for workflows in the batch
+    """
+    try:
+        steps = await wf_ops.get_steps_for_batch(batch_id)
+        return [step.model_dump() for step in steps]
+    except Exception as e:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}

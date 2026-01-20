@@ -613,7 +613,7 @@ wheels = [
 
 [[package]]
 name = "docling-core"
-version = "2.57.0"
+version = "2.59.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonref" },
@@ -627,9 +627,9 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/fa/541931a448ddc9609a3e21ca176baf28bd0a89cbbd7be23380637a87d427/docling_core-2.57.0.tar.gz", hash = "sha256:24b71172e8bc4fbe2b4213b29f51878114f4c13f25fc0bc9920168505c76c1a3", size = 230768, upload-time = "2025-12-18T14:18:14.928Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/ae/b1216598ab2f2a0fbe5fe974bcd65d9407f26fff0ba89cf6d8d760601a0a/docling_core-2.59.0.tar.gz", hash = "sha256:08900edbaf86a0acdd3d1fb5d47284f3826f68638245ba4a03aba1558d0067d9", size = 231580, upload-time = "2026-01-12T16:40:21.321Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/24/1c/03cc087b360b7815c5472f5cfaaf9b09fa6d0397c05c120a7c623654bf21/docling_core-2.57.0-py3-none-any.whl", hash = "sha256:398768b4d275ad2e11703ad9446fd0315a9a5fc8d09bc45ed207302d844d6ed5", size = 223002, upload-time = "2025-12-18T14:18:13.558Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/e7/27ba60d253b65415e6e709fda5ddfc1baf82fa9f8fbd8ae14b9bbbba5474/docling_core-2.59.0-py3-none-any.whl", hash = "sha256:014e1075c41fdac0932f25226d6c0972cb9772d866efcf8d04ca2abe246797c1", size = 223304, upload-time = "2026-01-12T16:40:19.488Z" },
 ]
 
 [package.optional-dependencies]
@@ -638,7 +638,6 @@ chunking = [
     { name = "transformers" },
     { name = "tree-sitter" },
     { name = "tree-sitter-c" },
-    { name = "tree-sitter-java" },
     { name = "tree-sitter-javascript" },
     { name = "tree-sitter-python" },
     { name = "tree-sitter-typescript" },
@@ -1128,7 +1127,7 @@ wheels = [
 
 [[package]]
 name = "haiku-rag-slim"
-version = "0.26.0"
+version = "0.26.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docling-core" },
@@ -1143,9 +1142,9 @@ dependencies = [
     { name = "typer" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a0/9c/a227dab330e320105ea1703a1f68d33f3e7760abc1c054a6a13541032d5a/haiku_rag_slim-0.26.0.tar.gz", hash = "sha256:82a662488035607be78de15fba40925d0a77260d3b76d58a35fcff194f99f8ac", size = 94313, upload-time = "2026-01-13T10:38:45.636Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3d/63/19dc9e3994adbbf1cbae16a536b644425ebd5a55d439d8b02214da41f827/haiku_rag_slim-0.26.6.tar.gz", hash = "sha256:4ba2279f060d82cec2d6d5c9fa183b59ccd1289449cd8c800dfee71590fe404b", size = 96116, upload-time = "2026-01-19T12:55:04.601Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/d9/19fdc6c0b4e2db27f03d53e4dd9df326f50d822c121c26d3b8d96f6e99fa/haiku_rag_slim-0.26.0-py3-none-any.whl", hash = "sha256:e183bba91b8857339254de6405586c71804af5c8ea4c4b85e4ded7307daeb62e", size = 130716, upload-time = "2026-01-13T10:38:44.041Z" },
+    { url = "https://files.pythonhosted.org/packages/72/fd/89b8c7d4a389751f2c3a20c9793df209ac3506a38468a1640ab7e6abf58f/haiku_rag_slim-0.26.6-py3-none-any.whl", hash = "sha256:8ff68e6dcb0eb698d4a3f1c8ceaee91bc3857d098743062fe3cddc102db210ff", size = 132741, upload-time = "2026-01-19T12:55:03.088Z" },
 ]
 
 [[package]]
@@ -3866,7 +3865,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "sqlmodel" },
     { name = "tenacity" },
-    { name = "typer-slim" },
+    { name = "typer" },
     { name = "websockets" },
 ]
 
@@ -3891,7 +3890,7 @@ requires-dist = [
     { name = "docling-core", specifier = ">=2.51.1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.125.0" },
     { name = "fsspec", specifier = ">=2025.12.0" },
-    { name = "haiku-rag-slim", specifier = ">=0.26.0" },
+    { name = "haiku-rag-slim", specifier = ">=0.26.6" },
     { name = "opendal", specifier = ">=0.46.0" },
     { name = "pdf-splitter", git = "https://github.com/soliplex/pdf-splitter.git?tag=0.4.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.2" },
@@ -3899,7 +3898,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.6.0" },
     { name = "sqlmodel", specifier = ">=0.0.27" },
     { name = "tenacity", specifier = ">=9.1.2" },
-    { name = "typer-slim", specifier = ">=0.20.1" },
+    { name = "typer", specifier = ">=0.19.2" },
     { name = "websockets", specifier = ">=15.0.1" },
 ]
 
@@ -4242,21 +4241,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tree-sitter-java"
-version = "0.23.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fa/dc/eb9c8f96304e5d8ae1663126d89967a622a80937ad2909903569ccb7ec8f/tree_sitter_java-0.23.5.tar.gz", hash = "sha256:f5cd57b8f1270a7f0438878750d02ccc79421d45cca65ff284f1527e9ef02e38", size = 138121, upload-time = "2024-12-21T18:24:26.936Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/21/b3399780b440e1567a11d384d0ebb1aea9b642d0d98becf30fa55c0e3a3b/tree_sitter_java-0.23.5-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:355ce0308672d6f7013ec913dee4a0613666f4cda9044a7824240d17f38209df", size = 58926, upload-time = "2024-12-21T18:24:12.53Z" },
-    { url = "https://files.pythonhosted.org/packages/57/ef/6406b444e2a93bc72a04e802f4107e9ecf04b8de4a5528830726d210599c/tree_sitter_java-0.23.5-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:24acd59c4720dedad80d548fe4237e43ef2b7a4e94c8549b0ca6e4c4d7bf6e69", size = 62288, upload-time = "2024-12-21T18:24:14.634Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/6c/74b1c150d4f69c291ab0b78d5dd1b59712559bbe7e7daf6d8466d483463f/tree_sitter_java-0.23.5-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9401e7271f0b333df39fc8a8336a0caf1b891d9a2b89ddee99fae66b794fc5b7", size = 85533, upload-time = "2024-12-21T18:24:16.695Z" },
-    { url = "https://files.pythonhosted.org/packages/29/09/e0d08f5c212062fd046db35c1015a2621c2631bc8b4aae5740d7adb276ad/tree_sitter_java-0.23.5-cp39-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:370b204b9500b847f6d0c5ad584045831cee69e9a3e4d878535d39e4a7e4c4f1", size = 84033, upload-time = "2024-12-21T18:24:18.758Z" },
-    { url = "https://files.pythonhosted.org/packages/43/56/7d06b23ddd09bde816a131aa504ee11a1bbe87c6b62ab9b2ed23849a3382/tree_sitter_java-0.23.5-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:aae84449e330363b55b14a2af0585e4e0dae75eb64ea509b7e5b0e1de536846a", size = 82564, upload-time = "2024-12-21T18:24:20.493Z" },
-    { url = "https://files.pythonhosted.org/packages/da/d6/0528c7e1e88a18221dbd8ccee3825bf274b1fa300f745fd74eb343878043/tree_sitter_java-0.23.5-cp39-abi3-win_amd64.whl", hash = "sha256:1ee45e790f8d31d416bc84a09dac2e2c6bc343e89b8a2e1d550513498eedfde7", size = 60650, upload-time = "2024-12-21T18:24:22.902Z" },
-    { url = "https://files.pythonhosted.org/packages/72/57/5bab54d23179350356515526fff3cc0f3ac23bfbc1a1d518a15978d4880e/tree_sitter_java-0.23.5-cp39-abi3-win_arm64.whl", hash = "sha256:402efe136104c5603b429dc26c7e75ae14faaca54cfd319ecc41c8f2534750f4", size = 59059, upload-time = "2024-12-21T18:24:24.934Z" },
-]
-
-[[package]]
 name = "tree-sitter-javascript"
 version = "0.25.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4327,19 +4311,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/21/ca/950278884e2ca20547ff3eb109478c6baf6b8cf219318e6bc4f666fad8e8/typer-0.19.2.tar.gz", hash = "sha256:9ad824308ded0ad06cc716434705f691d4ee0bfd0fb081839d2e426860e7fdca", size = 104755, upload-time = "2025-09-23T09:47:48.256Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/00/22/35617eee79080a5d071d0f14ad698d325ee6b3bf824fc0467c03b30e7fa8/typer-0.19.2-py3-none-any.whl", hash = "sha256:755e7e19670ffad8283db353267cb81ef252f595aa6834a0d1ca9312d9326cb9", size = 46748, upload-time = "2025-09-23T09:47:46.777Z" },
-]
-
-[[package]]
-name = "typer-slim"
-version = "0.21.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/17/d4/064570dec6358aa9049d4708e4a10407d74c99258f8b2136bb8702303f1a/typer_slim-0.21.1.tar.gz", hash = "sha256:73495dd08c2d0940d611c5a8c04e91c2a0a98600cbd4ee19192255a233b6dbfd", size = 110478, upload-time = "2026-01-06T11:21:11.176Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/0a/4aca634faf693e33004796b6cee0ae2e1dba375a800c16ab8d3eff4bb800/typer_slim-0.21.1-py3-none-any.whl", hash = "sha256:6e6c31047f171ac93cc5a973c9e617dbc5ab2bddc4d0a3135dc161b4e2020e0d", size = 47444, upload-time = "2026-01-06T11:21:12.441Z" },
 ]
 
 [[package]]

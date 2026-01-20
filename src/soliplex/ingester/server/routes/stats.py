@@ -20,7 +20,7 @@ stats_router = APIRouter(prefix="/api/v1/stats", tags=["stats"], dependencies=[D
 )
 async def get_run_group_durations(run_group_id: int, response: Response):
     try:
-        return await wf_ops.get_run_group_durations(status)
+        return await wf_ops.get_run_group_durations(run_group_id)
     except Exception as e:
         logger.exception("error getting run group durations", exc_info=e)
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR

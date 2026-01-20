@@ -4,10 +4,15 @@ import logging
 
 import opendal
 import yaml
-from sqlalchemy import bindparam
+from sqlalchemy import Integer
+from sqlalchemy import cast
+from sqlalchemy import delete
+from sqlalchemy import extract
 from sqlalchemy import func
+from sqlalchemy import literal_column
+from sqlalchemy import or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import select
-from sqlmodel import text
 from sqlmodel import update
 
 from soliplex.ingester.lib.dal import get_storage_operator
@@ -15,6 +20,7 @@ from soliplex.ingester.lib.models import ArtifactType
 from soliplex.ingester.lib.models import ConfigSet
 from soliplex.ingester.lib.models import ConfigSetItem
 from soliplex.ingester.lib.models import Document
+from soliplex.ingester.lib.models import DocumentBatch
 from soliplex.ingester.lib.models import DocumentInfo
 from soliplex.ingester.lib.models import DocumentURI
 from soliplex.ingester.lib.models import LifeCycleEvent
@@ -92,16 +98,17 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
             setrs = await session.exec(setq)
             exist_set = setrs.first()
             if exist_set:
-                stepq = text(
-                    """select stepconfig.* from stepconfig
-                    inner join configsetitem
-                    on configsetitem.config_id=stepconfig.id
-                    where configsetitem.config_set_id=:config_set_id"""
-                ).bindparams(bindparam("config_set_id", value=exist_set.id))
-                steprs = await session.exec(stepq)
+                # Get step configs for this config set using SQLModel ORM
+                q = (
+                    select(StepConfig)
+                    .join(ConfigSetItem, ConfigSetItem.config_id == StepConfig.id)
+                    .where(ConfigSetItem.config_set_id == exist_set.id)
+                )
+                result = await session.exec(q)
+                step_configs = result.all()
 
-                for step in steprs.all():
-                    id_map[WorkflowStepType[step.step_type]] = step.id
+                for step_config in step_configs:
+                    id_map[step_config.step_type] = step_config.id
                 return id_map
             configset = ConfigSet(
                 yaml_id=param_set.id,
@@ -172,22 +179,138 @@ async def get_run_group(run_group_id: int) -> RunGroup:
 
 
 async def get_run_group_stats(run_group_id: int) -> dict[RunStatus, int]:
+    """
+    Get statistics on workflow run statuses for a run group.
+
+    Returns count of distinct workflow runs per status.
+    Uses SQLModel ORM for cross-database compatibility.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID to get stats for
+
+    Returns
+    -------
+    dict[RunStatus, int]
+        Dictionary mapping status to count of workflow runs
+    """
     async with get_session() as session:
-        q = text(
-            """select r.status,count(distinct workflow_run_id)
-            from runstep r inner join workflowrun w
-            on w.id=r.workflow_run_id
-            where run_group_id=:run_group_id
-            group by r.status"""
-        ).bindparams(bindparam("run_group_id", value=run_group_id))
-        rs = await session.exec(q)
-        res = rs.all()
-        ret = {}
-        for k in RunStatus:
-            ret[k.value] = 0
-        for row in res:
-            ret[row[0]] = row[1]
-        return ret
+        # Query with explicit join and group by
+        q = (
+            select(
+                RunStep.status,
+                func.count(RunStep.workflow_run_id.distinct()).label("count"),
+            )
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .where(WorkflowRun.run_group_id == run_group_id)
+            .group_by(RunStep.status)
+        )
+
+        result = await session.exec(q)
+        rows = result.all()
+
+        # Initialize all statuses to 0
+        stats = {status.value: 0 for status in RunStatus}
+
+        # Populate with actual counts
+        for row in rows:
+            stats[row[0]] = row[1]
+
+        return stats
+
+
+async def delete_run_group(run_group_id: int) -> dict[str, int]:
+    """
+    Delete a RunGroup and all dependent records using Python/SQLModel.
+
+    Works with both SQLite and PostgreSQL databases.
+
+    This function performs cascading deletion of:
+    - RunStep records (via WorkflowRun)
+    - LifecycleHistory records (for both RunGroup and WorkflowRuns)
+    - WorkflowRun records
+    - RunGroup record
+
+    All deletions occur within a single transaction to ensure atomicity.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The ID of the RunGroup to delete
+
+    Returns
+    -------
+    dict[str, int]
+        A dictionary containing deletion statistics:
+        - deleted_runsteps: Number of RunStep records deleted
+        - deleted_lifecyclehistory: Number of LifecycleHistory records deleted
+        - deleted_workflowruns: Number of WorkflowRun records deleted
+        - deleted_rungroups: Number of RunGroup records deleted (should be 1)
+        - total_deleted: Total number of records deleted
+
+    Raises
+    ------
+    NotFoundError
+        If the RunGroup with the specified ID does not exist
+    """
+    async with get_session() as session:
+        # Step 1: Verify RunGroup exists
+        q = select(RunGroup).where(RunGroup.id == run_group_id)
+        result = await session.exec(q)
+        run_group = result.first()
+
+        if not run_group:
+            raise NotFoundError(f"RunGroup with id {run_group_id} does not exist")
+
+        # Step 2: Get all workflow run IDs in this group (needed for cascading deletes)
+        workflow_run_q = select(WorkflowRun.id).where(WorkflowRun.run_group_id == run_group_id)
+        workflow_run_ids_result = await session.exec(workflow_run_q)
+        workflow_run_ids = list(workflow_run_ids_result.all())
+
+        # Step 3: Delete RunSteps for all WorkflowRuns in this group
+        deleted_runsteps = 0
+        if workflow_run_ids:
+            runstep_delete_q = delete(RunStep).where(RunStep.workflow_run_id.in_(workflow_run_ids))
+            runstep_result = await session.exec(runstep_delete_q)
+            deleted_runsteps = runstep_result.rowcount  # type: ignore
+
+        # Step 4: Delete LifecycleHistory records (for both RunGroup and WorkflowRuns)
+        if workflow_run_ids:
+            lifecycle_delete_q = delete(LifecycleHistory).where(
+                or_(
+                    LifecycleHistory.run_group_id == run_group_id,
+                    LifecycleHistory.workflow_run_id.in_(workflow_run_ids),
+                )
+            )
+        else:
+            # No workflow runs, just delete lifecycle history for the run group
+            lifecycle_delete_q = delete(LifecycleHistory).where(LifecycleHistory.run_group_id == run_group_id)
+
+        lifecycle_result = await session.exec(lifecycle_delete_q)
+        deleted_lifecyclehistory = lifecycle_result.rowcount  # type: ignore
+
+        # Step 5: Delete WorkflowRuns
+        workflowrun_delete_q = delete(WorkflowRun).where(WorkflowRun.run_group_id == run_group_id)
+        workflowrun_result = await session.exec(workflowrun_delete_q)
+        deleted_workflowruns = workflowrun_result.rowcount  # type: ignore
+
+        # Step 6: Delete the RunGroup itself
+        rungroup_delete_q = delete(RunGroup).where(RunGroup.id == run_group_id)
+        rungroup_result = await session.exec(rungroup_delete_q)
+        deleted_rungroups = rungroup_result.rowcount  # type: ignore
+
+        # Step 7: Commit the transaction
+        await session.commit()
+
+        # Return statistics
+        return {
+            "deleted_runsteps": deleted_runsteps,
+            "deleted_lifecyclehistory": deleted_lifecyclehistory,
+            "deleted_workflowruns": deleted_workflowruns,
+            "deleted_rungroups": deleted_rungroups,
+            "total_deleted": deleted_runsteps + deleted_lifecyclehistory + deleted_workflowruns + deleted_rungroups,
+        }
 
 
 async def create_run_group(
@@ -690,26 +813,46 @@ async def find_operator_for_workflow_run(
 
 
 async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: WorkflowStepType) -> StepConfig:
+    """
+    Get the step configuration for a specific workflow run and step type.
+
+    Uses SQLModel ORM with explicit JOIN for cross-database compatibility.
+    Replaces raw SQL to prevent SQL injection vulnerabilities.
+
+    Parameters
+    ----------
+    workflow_run_id : int
+        The workflow run ID
+    step_type : WorkflowStepType
+        The step type to find
+
+    Returns
+    -------
+    StepConfig
+        The step configuration
+
+    Raises
+    ------
+    NotFoundError
+        If no step config found for the given workflow run and step type
+    """
     async with get_session() as session:
-        q = text(
-            f"""select s.id from
-            stepconfig s inner join runstep r
-            on r.step_config_id=s.id
-            where r.workflow_run_id={workflow_run_id}
-            and r.step_type='{step_type.value.upper()}'"""
+        # Build query with explicit join and type-safe enum comparison
+        q = (
+            select(StepConfig)
+            .join(RunStep, RunStep.step_config_id == StepConfig.id)
+            .where(RunStep.workflow_run_id == workflow_run_id)
+            .where(RunStep.step_type == step_type)  # Direct enum comparison, SQLAlchemy extracts NAME
         )
 
-        rs = await session.exec(q)
-        res = rs.first()
-        if res:
-            # could probably convert directly but will figure out later
-            q = select(StepConfig).where(StepConfig.id == res[0])
-            rs = await session.exec(q)
-            res = rs.first()
-            session.expunge(res)
+        result = await session.exec(q)
+        step_config = result.first()
 
-            return res
-        raise NotFoundError(f"step config {step_type} not found")
+        if not step_config:
+            raise NotFoundError(f"step config {step_type} not found")
+
+        session.expunge(step_config)
+        return step_config
 
 
 async def update_run_status(workflow_run_id: int, is_last_step: bool, status: RunStatus, session) -> RunStatus:
@@ -741,19 +884,35 @@ async def update_run_status(workflow_run_id: int, is_last_step: bool, status: Ru
 
 
 async def get_steps_for_batch(batch_id: int) -> list[RunStep]:
+    """
+    Get all run steps for a specific batch.
+
+    Uses SQLModel ORM with explicit JOIN for cross-database compatibility.
+
+    Parameters
+    ----------
+    batch_id : int
+        The batch ID to get steps for
+
+    Returns
+    -------
+    list[RunStep]
+        List of run steps for the batch
+    """
     async with get_session() as session:
-        q = text(
-            """select r.* from
-               runstep r inner join workflowrun w
-               on w.id=r.workflow_run_id
-               where batch_id=:batch_id"""
-        ).bindparams(bindparam("batch_id", value=batch_id))
-        rs = await session.exec(q)
-        res = rs.all()
-        if res:
+        q = (
+            select(RunStep)
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .where(WorkflowRun.batch_id == batch_id)
+        )
+
+        result = await session.exec(q)
+        steps = result.all()
+
+        if steps:
             session.expunge_all()
-            return res
-        return []
+
+        return list(steps)
 
 
 async def get_steps_for_workflow_runs(workflow_run_ids: list[int]) -> dict[int, list[RunStep]]:
@@ -792,72 +951,177 @@ async def get_run_steps(status: RunStatus) -> list[RunStep]:
 
 
 async def get_run_group_durations(run_group_id: int) -> list[tuple]:
+    """
+    Get duration statistics for a run group.
+
+    **PostgreSQL only** - Uses PostgreSQL-specific date/time and JSON functions
+    via SQLAlchemy for type safety and ORM benefits.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID to get durations for
+
+    Returns
+    -------
+    list[tuple]
+        Duration statistics per step type
+
+    Raises
+    ------
+    RuntimeError
+        If database is not PostgreSQL
+    """
+    from soliplex.ingester.lib.config import get_settings
+
+    settings = get_settings()
+    if "postgresql" not in settings.doc_db_url:
+        raise RuntimeError("get_run_group_durations requires PostgreSQL (uses PostgreSQL-specific functions)")
+
     async with get_session() as session:
-        q = text(
-            """
-                 select step_type,count(1) as count,
-                 round(max(duration),1) as longest,
-                 round(min(duration),1) as shortest,
-                 round(avg(duration),1) as average,
-                 sum(pages) as pages,
-                 round(sum(pages)/sum(duration),0) as pages_per_min,
-                 sum(duration) as total_duration,
-                 round(extract(epoch from max(completed_date)
-                 -min(completed_date)),0) as wall_clock_time
-                from
-                (select step_type, extract ( epoch  from
-                 r.completed_date-r.start_date) as duration,
-                 r.start_date, r.completed_date,
-                json_query(doc_meta::jsonb,'$.page_count')::int
-                 as pages
-                from runstep r inner join workflowrun w
-                 on w.id=r.workflow_run_id
-                inner join documentbatch b on b.id=w.batch_id
-                inner join document d on d.hash=w.doc_id
-                inner join rungroup rg on rg.id=w.run_group_id
-                where rg.id=:run_group_id and r.status ='COMPLETED'
-                ) group by step_type;
-        """
-        ).bindparams(bindparam("run_group_id", value=run_group_id))
-        rs = await session.exec(q)
-        res = rs.all()
-        return res
+        # Subquery for calculating durations and extracting page counts
+        subq = (
+            select(
+                RunStep.workflow_step_name.label("step_type"),
+                extract("epoch", RunStep.completed_date - RunStep.start_date).label("duration"),
+                RunStep.start_date,
+                RunStep.completed_date,
+                # PostgreSQL-specific JSONB extraction
+                cast(func.jsonb_extract_path_text(cast(Document.doc_meta, JSONB), "page_count"), Integer).label("pages"),
+            )
+            .select_from(RunStep)
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .join(DocumentBatch, DocumentBatch.id == WorkflowRun.batch_id)
+            .join(Document, Document.hash == WorkflowRun.doc_id)
+            .join(RunGroup, RunGroup.id == WorkflowRun.run_group_id)
+            .where(RunGroup.id == run_group_id)
+            .where(RunStep.status == RunStatus.COMPLETED)
+        ).subquery()
+
+        # Main query with aggregations
+        q = select(
+            subq.c.step_type,
+            func.count(literal_column("1")).label("count"),
+            func.round(func.max(subq.c.duration), 1).label("longest"),
+            func.round(func.min(subq.c.duration), 1).label("shortest"),
+            func.round(func.avg(subq.c.duration), 1).label("average"),
+            func.sum(subq.c.pages).label("pages"),
+            func.round(func.sum(subq.c.pages) / func.sum(subq.c.duration), 0).label("pages_per_min"),
+            func.sum(subq.c.duration).label("total_duration"),
+            func.round(extract("epoch", func.max(subq.c.completed_date) - func.min(subq.c.start_date)), 0).label(
+                "wall_clock_time"
+            ),
+        ).group_by(subq.c.step_type)
+
+        result = await session.exec(q)
+        return result.all()
 
 
 async def get_step_stats(run_group_id: int) -> list[tuple]:
+    """
+    Get step statistics for a run group.
+
+    **PostgreSQL only** - Uses PostgreSQL-specific JSONB functions
+    via SQLAlchemy for type safety and ORM benefits.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID to get stats for
+
+    Returns
+    -------
+    list[tuple]
+        Statistics per batch, param set, step type, and status
+
+    Raises
+    ------
+    RuntimeError
+        If database is not PostgreSQL
+    """
+    from soliplex.ingester.lib.config import get_settings
+
+    settings = get_settings()
+    if "postgresql" not in settings.doc_db_url:
+        raise RuntimeError("get_step_stats requires PostgreSQL (uses PostgreSQL-specific functions)")
+
     async with get_session() as session:
-        q = text(
-            """select b.name,param_definition_id, step_type,
-            r.status, count(1),
-            sum(json_query(doc_meta::jsonb,'$.page_count')::int)
-             as pages
-        from runstep r inner join workflowrun w
-         on w.id=r.workflow_run_id
-        inner join documentbatch b on b.id=w.batch_id
-        inner join document d on d.hash=w.doc_id
-        inner join rungroup rg on rg.id=w.run_group_id
-        where rg.id=:run_group_id
-        group by b.name,param_definition_id, step_type,r.status
-        order by b.name,step_type,r.status;"""
-        ).bindparams(bindparam("run_group_id", value=run_group_id))
-        rs = await session.exec(q)
-        res = rs.all()
-        return res
+        # Query with PostgreSQL-specific JSONB extraction
+        q = (
+            select(
+                DocumentBatch.name,
+                RunGroup.param_definition_id,
+                RunStep.workflow_step_name,
+                RunStep.status,
+                func.count(literal_column("1")).label("count"),
+                func.sum(cast(func.jsonb_extract_path_text(cast(Document.doc_meta, JSONB), "page_count"), Integer)).label(
+                    "pages"
+                ),
+            )
+            .select_from(RunStep)
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .join(DocumentBatch, DocumentBatch.id == WorkflowRun.batch_id)
+            .join(Document, Document.hash == WorkflowRun.doc_id)
+            .join(RunGroup, RunGroup.id == WorkflowRun.run_group_id)
+            .where(RunGroup.id == run_group_id)
+            .group_by(
+                DocumentBatch.name,
+                RunGroup.param_definition_id,
+                RunStep.workflow_step_name,
+                RunStep.status,
+            )
+            .order_by(
+                DocumentBatch.name,
+                RunStep.workflow_step_name,
+                RunStep.status,
+            )
+        )
+
+        result = await session.exec(q)
+        return result.all()
 
 
 async def reset_failed_steps(run_group_id: int) -> None:
+    """
+    Reset all failed steps and workflow runs in a run group.
+
+    Sets failed steps back to PENDING with retry count reset to 0.
+    Sets failed workflow runs back to RUNNING.
+    Uses SQLModel ORM for cross-database compatibility.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID to reset failed steps for
+    """
     async with get_session() as session:
-        q = text(
-            """update runstep set status='PENDING',retry=0
-            where workflow_run_id in
-            (select id from workflowrun
-             where run_group_id=:run_group_id
-             and status='FAILED')"""
-        ).bindparams(bindparam("run_group_id", value=run_group_id))
-        await session.exec(q)
-        q = text(
-            """update workflowrun set status='RUNNING'
-            where run_group_id=:run_group_id
-            and status='FAILED'"""
-        ).bindparams(bindparam("run_group_id", value=run_group_id))
-        await session.exec(q)
+        # Subquery: Get workflow run IDs that are FAILED
+        failed_runs_subq = (
+            select(WorkflowRun.id)
+            .where(WorkflowRun.run_group_id == run_group_id)
+            .where(WorkflowRun.status == RunStatus.FAILED)
+            .subquery()
+        )
+
+        # Update run steps to PENDING
+        q1 = (
+            update(RunStep)
+            .where(RunStep.workflow_run_id.in_(select(failed_runs_subq.c.id)))
+            .values(status=RunStatus.PENDING, retry=0)
+        )
+        result1 = await session.exec(q1)
+        reset_steps = result1.rowcount  # type: ignore
+
+        # Update workflow runs to RUNNING
+        q2 = (
+            update(WorkflowRun)
+            .where(WorkflowRun.run_group_id == run_group_id)
+            .where(WorkflowRun.status == RunStatus.FAILED)
+            .values(status=RunStatus.RUNNING)
+        )
+        result2 = await session.exec(q2)
+        reset_runs = result2.rowcount  # type: ignore
+
+        await session.commit()
+
+        logger.info(f"Reset {reset_steps} steps and {reset_runs} runs for run group {run_group_id}")

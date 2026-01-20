@@ -66,8 +66,6 @@ def format_bytes(size: int) -> str:
 def resolve_lancedb_path(db_name: str, lancedb_dir: str) -> Path:
     """
     Resolve the lancedb path from a db name.
-
-    Appends '/haiku.rag.lancedb' if not already present.
     """
     db_path = Path(lancedb_dir) / db_name
     return db_path

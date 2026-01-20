@@ -300,7 +300,11 @@ async def test_save_to_rag():
         mock_docling_class.model_validate_json.assert_called_once_with(docling_json)
 
         # Verify HaikuRAG was initialized and import_document was called
-        mock_haiku_rag.assert_called_once_with(config=mock_config, create=True)
+        # db_path is computed from lancedb_dir (default "lancedb") / data_dir ("test-dir")
+        import pathlib
+
+        expected_db_path = pathlib.Path("lancedb") / "test-dir"
+        mock_haiku_rag.assert_called_once_with(config=mock_config, create=True, db_path=expected_db_path)
         mock_client.import_document.assert_called_once()
 
         # Verify the metadata passed to import_document

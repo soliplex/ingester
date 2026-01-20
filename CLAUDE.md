@@ -77,6 +77,8 @@ src/soliplex/ingester/
 | `DOC_DB_URL` | Yes | Database connection string |
 | `DOCLING_SERVER_URL` | No | Docling parsing service endpoint |
 | `DOCLING_CHUNK_SERVER_URL` | No | Docling chunking service endpoint (can differ from parsing) |
+| `OLLAMA_BASE_URL` | No | Ollama server URL for embeddings |
+| `OLLAMA_BASE_URL_DOCLING` | No | Ollama server URL for Docling chunking (can differ for load distribution) |
 | `FILE_STORE_TARGET` | No | Storage: `fs`, `db`, or `s3` |
 | `LANCEDB_DIR` | No | Vector database directory |
 

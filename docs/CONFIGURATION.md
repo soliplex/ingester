@@ -79,6 +79,39 @@ DOCLING_HTTP_TIMEOUT=300
 - Large documents may require longer timeouts
 - Adjust based on document size and complexity
 
+#### OLLAMA_BASE_URL
+
+Ollama server endpoint for embedding generation.
+
+**Default:** `http://ollama:11434`
+
+**Example:**
+```bash
+OLLAMA_BASE_URL="http://ollama.internal.company.com:11434"
+```
+
+**Notes:**
+- Used for generating document embeddings during the embed step
+- Must be accessible from worker nodes
+- The Ollama server should have the required embedding models loaded
+
+#### OLLAMA_BASE_URL_DOCLING
+
+Ollama server endpoint for Docling chunking operations.
+
+**Default:** `http://ollama:11434`
+
+**Example:**
+```bash
+OLLAMA_BASE_URL_DOCLING="http://ollama-chunker.internal.company.com:11434"
+```
+
+**Notes:**
+- Used by docling-serve for document chunking operations
+- Can point to a different Ollama instance than `OLLAMA_BASE_URL` for load distribution
+- If not set, defaults to the same URL as `OLLAMA_BASE_URL`
+- Useful when running separate Ollama instances to distribute model loading across servers
+
 ---
 
 ### Logging
@@ -850,6 +883,8 @@ env:
 | `WORKER_CHECKIN_INTERVAL` | int | No | `120` | Heartbeat interval (sec) |
 | `WORKER_CHECKIN_TIMEOUT` | int | No | `600` | Worker timeout (sec) |
 | `EMBED_BATCH_SIZE` | int | No | `1000` | Embedding batch size |
+| `OLLAMA_BASE_URL` | str | No | `http://ollama:11434` | Ollama server URL for embeddings |
+| `OLLAMA_BASE_URL_DOCLING` | str | No | `http://ollama:11434` | Ollama server URL for Docling chunking (can differ for load distribution) |
 | `WORKFLOW_DIR` | str | No | `config/workflows` | Workflow definitions dir |
 | `DEFAULT_WORKFLOW_ID` | str | No | `batch_split` | Default workflow |
 | `PARAM_DIR` | str | No | `config/params` | Parameter sets dir |

@@ -4,7 +4,7 @@
 
 Soliplex Ingester uses SQLModel (built on SQLAlchemy) for database modeling with async support. The system supports both SQLite (development) and PostgreSQL (production).
 
-Database models defined in: `src/soliplex_ingester/lib/models.py`
+Database models defined in: `src/soliplex/ingester/lib/models.py`
 
 ## Database Connection
 
@@ -17,16 +17,40 @@ DOC_DB_URL="sqlite+aiosqlite:///./db/documents.db"
 DOC_DB_URL="postgresql+asyncpg://user:pass@localhost/soliplex"
 ```
 
-### Async Engine
+### Database Manager
 
-The system uses async SQLAlchemy with connection pooling:
+The `Database` class manages engine lifecycle and session creation with automatic connection pooling.
 
 ```python
-from soliplex_ingester.lib.models import get_session
+from soliplex.ingester.lib.models import Database
+
+# Initialize once at application startup
+await Database.initialize()
+
+# Or with custom URL (for testing)
+await Database.initialize("sqlite+aiosqlite:///:memory:")
+
+# Get sessions anywhere in the app
+async with Database.session() as session:
+    result = await session.exec(select(Document))
+    # Transaction auto-commits on success, rollback on exception
+
+# Cleanup at shutdown
+await Database.close()
+
+# Reset and reinitialize (primarily for testing)
+await Database.reset(url)
+```
+
+### Backwards-Compatible Functions
+
+```python
+from soliplex.ingester.lib.models import get_session, get_engine
 
 async with get_session() as session:
-    # Your database operations
     result = await session.exec(select(Document))
+
+engine = await get_engine()
 ```
 
 ## Core Models
@@ -46,7 +70,7 @@ Represents a batch of documents ingested together.
 - `batch_params` (dict[str, str]) - JSON metadata
 
 **Computed Fields:**
-- `duration` (float) - Processing time in seconds
+- `duration` (float) - Processing time in seconds (None if not completed)
 
 **Example:**
 ```json
@@ -75,7 +99,6 @@ Represents a unique document identified by content hash.
 - `file_size` (int, nullable) - Size in bytes
 - `doc_meta` (dict[str, str]) - JSON metadata
 
-
 **Relationships:**
 - Multiple `DocumentURI` records can reference the same document
 
@@ -91,9 +114,7 @@ Documents are deduplicated by hash. If the same file is ingested multiple times,
   "doc_meta": {
     "author": "John Doe",
     "title": "Q4 Report"
-  },
-  "rag_id": "doc_xyz123",
-  "batch_id": 1
+  }
 }
 ```
 
@@ -182,7 +203,7 @@ Stores raw file bytes and artifacts in the database.
 - `hash` (str, primary key) - Document hash
 - `artifact_type` (str, primary key) - Type of artifact
 - `storage_root` (str, primary key) - Storage location identifier
-- `file_size` (int, nullable) - Size in bytes (auto-computed)
+- `file_size` (int, nullable) - Size in bytes (auto-computed from file_bytes)
 - `file_bytes` (bytes) - Raw binary data
 
 **Artifact Types:**
@@ -202,7 +223,7 @@ Stores raw file bytes and artifacts in the database.
   "artifact_type": "parsed_markdown",
   "storage_root": "db",
   "file_size": 50000,
-  "file_bytes": b"# Document Title\n\n..."
+  "file_bytes": "..."
 }
 ```
 
@@ -277,7 +298,7 @@ Represents a single workflow execution for one document.
 - `run_params` (dict[str, str|int|bool]) - Runtime parameters
 
 **Computed Fields:**
-- `duration` (float) - Processing time in seconds
+- `duration` (float) - Processing time in seconds (None if not completed)
 
 **Relationships:**
 - Has many `RunStep` records
@@ -334,7 +355,7 @@ Represents one step within a workflow run.
 - `worker_id` (str, nullable) - Worker processing this step
 
 **Computed Fields:**
-- `duration` (float) - Execution time in seconds
+- `duration` (float) - Execution time in seconds (None if not completed)
 
 **Relationships:**
 - Belongs to `WorkflowRun`
@@ -356,7 +377,7 @@ Represents one step within a workflow run.
   "status_date": "2025-01-15T10:05:00",
   "completed_date": null,
   "retry": 0,
-  "retries": 3,
+  "retries": 1,
   "status": "RUNNING",
   "status_message": "Parsing with Docling",
   "status_meta": {},
@@ -445,6 +466,7 @@ Tracks lifecycle events during workflow execution.
 **Fields:**
 - `id` (int, primary key) - Auto-increment ID
 - `event` (LifeCycleEvent) - Type of event
+- `handler_name` (str, nullable) - Name of the handler processing the event
 - `run_group_id` (int, foreign key) - Associated run group
 - `workflow_run_id` (int, foreign key) - Associated workflow run
 - `step_id` (int, nullable) - Associated step (if applicable)
@@ -456,9 +478,9 @@ Tracks lifecycle events during workflow execution.
 - `status_meta` (dict[str, str]) - JSON metadata
 
 **Event Types:**
-- `GROUP_START` / `GROUP_END`
-- `ITEM_START` / `ITEM_END` / `ITEM_FAILED`
-- `STEP_START` / `STEP_END` / `STEP_FAILED`
+- `group_start` / `group_end`
+- `item_start` / `item_end` / `item_failed`
+- `step_start` / `step_end` / `step_failed`
 
 **Use Cases:**
 - Audit trail of workflow execution
@@ -508,7 +530,7 @@ class RunStatus(str, Enum):
     PENDING = "PENDING"      # Not yet started
     RUNNING = "RUNNING"      # Currently executing
     COMPLETED = "COMPLETED"  # Finished successfully
-    ERROR = "ERROR"          # Failed but will retry
+    ERROR = "ERROR"          # Failed but still retrying
     FAILED = "FAILED"        # Permanently failed
 ```
 
@@ -560,29 +582,80 @@ class LifeCycleEvent(str, Enum):
 
 ---
 
+## Artifact Mapping
+
+**Workflow Steps to Artifacts:**
+- INGEST - DOC
+- PARSE - PARSED_MD, PARSED_JSON
+- CHUNK - CHUNKS
+- EMBED - EMBEDDINGS
+- STORE - RAG
+
+---
+
 ## Relationships Diagram
 
 ```
 DocumentBatch
-    ↓ (1:N)
-DocumentURI ──→ Document (N:1)
-    ↓
+    | (1:N)
+DocumentURI --> Document (N:1)
+    |
 DocumentURIHistory
 
 DocumentBatch
-    ↓ (1:N)
+    | (1:N)
 RunGroup
-    ↓ (1:N)
-WorkflowRun ──→ Document (N:1)
-    ↓ (1:N)
-RunStep ──→ StepConfig (N:1)
+    | (1:N)
+WorkflowRun --> Document (N:1)
+    | (1:N)
+RunStep --> StepConfig (N:1)
 
 ConfigSet
-    ↓ (N:M via ConfigSetItem)
+    | (N:M via ConfigSetItem)
 StepConfig
 
-RunGroup ──→ LifecycleHistory (1:N)
-WorkflowRun ──→ LifecycleHistory (1:N)
+RunGroup --> LifecycleHistory (1:N)
+WorkflowRun --> LifecycleHistory (1:N)
+```
+
+---
+
+## Response Models
+
+### DocumentInfo
+
+API response model for document information.
+
+```python
+class DocumentInfo(BaseModel):
+    uri: str | None = None
+    source: str | None = None
+    file_size: int | None = None
+    mime_type: str | None = None
+```
+
+### WorkflowRunWithDetails
+
+Response model for workflow run with optional steps and document info.
+
+```python
+class WorkflowRunWithDetails(BaseModel):
+    workflow_run: WorkflowRun
+    steps: list[RunStep] | None = None
+    document_info: DocumentInfo | None = None
+```
+
+### PaginatedResponse
+
+Generic paginated response model.
+
+```python
+class PaginatedResponse[T](BaseModel):
+    items: list[T]
+    total: int
+    page: int
+    rows_per_page: int
+    total_pages: int
 ```
 
 ---
@@ -606,21 +679,143 @@ alembic upgrade head
 ### Programmatic
 
 ```python
-from sqlalchemy import create_engine
-from sqlmodel import SQLModel
-from soliplex_ingester.lib.config import get_settings
+from soliplex.ingester.lib.models import Database
 
-settings = get_settings()
-engine = create_engine(settings.doc_db_url)
-SQLModel.metadata.create_all(engine)
+# Initialize with default URL from settings
+await Database.initialize()
+
+# Or with custom URL
+await Database.initialize("sqlite+aiosqlite:///:memory:")
 ```
+
+---
+
+## Python Cascading Delete Functions
+
+### delete_run_group
+
+Cascading deletion function for run groups and all dependent records.
+
+**Location:** `src/soliplex/ingester/lib/wf/operations.py`
+
+**Signature:**
+```python
+async def delete_run_group(run_group_id: int) -> dict[str, int]
+```
+
+**Database Compatibility:**
+- SQLite (via aiosqlite)
+- PostgreSQL (via asyncpg)
+
+**Behavior:**
+1. Verifies the RunGroup exists (raises `NotFoundError` if not found)
+2. Retrieves all WorkflowRun IDs for the RunGroup
+3. Deletes all RunStep records for those WorkflowRuns
+4. Deletes all LifecycleHistory records (for both RunGroup and WorkflowRuns)
+5. Deletes all WorkflowRun records in the group
+6. Deletes the RunGroup itself
+7. Returns deletion statistics
+
+All operations occur within a single database transaction to ensure atomicity.
+
+**Usage:**
+```python
+from soliplex.ingester.lib.wf.operations import delete_run_group, NotFoundError
+
+# Delete a run group and all dependent records
+result = await delete_run_group(run_group_id=5)
+
+print(f"Deleted {result['deleted_rungroups']} run group(s)")
+print(f"Deleted {result['deleted_workflowruns']} workflow run(s)")
+print(f"Deleted {result['deleted_runsteps']} run step(s)")
+print(f"Deleted {result['deleted_lifecyclehistory']} lifecycle history record(s)")
+print(f"Total records deleted: {result['total_deleted']}")
+```
+
+**Returns:**
+```python
+{
+    "deleted_runsteps": 150,
+    "deleted_lifecyclehistory": 45,
+    "deleted_workflowruns": 10,
+    "deleted_rungroups": 1,
+    "total_deleted": 206
+}
+```
+
+**Raises:**
+- `NotFoundError` - If the RunGroup with the specified ID does not exist
+
+---
+
+### delete_document_uri_by_uri
+
+Cascading deletion function for DocumentURI and all dependent records.
+
+**Location:** `src/soliplex/ingester/lib/operations.py`
+
+**Signature:**
+```python
+async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]
+```
+
+**Behavior:**
+1. Finds the DocumentURI by `uri` and `source`
+2. Counts how many DocumentURIs reference the same document hash
+3. If only one URI references the document (cascade delete):
+   - Deletes all RunStep records for WorkflowRuns with this doc_id
+   - Deletes all LifecycleHistory records for those WorkflowRuns
+   - Deletes all WorkflowRun records with this doc_id
+   - Deletes all DocumentBytes artifacts for this hash
+   - Deletes file artifacts from storage
+   - Deletes the DocumentURIHistory records
+   - Deletes the DocumentURI record
+   - Deletes the Document record
+4. If multiple URIs reference the document (preserve document):
+   - Deletes only the DocumentURIHistory records for this URI
+   - Deletes only the DocumentURI record
+   - Preserves the Document and all workflow-related records
+
+**Returns:**
+```python
+{
+    "deleted_document_uris": 1,
+    "deleted_uri_history": 3,
+    "deleted_documents": 1,
+    "deleted_workflow_runs": 2,
+    "deleted_run_steps": 10,
+    "deleted_lifecycle_history": 6,
+    "total_deleted": 23
+}
+```
+
+**Usage:**
+```python
+from soliplex.ingester.lib.operations import delete_document_uri_by_uri
+from soliplex.ingester.lib.operations import DocumentURINotFoundError
+
+try:
+    stats = await delete_document_uri_by_uri(
+        uri="/documents/report.pdf",
+        source="filesystem"
+    )
+    print(f"Total deleted: {stats['total_deleted']}")
+except DocumentURINotFoundError as e:
+    print(f"Error: {e}")
+```
+
+**Notes:**
+- All deletions occur within a single transaction
+- Works with both SQLite and PostgreSQL
+- Raises `DocumentURINotFoundError` if the URI/source combination does not exist
+- Used by the `DELETE /api/v1/document/by-uri` endpoint
 
 ---
 
 ## Migrations
 
 ### Location
-`src/soliplex_ingester/migrations/`
+`src/soliplex/ingester/migrations/`
 
 ### Configuration
 `alembic.ini` (project root)
@@ -654,7 +849,6 @@ CREATE INDEX idx_rungroup_batch ON rungroup(batch_id);
 
 -- Document lookups
 CREATE INDEX idx_documenturi_source ON documenturi(source);
-CREATE INDEX idx_document_batch ON document(batch_id);
 
 -- Worker monitoring
 CREATE INDEX idx_runstep_worker ON runstep(worker_id);
@@ -691,7 +885,7 @@ psql -h localhost -U user -d soliplex -c "ANALYZE;"
 
 ### Find Failed Workflows
 ```python
-from soliplex_ingester.lib.models import WorkflowRun, RunStatus, get_session
+from soliplex.ingester.lib.models import WorkflowRun, RunStatus, get_session
 from sqlmodel import select
 
 async with get_session() as session:

@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 def init():
+    # Set Windows-compatible event loop policy for psycopg async PostgreSQL driver
+    if platform.system() == "Windows":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     try:
         logging.basicConfig(level=get_settings().log_level)
     except ValidationError:
@@ -277,6 +281,20 @@ def list_params():
     asyncio.run(_list_params())
 
 
+async def _list_batches():
+    from .lib.operations import list_batches
+
+    batches = await list_batches()
+    for b in batches:
+        print(b.id, b.name, b.source)
+
+
+@app.command("list-batches")
+def list_batches():
+    validate_settings(dump=False)
+    asyncio.run(_list_batches())
+
+
 @app.command(
     "serve",
 )
@@ -390,6 +408,4 @@ def serve(
 
 
 if __name__ == "__main__":
-    if platform.system() == "Windows":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     app()

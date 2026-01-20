@@ -10,6 +10,7 @@ from haiku.rag.client import HaikuRAG
 from haiku.rag.config import Config as HRConfig
 from haiku.rag.config.models import AppConfig
 from haiku.rag.embeddings import embed_chunks
+from haiku.rag.store.engine import DocumentRecord
 from haiku.rag.store.models.chunk import Chunk
 
 from . import models
@@ -31,7 +32,7 @@ def build_docling_config(start_config: AppConfig, config_dict: dict[str, str | i
 
 def build_embed_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
     config = copy.deepcopy(start_config)
-
+    env = get_settings()
     required_keys = ["model", "vector_dim"]
     for key in required_keys:
         if key not in config_dict:
@@ -41,7 +42,8 @@ def build_embed_config(start_config: AppConfig, config_dict: dict[str, str | int
     config.embeddings.model.name = config_dict["model"]
     config.embeddings.model.vector_dim = config_dict["vector_dim"]
     config.embeddings.model.provider = config_dict["provider"]
-
+    # force haiku to use env variable even if config has a value set
+    config.providers.ollama.base_url = env.ollama_base_url
     return config
 
 
@@ -137,6 +139,17 @@ async def embed(
     return ret
 
 
+def resolve_lancedb_path(step_config: StepConfig) -> str:
+    env = get_settings()
+    config_dict = step_config.config_json
+    db_path = pathlib.Path(env.lancedb_dir) / config_dict["data_dir"]
+    return db_path
+
+
+def _find_docs_by_hash(doc_hash: str, tbl) -> list[DocumentRecord]:
+    return tbl.search().where(f"metadata like '%{doc_hash}%'").to_pydantic(DocumentRecord)
+
+
 async def save_to_rag(
     doc: models.Document,
     chunks: list[Chunk],
@@ -148,6 +161,7 @@ async def save_to_rag(
 ):
     md5_hash = doc.doc_meta["md5"]
     doc_hash = doc.hash
+
     config_dict = step_config.config_json
     config = build_embed_config(HRConfig, embed_config.config_json)
     required_keys = ["data_dir"]
@@ -169,13 +183,23 @@ async def save_to_rag(
     meta["doc_id"] = doc_hash
     meta["md5"] = md5_hash
     meta["content_type"] = doc.mime_type
+    db_path = resolve_lancedb_path(step_config)
 
     meta["source"] = source
     # FIXME: move create to batch start
     # lock writes to avoid concurrent writes
     logger.info(f"bytes docling={len(docling_json)}", extra=_log_con)
     async with _rag_lock:
-        async with HaikuRAG(config=config, create=True) as client:
+        async with HaikuRAG(config=config, create=True, db_path=db_path) as client:
+            # try to find the document
+            found = _find_docs_by_hash(doc_hash, client.document_repository.store.documents_table)
+            if found and len(found) != 0:
+                logger.info(f"Found existing document {found[0].id}", extra=_log_con)
+                doc_id = found[0].id
+                # delete the document
+                await client.delete_document(doc_id)
+                logger.debug(f"deleted existing document {found[0].id}", extra=_log_con)
+
             new_doc = await client.import_document(
                 chunks=chunks,
                 title=title,

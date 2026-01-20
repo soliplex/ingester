@@ -277,6 +277,34 @@ class DocumentURIHistory(SQLModel, table=True):
     histmeta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
+class SyncState(SQLModel, table=True):
+    """Track last sync state for incremental syncing."""
+
+    __tablename__ = "sync_state"
+
+    source_id: str = Field(
+        primary_key=True,
+        description="Source identifier (e.g., 'gitea:admin:myrepo')",
+    )
+    last_commit_sha: str | None = Field(
+        default=None,
+        description="Last processed commit SHA",
+    )
+    last_sync_date: datetime.datetime | None = Field(
+        default=None,
+        description="When last sync occurred",
+    )
+    branch: str = Field(
+        default="main",
+        description="Tracked branch",
+    )
+    sync_metadata: dict[str, int | str] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="Additional sync metadata",
+    )
+
+
 # ----------------- workflow related models ----------------------
 
 

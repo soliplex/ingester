@@ -20,6 +20,7 @@ from .routes.batch import batch_router
 from .routes.document import doc_router
 from .routes.lancedb import lancedb_router
 from .routes.stats import stats_router
+from .routes.sync import router as sync_router
 from .routes.workflow import wf_router
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ app.include_router(doc_router)
 app.include_router(lancedb_router)
 app.include_router(wf_router)
 app.include_router(stats_router)
+app.include_router(sync_router)
 
 # Serve UI static assets
 static_dir = Path(__file__).parent / "static"

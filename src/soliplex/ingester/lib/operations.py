@@ -4,8 +4,8 @@ import logging
 import mimetypes
 import os
 
+from sqlalchemy import delete
 from sqlmodel import select
-from sqlmodel import text
 
 from . import dal
 from . import models
@@ -138,9 +138,6 @@ async def add_history_for_hash(doc_hash: str, action: str, batch_id=None, hist_m
     doc_uris = await get_document_uris_by_hash(doc_hash)
     async with models.get_session() as session:
         for doc_uri in doc_uris:
-            # if batch_id is not None and doc_uri.batch_id != batch_id:
-            #    continue
-            # use blank meta unless needed
             await add_history(doc_uri, hist_meta, action, session, batch_id=batch_id)
         await session.commit()
 
@@ -195,15 +192,32 @@ async def handle_file(input_uri: str = None, file_bytes: bytes = None) -> tuple[
 
 
 async def delete_file(doc_hash: str, session):
-    q = text("""select cs.* from stepconfig cs
-           inner join runstep rs on rs.step_config_id=cs.id
-           inner join workflowrun r on r.id=rs.workflow_run_id
-           where r.doc_id=:doc_hash""")
-    q = q.bindparams(doc_hash=doc_hash)
-    res = await session.exec(q)
-    for step_config in res.all():
-        for st in models.ArtifactType:
-            op = dal.get_storage_operator(st, step_config)
+    """
+    Delete all file artifacts for a document across all workflow runs.
+
+    Uses SQLModel ORM with explicit JOINs for cross-database compatibility.
+
+    Parameters
+    ----------
+    doc_hash : str
+        Document hash to delete files for
+    session : AsyncSession
+        Database session
+    """
+    # Get all step configs used for this document
+    q = (
+        select(models.StepConfig)
+        .join(models.RunStep, models.RunStep.step_config_id == models.StepConfig.id)
+        .join(models.WorkflowRun, models.WorkflowRun.id == models.RunStep.workflow_run_id)
+        .where(models.WorkflowRun.doc_id == doc_hash)
+    )
+
+    result = await session.exec(q)
+    step_configs = result.all()
+
+    for step_config in step_configs:
+        for artifact_type in models.ArtifactType:
+            op = dal.get_storage_operator(artifact_type, step_config)
             try:
                 await op.delete(doc_hash)
             except FileNotFoundError as fe:
@@ -526,17 +540,40 @@ async def get_document(doc_hash: str) -> models.Document:
 
 async def delete_orphaned_documents():
     """
-    Delete orphaned documents that have no uri pointing to them.
+    Delete orphaned documents that have no URI pointing to them.
+
+    Also deletes orphaned history records for consistency.
+    Uses SQLModel ORM for cross-database compatibility.
+
+    Returns
+    -------
+    dict
+        Statistics about deleted records
     """
     async with models.get_session() as session:
-        q1 = text("""DELETE FROM document WHERE hash NOT IN
-            (SELECT doc_hash FROM documenturi)""")
-        q2 = text("""DELETE FROM documenturihistory WHERE hash NOT IN
-            (SELECT doc_hash FROM documenturi)""")
+        # Subquery: Get all hashes that are referenced
+        referenced_hashes_subq = select(models.DocumentURI.doc_hash).distinct().subquery()
 
-        await session.exec(q1)
-        await session.exec(q2)
+        # Delete orphaned documents
+        q1 = delete(models.Document).where(models.Document.hash.not_in(select(referenced_hashes_subq.c.doc_hash)))
+        result1 = await session.exec(q1)
+        deleted_docs = result1.rowcount  # type: ignore
+
+        # Delete orphaned history
+        q2 = delete(models.DocumentURIHistory).where(
+            models.DocumentURIHistory.hash.not_in(select(referenced_hashes_subq.c.doc_hash))
+        )
+        result2 = await session.exec(q2)
+        deleted_history = result2.rowcount  # type: ignore
+
         await session.commit()
+
+        logger.info(f"Deleted {deleted_docs} orphaned documents and {deleted_history} history records")
+
+        return {
+            "deleted_documents": deleted_docs,
+            "deleted_history": deleted_history,
+        }
 
 
 async def validate_storage() -> dict[tuple[models.ArtifactType, models.ArtifactType], set[str]]:
@@ -576,3 +613,139 @@ async def validate_storage() -> dict[tuple[models.ArtifactType, models.ArtifactT
             diffs[(s1, s2)] = diff
 
     return diffs
+
+
+class DocumentURINotFoundError(ValueError):
+    def __init__(self, uri: str, source: str):
+        super().__init__(f"DocumentURI not found for uri={uri}, source={source}")
+
+
+async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]:
+    """
+    Delete a DocumentURI by URI and source with cascading deletion.
+
+    If only one DocumentURI references the underlying document, all associated
+    records are deleted including workflow runs, steps, lifecycle history,
+    artifacts, and the document itself.
+
+    If multiple DocumentURIs reference the same document, only the specified
+    DocumentURI and its history are deleted; the document is preserved.
+
+    Parameters
+    ----------
+    uri : str
+        The document URI to delete
+    source : str
+        The source system identifier
+
+    Returns
+    -------
+    dict[str, int]
+        A dictionary containing deletion statistics:
+        - deleted_document_uris: Number of DocumentURI records deleted (1)
+        - deleted_uri_history: Number of DocumentURIHistory records deleted
+        - deleted_documents: Number of Document records deleted (0 or 1)
+        - deleted_workflow_runs: Number of WorkflowRun records deleted
+        - deleted_run_steps: Number of RunStep records deleted
+        - deleted_lifecycle_history: Number of LifecycleHistory records deleted
+        - total_deleted: Total number of records deleted
+
+    Raises
+    ------
+    DocumentURINotFoundError
+        If the DocumentURI with the specified uri and source does not exist
+    """
+    async with models.get_session() as session:
+        # Step 1: Find the DocumentURI
+        q = select(models.DocumentURI).where(models.DocumentURI.uri == uri).where(models.DocumentURI.source == source)
+        result = await session.exec(q)
+        doc_uri = result.first()
+
+        if not doc_uri:
+            raise DocumentURINotFoundError(uri, source)
+
+        doc_hash = doc_uri.doc_hash
+        doc_uri_id = doc_uri.id
+
+        # Step 2: Check how many URIs reference this document
+        uri_count_q = select(models.DocumentURI).where(models.DocumentURI.doc_hash == doc_hash)
+        uri_count_result = await session.exec(uri_count_q)
+        uri_count = len(uri_count_result.all())
+
+        # Initialize counters
+        deleted_documents = 0
+        deleted_workflow_runs = 0
+        deleted_run_steps = 0
+        deleted_lifecycle_history = 0
+
+        # Step 3: If this is the only URI, cascade delete everything
+        if uri_count == 1:
+            # Get all workflow run IDs for this document
+            workflow_run_q = select(models.WorkflowRun.id).where(models.WorkflowRun.doc_id == doc_hash)
+            workflow_run_ids_result = await session.exec(workflow_run_q)
+            workflow_run_ids = list(workflow_run_ids_result.all())
+
+            # Delete RunSteps for all WorkflowRuns
+            if workflow_run_ids:
+                runstep_delete_q = delete(models.RunStep).where(models.RunStep.workflow_run_id.in_(workflow_run_ids))
+                runstep_result = await session.exec(runstep_delete_q)
+                deleted_run_steps = runstep_result.rowcount  # type: ignore
+
+                # Delete LifecycleHistory for all WorkflowRuns
+                lifecycle_delete_q = delete(models.LifecycleHistory).where(
+                    models.LifecycleHistory.workflow_run_id.in_(workflow_run_ids)
+                )
+                lifecycle_result = await session.exec(lifecycle_delete_q)
+                deleted_lifecycle_history = lifecycle_result.rowcount  # type: ignore
+
+            # Delete WorkflowRuns
+            workflowrun_delete_q = delete(models.WorkflowRun).where(models.WorkflowRun.doc_id == doc_hash)
+            workflowrun_result = await session.exec(workflowrun_delete_q)
+            deleted_workflow_runs = workflowrun_result.rowcount  # type: ignore
+
+            # Delete file artifacts
+            for artifact_type in models.ArtifactType:
+                try:
+                    op = dal.get_storage_operator(artifact_type)
+                    await op.delete(doc_hash)
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    logger.debug(
+                        f"Could not delete artifact {artifact_type} for {doc_hash}: {e}",
+                        extra=log_context(doc_hash=doc_hash, action="delete_document_uri_by_uri"),
+                    )
+
+            # Delete Document
+            doc_delete_q = delete(models.Document).where(models.Document.hash == doc_hash)
+            doc_result = await session.exec(doc_delete_q)
+            deleted_documents = doc_result.rowcount  # type: ignore
+
+        # Step 4: Delete DocumentURIHistory for this URI
+        history_delete_q = delete(models.DocumentURIHistory).where(models.DocumentURIHistory.doc_uri_id == doc_uri_id)
+        history_result = await session.exec(history_delete_q)
+        deleted_uri_history = history_result.rowcount  # type: ignore
+
+        # Step 5: Delete the DocumentURI
+        uri_delete_q = delete(models.DocumentURI).where(models.DocumentURI.id == doc_uri_id)
+        await session.exec(uri_delete_q)
+        deleted_document_uris = 1
+
+        await session.commit()
+
+        return {
+            "deleted_document_uris": deleted_document_uris,
+            "deleted_uri_history": deleted_uri_history,
+            "deleted_documents": deleted_documents,
+            "deleted_workflow_runs": deleted_workflow_runs,
+            "deleted_run_steps": deleted_run_steps,
+            "deleted_lifecycle_history": deleted_lifecycle_history,
+            "total_deleted": (
+                deleted_document_uris
+                + deleted_uri_history
+                + deleted_documents
+                + deleted_workflow_runs
+                + deleted_run_steps
+                + deleted_lifecycle_history
+            ),
+        }

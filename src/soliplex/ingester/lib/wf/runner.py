@@ -5,8 +5,9 @@ import logging
 import random
 import uuid
 
+from sqlalchemy import func
+from sqlalchemy import tuple_
 from sqlmodel import select
-from sqlmodel import text
 
 from soliplex.ingester.lib.config import get_settings
 from soliplex.ingester.lib.models import DocumentBatch
@@ -19,7 +20,6 @@ from soliplex.ingester.lib.models import StepConfig
 from soliplex.ingester.lib.models import WorkerCheckin
 from soliplex.ingester.lib.models import WorkflowDefinition
 from soliplex.ingester.lib.models import WorkflowRun
-from soliplex.ingester.lib.models import WorkflowStepType
 from soliplex.ingester.lib.models import get_session
 
 from . import operations
@@ -120,37 +120,80 @@ async def set_step_status(
 
 
 async def get_runnable_steps(top: int | None = None, batch_id: int | None = None) -> list[RunStep]:
+    """
+    Get pending runsteps that are ready to execute.
+
+    Finds the next eligible step for each workflow run, ordered by priority.
+    Uses SQLModel ORM with subqueries for cross-database compatibility.
+    Replaces raw SQL to prevent SQL injection vulnerabilities.
+
+    Parameters
+    ----------
+    top : int | None
+        Maximum number of steps to return (default: 100)
+    batch_id : int | None
+        Optional batch ID to filter by
+
+    Returns
+    -------
+    list[RunStep]
+        List of eligible run steps, ordered by priority
+    """
     if top is None:
         top = 100
+
     async with get_session() as session:
-        batch_filt = f" and r.batch_id={batch_id}" if batch_id is not None else ""
-        q = text(f"""select * from runstep where (workflow_run_id,workflow_step_number)
-        in(
-        SELECT s.workflow_run_id,min(workflow_step_number) as min_step FROM runstep
-                 s inner join workflowrun r on r.id=s.workflow_run_id
-        where s.retry < s.retries and s.status not in
-        ('{RunStatus.COMPLETED.value}' ,'{RunStatus.FAILED.value}','{RunStatus.RUNNING.value}')
-        and r.status not in ('{RunStatus.COMPLETED.value}' ,'{RunStatus.FAILED.value}')
+        # Status values to exclude
+        completed_statuses = [RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.RUNNING]
 
-        {batch_filt}
-        group by s.workflow_run_id)
-        and status not in ('{RunStatus.RUNNING.value}','{RunStatus.FAILED.value}','{RunStatus.COMPLETED.value}')
-        and workflow_run_id not in (select distinct workflow_run_id from runstep where status='{RunStatus.RUNNING.value}')
-        order by priority desc,retry,created_date,workflow_step_number limit {top}""")
+        # Subquery 1: Find minimum step number per workflow run
+        # (only for runs that are eligible)
+        subq_min_step = (
+            select(
+                RunStep.workflow_run_id,
+                func.min(RunStep.workflow_step_number).label("min_step"),
+            )
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .where(RunStep.retry < RunStep.retries)
+            .where(RunStep.status.not_in(completed_statuses))
+            .where(WorkflowRun.status.not_in([RunStatus.COMPLETED, RunStatus.FAILED]))
+        )
 
-        rs = await session.exec(q)
-        res = rs.all()
-        if res:
+        # Add batch filter if specified
+        if batch_id is not None:
+            subq_min_step = subq_min_step.where(WorkflowRun.batch_id == batch_id)
+
+        subq_min_step = subq_min_step.group_by(RunStep.workflow_run_id).subquery()
+
+        # Subquery 2: Find workflow runs that have running steps
+        subq_running = select(RunStep.workflow_run_id).where(RunStep.status == RunStatus.RUNNING).distinct().subquery()
+
+        # Main query: Get eligible steps
+        q = (
+            select(RunStep)
+            .where(
+                tuple_(RunStep.workflow_run_id, RunStep.workflow_step_number).in_(
+                    select(subq_min_step.c.workflow_run_id, subq_min_step.c.min_step)
+                )
+            )
+            .where(RunStep.status.not_in(completed_statuses))
+            .where(RunStep.workflow_run_id.not_in(select(subq_running.c.workflow_run_id)))
+            .order_by(
+                RunStep.priority.desc(),
+                RunStep.retry,
+                RunStep.created_date,
+                RunStep.workflow_step_number,
+            )
+            .limit(top)
+        )
+
+        result = await session.exec(q)
+        steps = result.all()
+
+        if steps:
             session.expunge_all()
-            # sqlmodel didn't want to make objects so do manually
-            ret = []
-            for r in res:
-                model_dict = dict(zip(r._fields, r, strict=True))
-                model_dict["step_type"] = WorkflowStepType[model_dict["step_type"]]
-                model_dict["status"] = RunStatus[model_dict["status"]]
-                ret.append(RunStep.model_construct(**model_dict))
-            return ret
-        return []
+
+        return list(steps)
 
 
 def get_lifecycle_event(workflow_def: WorkflowDefinition, evt: LifeCycleEvent) -> list[EventHandler] | None:

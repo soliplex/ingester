@@ -96,3 +96,77 @@ async def ingest_document(
         return {"error": str(ex)}
     else:
         return res
+
+
+@doc_router.post(
+    "/cleanup-orphans",
+    status_code=status.HTTP_200_OK,
+    summary="Delete orphaned documents with no URI references",
+)
+async def cleanup_orphaned_documents(response: Response):
+    """
+    Delete documents that have no associated DocumentURI records.
+
+    This is a maintenance operation that removes:
+    - Documents with no URI references
+    - Associated DocumentURIHistory records for orphaned documents
+
+    Returns:
+        dict: Statistics about deleted records
+            - deleted_documents: Number of documents deleted
+            - deleted_history: Number of history records deleted
+    """
+    try:
+        stats = await operations.delete_orphaned_documents()
+    except Exception as e:
+        logger.exception("Error cleaning up orphaned documents", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}
+    else:
+        return {"message": "Orphaned documents cleaned up", "statistics": stats}
+
+
+@doc_router.delete(
+    "/by-uri",
+    status_code=status.HTTP_200_OK,
+    summary="Delete a DocumentURI by URI and source with cascading deletion",
+)
+async def delete_document_by_uri(response: Response, uri: str, source: str) -> dict:
+    """
+    Delete a DocumentURI by URI and source with cascading deletion.
+
+    If only one DocumentURI references the underlying document, all associated
+    records are deleted including workflow runs, steps, lifecycle history,
+    artifacts, and the document itself.
+
+    If multiple DocumentURIs reference the same document, only the specified
+    DocumentURI and its history are deleted; the document is preserved.
+
+    Parameters
+    ----------
+    uri : str
+        The document URI to delete
+    source : str
+        The source system identifier
+
+    Returns
+    -------
+    dict
+        Deletion statistics including counts of deleted records by type
+    """
+    try:
+        result = await operations.delete_document_uri_by_uri(uri, source)
+    except operations.DocumentURINotFoundError as e:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"error": str(e)}
+    except Exception as e:
+        logger.exception("Error deleting document URI", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}
+    else:
+        return {
+            "message": "DocumentURI deleted successfully",
+            "uri": uri,
+            "source": source,
+            "statistics": result,
+        }

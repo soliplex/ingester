@@ -27,7 +27,7 @@ dependencies = [
     "docling-core>=2.51.1",
     "fastapi[standard]>=0.125.0",
     "fsspec>=2025.12.0",
-    "haiku-rag-slim>=0.26.0",
+    "haiku-rag-slim>=0.26.6",
     "opendal>=0.46.0",
     "pdf-splitter",
     "psycopg[binary,pool]>=3.3.2",
@@ -35,7 +35,7 @@ dependencies = [
     "pypdf>=6.6.0",
     "sqlmodel>=0.0.27",
     "tenacity>=9.1.2",
-    "typer-slim>=0.20.1",
+    "typer>=0.19.2",
     "websockets>=15.0.1",
 ]
 

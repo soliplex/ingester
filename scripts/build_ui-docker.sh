@@ -31,8 +31,9 @@ echo "      - Adding version query strings"
 docker run --rm -v "$(pwd):/app" -w /app node:lts-alpine npm run build
 echo ""
 
-# Copy build artifacts to server static directory
+# Clear and copy build artifacts to server static directory
 echo "[3/4] Copying build artifacts..."
+rm -rf ../src/soliplex/ingester/server/static
 mkdir -p ../src/soliplex/ingester/server/static
 cp -r build/* ../src/soliplex/ingester/server/static/
 echo "      Copied to: src/soliplex/ingester/server/static/"

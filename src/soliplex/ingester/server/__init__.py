@@ -1,5 +1,6 @@
 import json
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -25,6 +26,7 @@ from .routes.workflow import wf_router
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import JsonViewer from '$lib/components/JsonViewer.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -133,14 +132,13 @@
 			</div>
 		{/if}
 
-		{#if data.paramSet.custom && Object.keys(data.paramSet.custom).length > 0}
-			<div class="mt-6">
-				<JsonViewer data={data.paramSet.custom} title="Custom Parameters" />
+		<div class="mt-6 overflow-hidden rounded-lg bg-white shadow">
+			<div class="border-b border-gray-200 bg-gray-50 px-6 py-4">
+				<h3 class="text-base font-semibold text-gray-900">Parameter Set (YAML)</h3>
 			</div>
-		{/if}
-
-		<div class="mt-6">
-			<JsonViewer data={data.paramSet} title="Complete Parameter Set (JSON)" />
+			<div class="px-6 py-4">
+				<pre class="overflow-x-auto rounded-md bg-gray-900 p-4 text-sm text-gray-100"><code>{data.yamlContent}</code></pre>
+			</div>
 		</div>
 	</div>
 </div>

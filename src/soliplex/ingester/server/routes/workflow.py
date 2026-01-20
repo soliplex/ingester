@@ -177,11 +177,12 @@ async def list_workflows():
     summary="get workflow definition by id",
 )
 async def get_workflow_def(workflow_id: str, response: Response):
-    wf = await wf_registry.load_workflow_registry()
-    if workflow_id not in wf:
+    yaml_content = await wf_registry.get_workflow_definition_yaml_content(workflow_id)
+    if yaml_content is not None:
+        return Response(content=yaml_content, media_type="text/yaml")
+    else:
         response.status_code = status.HTTP_404_NOT_FOUND
-        return {"error": f"workflow definition {workflow_id} not found {wf.keys()}"}
-    return wf[workflow_id]
+        return {"error": f"workflow definition {workflow_id} not found"}
 
 
 @wf_router.get("/param-sets", summary="get param sets")
@@ -193,9 +194,9 @@ async def list_params():
 
 @wf_router.get("/param-sets/{set_id}", summary="get param set by id")
 async def get_param_set(set_id: str, response: Response):
-    wf = await wf_registry.load_param_registry()
-    if set_id in wf:
-        return wf[set_id]
+    yaml_content = await wf_registry.get_param_set_yaml_content(set_id)
+    if yaml_content is not None:
+        return Response(content=yaml_content, media_type="text/yaml")
     else:
         response.status_code = status.HTTP_404_NOT_FOUND
         return {"error": f"param set {set_id} not found"}
@@ -341,6 +342,56 @@ async def get_workflow_run_group(run_group_id: int, response: Response):
     except Exception as e:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {"error": str(e)}
+
+
+@wf_router.delete(
+    "/run_groups/{run_group_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete a workflow run group and all dependent records",
+)
+async def delete_workflow_run_group(run_group_id: int, response: Response) -> dict:
+    """
+    Delete a workflow run group and all its dependent records.
+
+    Performs cascading deletion of:
+    - All RunStep records associated with WorkflowRuns in this group
+    - All LifecycleHistory records for this group and its WorkflowRuns
+    - All WorkflowRun records in this group
+    - The RunGroup record itself
+
+    Parameters
+    ----------
+    run_group_id : int
+        The ID of the RunGroup to delete
+
+    Returns
+    -------
+    dict
+        Deletion statistics including counts of deleted records by type
+
+    Notes
+    -----
+    - Works with both SQLite and PostgreSQL databases
+    - The deletion is performed within a transaction and will be rolled back if any error occurs
+    - Returns 404 if the RunGroup does not exist
+    """
+    try:
+        result = await wf_ops.delete_run_group(run_group_id)
+    except wf_ops.NotFoundError as e:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"error": str(e)}
+    except RuntimeError as e:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": str(e)}
+    except Exception as e:
+        logger.exception("error deleting run group", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}
+    else:
+        return {
+            "message": f"RunGroup {run_group_id} deleted successfully",
+            "statistics": result,
+        }
 
 
 @wf_router.get(

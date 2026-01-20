@@ -14,7 +14,9 @@ from soliplex.ingester.lib.models import get_session
 
 logger = logging.getLogger(__name__)
 _workflow_registry = None
+_workflow_file_paths: dict[str, Path] = {}
 _param_registry = None
+_param_file_paths: dict[str, Path] = {}
 
 
 async def load_workflow_definition(yaml_file: Path) -> WorkflowDefinition:
@@ -28,11 +30,12 @@ async def load_workflow_definition(yaml_file: Path) -> WorkflowDefinition:
 async def load_workflow_registry(
     force_reload: bool = False,
 ) -> dict[str, WorkflowDefinition]:
-    global _workflow_registry
+    global _workflow_registry, _workflow_file_paths
     if _workflow_registry is not None and not force_reload:
         return _workflow_registry
     settings = get_settings()
     reg = {}
+    file_paths = {}
     for p in Path(settings.workflow_dir).glob("*.yaml"):
         logger.debug(f"loading workflow {p}")
         wf = await load_workflow_definition(p)
@@ -40,7 +43,9 @@ async def load_workflow_registry(
             msg = f"duplicate workflow id {wf.id}"
             raise ValueError(msg)
         reg[wf.id] = wf
+        file_paths[wf.id] = p
     _workflow_registry = reg
+    _workflow_file_paths = file_paths
     return reg
 
 
@@ -57,6 +62,34 @@ async def get_workflow_definition(
         if wf_id in registry:
             return registry[wf_id]
         raise KeyError(f"workflow {wf_id} not found")
+
+
+async def get_workflow_definition_yaml_content(wf_id: str) -> str | None:
+    """
+    Get the raw YAML content for a workflow definition.
+
+    Parameters
+    ----------
+    wf_id : str
+        ID of workflow definition to retrieve
+
+    Returns
+    -------
+    str | None
+        Raw YAML content as string, or None if not found
+    """
+    global _workflow_file_paths
+    # Ensure registry is loaded to populate file paths
+    await load_workflow_registry()
+    if wf_id not in _workflow_file_paths:
+        # Try force reload in case it's a new file
+        await load_workflow_registry(force_reload=True)
+        if wf_id not in _workflow_file_paths:
+            return None
+
+    file_path = _workflow_file_paths[wf_id]
+    async with aiofiles.open(file_path) as f:
+        return await f.read()
 
 
 def get_default_workflow_id() -> str:
@@ -90,21 +123,52 @@ async def get_param_set(param_id: str | None = None) -> WorkflowParams:
         raise KeyError(f"param set {param_id} not found")
 
 
+async def get_param_set_yaml_content(param_id: str) -> str | None:
+    """
+    Get the raw YAML content for a parameter set.
+
+    Parameters
+    ----------
+    param_id : str
+        ID of parameter set to retrieve
+
+    Returns
+    -------
+    str | None
+        Raw YAML content as string, or None if not found
+    """
+    global _param_file_paths
+    # Ensure registry is loaded to populate file paths
+    await load_param_registry()
+    if param_id not in _param_file_paths:
+        # Try force reload in case it's a new file
+        await load_param_registry(force_reload=True)
+        if param_id not in _param_file_paths:
+            return None
+
+    file_path = _param_file_paths[param_id]
+    async with aiofiles.open(file_path) as f:
+        return await f.read()
+
+
 async def load_param_registry(
     force_reload: bool = False,
 ) -> dict[str, WorkflowParams]:
-    global _param_registry
+    global _param_registry, _param_file_paths
     if _param_registry is not None and not force_reload:
         return _param_registry
     settings = get_settings()
     reg = {}
+    file_paths = {}
     for p in Path(settings.param_dir).glob("*.yaml"):
         logger.debug(f"loading param set {p}")
         wf = await load_param_set(p)
         if wf.id in reg:
             raise ValueError(f"duplicate param set id {wf.id}")
         reg[wf.id] = wf
+        file_paths[wf.id] = p
     _param_registry = reg
+    _param_file_paths = file_paths
     return reg
 
 

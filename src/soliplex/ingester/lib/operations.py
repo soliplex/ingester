@@ -176,7 +176,7 @@ async def handle_file(input_uri: str = None, file_bytes: bytes = None) -> tuple[
 
     if file_bytes:
         content_hash = models.doc_hash(file_bytes)
-        md5_hash = hashlib.md5(file_bytes).hexdigest()
+        md5_hash = hashlib.md5(file_bytes, usedforsecurity=False).hexdigest()
         logger.debug(
             f"handle file {input_uri} {content_hash}  to {settings.file_store_target}",
             extra=log_context(uri=input_uri, doc_hash=content_hash, action="handle_file"),

@@ -12,27 +12,32 @@ This guide will help you get Soliplex Ingester up and running in minutes.
 - Docling server for document parsing (optional)
 - S3 backend (optional)
 
-## Docker Services
+## Docker Deployment
 
-A sample docker compose file is provided to show how to configure services used by the ingester.
+For production deployment using Docker Compose, see the comprehensive **[Docker Deployment Guide](DOCKER.md)**.
 
-### postgres
+The docker-compose configuration provides all necessary services:
+- PostgreSQL database with initialization scripts
+- Docling document parsing services with GPU support and load balancing
+- SeaweedFS for S3-compatible object storage
+- HAProxy load balancer for high availability
 
-The postgres configuration includes references to startup scripts to create sample users and permissions, but for a production deployment, a more sophisticated secrets configuration should be used. Data is stored in a docker volume which may also need to be changed for a production setup.
+**Quick Start with Docker:**
+```bash
+cd docker
+docker-compose up -d
+```
 
-### docling-serve
+Access the application at http://localhost:8002
 
-Docling-serve is used to convert pdf documents into markdown and docling JSON documents for use in the pipelline. In order to allow for higher concurrency, the example file shows how to use multiple instances of docling that are load balanced using cookies. The docling client in the ingester handles the cookies to ensure the full request cycle stays on the same server.
+**For detailed instructions including:**
+- Service configuration and scaling
+- GPU setup and optimization
+- Authentication with OAuth2 Proxy
+- Production deployment best practices
+- Troubleshooting guide
 
-The configuration also shows how to provision GPUs for use in parsing.  Depending on server hardware, the device ids may have to be changed. Multiple instances can share a single GPU but testing is required to determine the optimal configuration.
-
-Docling serve is prone to leak memory so constraining its memory allocation is necessary to prevent overloading server resources.  The restart settings along with load balancing and retry logic in the client will ensure that the ingester is able to continue uninterrupted.
-
-### seaweedfs
-
-SeaweedFS is provided as a simple S3 compatible storage if desired for either the intermediate artifacts or the final LanceDB databases. An initialization script is provided to create the necessary bucket and authentication information. A production configuration should use a more robust secrets confugration.  Cloud providers can also be used for storage if desired.
-
-###
+See **[DOCKER.md](DOCKER.md)**
 
 
 
@@ -140,7 +145,37 @@ si-cli serve --reload
 The server starts on `http://127.0.0.1:8000` with:
 - Auto-reload on code changes
 - Integrated worker for processing
+- Web UI at `/`
 - OpenAPI docs at `/docs`
+
+### 7. Access the Application
+
+**Web UI (Main Application):**
+
+Open your browser and navigate to:
+```
+http://localhost:8000/
+```
+
+The web UI provides:
+- **Dashboard** - Monitor workflow status and batch processing
+- **Batches** - View and manage document batches
+- **Workflows** - Inspect workflow definitions and runs
+- **Parameters** - View and create parameter sets
+- **LanceDB** - Manage vector databases
+- **Statistics** - View processing metrics and performance data
+
+**API Documentation (Swagger UI):**
+
+For API testing and documentation:
+```
+http://localhost:8000/docs
+```
+
+**Alternative API Documentation (ReDoc):**
+```
+http://localhost:8000/redoc
+```
 
 **Test the server:**
 ```bash
@@ -151,7 +186,7 @@ You should see the Swagger UI.
 
 ## Your First Batch
 
-### 7. Create a Batch
+### 8. Create a Batch
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/batch/" \
@@ -166,7 +201,7 @@ curl -X POST "http://localhost:8000/api/v1/batch/" \
 }
 ```
 
-### 8. Ingest a Document
+### 9. Ingest a Document
 
 **Option A: Upload a file**
 ```bash
@@ -197,7 +232,7 @@ curl -X POST "http://localhost:8000/api/v1/document/ingest-document" \
 }
 ```
 
-### 9. Start Workflow Processing
+### 10. Start Workflow Processing
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/batch/start-workflows" \
@@ -214,7 +249,7 @@ curl -X POST "http://localhost:8000/api/v1/batch/start-workflows" \
 }
 ```
 
-### 10. Monitor Progress
+### 11. Monitor Progress
 
 **Check batch status:**
 ```bash
@@ -242,7 +277,7 @@ curl "http://localhost:8000/api/v1/batch/status?batch_id=1"
 watch -n 5 'curl -s "http://localhost:8000/api/v1/workflow/?batch_id=1"'
 ```
 
-### 11. View Results
+### 12. View Results
 
 Once processing completes, check the document:
 

@@ -454,7 +454,7 @@ async def save_to_rag(
             WorkflowStepType.INGEST,
             ArtifactType.DOC,
         )
-        md5_hash = hashlib.md5(raw_bytes).hexdigest()
+        md5_hash = hashlib.md5(raw_bytes, usedforsecurity=False).hexdigest()
         doc.doc_meta["md5"] = md5_hash
     md5_hash = doc.doc_meta["md5"]
     file_size = doc.file_size

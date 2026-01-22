@@ -1,99 +1,186 @@
+# =============================================================================
+# Soliplex Ingester - Docker Compose Configuration
+# =============================================================================
+#
+# This configuration provides all services needed for production deployment:
+# - Soliplex Ingester (API + Worker)
+# - PostgreSQL (database)
+# - Docling (x3) with GPU support and HAProxy load balancing
+# - Ollama (embeddings with GPU)
+# - SeaweedFS (S3-compatible storage)
+#
+# For detailed documentation, see docs/DOCKER.md
+#
+# Quick Start:
+#   docker-compose up -d
+#
+# Access:
+#   Web UI:  http://localhost:8002
+#   API:     http://localhost:8002/docs
+#
+# =============================================================================
+
 services:
+  # ===========================================================================
+  # Soliplex Ingester - Main Application
+  # ===========================================================================
+  # Provides the REST API and integrated workflow worker
+  # Access: http://localhost:8002
   soliplex_ingester:
     image: soliplex_ingester:latest
+
     environment:
+      # Database connection
       DOC_DB_URL: postgresql+psycopg://soliplex_attrib:soliplex_attrib@postgres:5432/soliplex_attrib
-      FILE_STORE_TARGET: fs
-      FILE_STORE_DIR: /var/soliplex/file_store
-      LANCEDB_DIR: /var/soliplex/lancedb
-      WORKER_TASK_COUNT: 10
-      DOCLING_SERVER_URL: http://haproxy:5004/v1'
-      DOCLING_HTTP_TIMEOUT: 1200
-      DOCLING_CONCURRENCY: 4
+
+      # Storage configuration
+      FILE_STORE_TARGET: fs                      # Options: fs, db, s3
+      FILE_STORE_DIR: /var/soliplex/file_store   # Filesystem storage path
+      LANCEDB_DIR: /var/soliplex/lancedb         # Vector database path
+
+      # Worker configuration
+      WORKER_TASK_COUNT: 10                      # Concurrent workflow steps
+
+      # Docling service (via HAProxy load balancer)
+      DOCLING_SERVER_URL: http://haproxy:5004/v1
+      DOCLING_HTTP_TIMEOUT: 1200                 # Timeout in seconds for large documents
+      DOCLING_CONCURRENCY: 4                     # Concurrent Docling requests
 
     ports:
-      - "8002:8000"
+      - "8002:8000"  # Map host:8002 to container:8000 (change if port conflict)
+
     volumes:
-      - ./file_store:/var/soliplex/file_store
-      - ./lancedb:/var/soliplex/lancedb
+      # Bind mount local directories for persistence
+      - ./file_store:/var/soliplex/file_store   # Document artifacts
+      - ./lancedb:/var/soliplex/lancedb         # Vector databases
+
     networks:
       - soliplex_net
 
 
+  # ===========================================================================
+  # PostgreSQL - Document and Workflow Database
+  # ===========================================================================
+  # Stores document metadata, workflow state, and processing history
   postgres:
     image: postgres:18-trixie
 
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_INITDB_ARGS: "-A scram-sha-256"
+      POSTGRES_PASSWORD: postgres  # ⚠️ CHANGE FOR PRODUCTION
+      POSTGRES_INITDB_ARGS: "-A scram-sha-256"  # Use SCRAM-SHA-256 authentication
+
     ports:
-      - "5432:5432"
+      - "5432:5432"  # Expose for external tools (optional, can remove for security)
+
     volumes:
+      # Persistent database storage
       - postgres_data:/var/lib/postgresql
+      # Initialization script (creates users and databases)
       - ./pgsql/config/init.sql:/docker-entrypoint-initdb.d/init.sql
+
     networks:
       - soliplex_net
+
     deploy:
       resources:
         limits:
-          memory: "2048M"
+          memory: "2048M"  # Limit memory to prevent resource exhaustion
+
+
+  # ===========================================================================
+  # HAProxy - Load Balancer for Docling Services
+  # ===========================================================================
+  # Distributes requests across multiple Docling instances
+  # Provides high availability and handles Docling memory leaks
   haproxy:
-      image: docker.io/library/haproxy:3.3-alpine
-      ports:
-        - 5004:5004
-      volumes:
-        - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
-      networks:
-        - soliplex_net
-  docling:
-    image: ghcr.io/docling-project/docling-serve-cu128
+    image: docker.io/library/haproxy:3.3-alpine
+
     ports:
-      - "5000:5001"
-    environment:
-        DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
-        DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
-        DOCLING_NUM_THREADS: 16
-        UVICORN_WORKERS: 1
-        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-        DOCLING_SERVE_ENABLE_UI: 1
-        DOCLING_SERVE_MAX_SYNC_WAIT: 9999
-        NVIDIA_VISIBLE_DEVICES: "all"
-        DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True
-    restart: "unless-stopped"
-    runtime: "nvidia"
+      - 5004:5004  # Load balancer frontend
+
     volumes:
-      - docling_artifacts:/artifacts
+      # HAProxy configuration with round-robin and cookie-based routing
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+
+    networks:
+      - soliplex_net
+
+
+  # ===========================================================================
+  # Docling Instance 1 - PDF Document Parsing with GPU
+  # ===========================================================================
+  # Converts PDFs to markdown and structured JSON
+  # Runs on GPU for OCR and layout analysis
+  docling:
+    image: ghcr.io/docling-project/docling-serve-cu128  # CUDA 12.8 version
+
+    ports:
+      - "5000:5001"  # Direct access (optional, usually accessed via HAProxy)
+
+    environment:
+      # Docling worker configuration
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4       # Layout analysis workers
+      DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"  # Temporary file storage
+      DOCLING_NUM_THREADS: 16                     # Processing threads
+      UVICORN_WORKERS: 1                          # Don't increase (causes issues)
+
+      # GPU memory optimization
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+      # Feature flags
+      DOCLING_SERVE_ENABLE_UI: 1                  # Enable web UI
+      DOCLING_SERVE_MAX_SYNC_WAIT: 9999           # Timeout for sync operations
+      NVIDIA_VISIBLE_DEVICES: "all"               # Use all available GPUs
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True  # Allow external service calls
+
+    restart: "unless-stopped"  # Auto-restart on failure (handles memory leaks)
+    runtime: "nvidia"          # Use NVIDIA container runtime for GPU access
+
+    volumes:
+      - docling_artifacts:/artifacts  # Shared temporary storage
+
     deploy:
       resources:
         limits:
-          memory: 32000M
+          memory: 32000M  # 32GB limit (prevents OOM killer affecting other services)
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['3']
+              device_ids: ['3']  # ⚠️ CHANGE TO YOUR GPU ID (see: nvidia-smi -L)
               capabilities: [gpu]
+
     networks:
       - soliplex_net
+
+
+  # ===========================================================================
+  # Docling Instance 2 - Secondary Parsing Service
+  # ===========================================================================
+  # Second instance for load balancing and high availability
   docling_2:
     image: ghcr.io/docling-project/docling-serve-cu128
+
     ports:
-      - "5001:5001"
+      - "5001:5001"  # Direct access on different port
+
     environment:
-        DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
-        DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
-        DOCLING_NUM_THREADS: 8
-        UVICORN_WORKERS: 1
-        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-        DOCLING_SERVE_ENABLE_UI: 1
-        DOCLING_SERVE_MAX_SYNC_WAIT: 9999
-        NVIDIA_VISIBLE_DEVICES: "all"
-        DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
+      DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
+      DOCLING_NUM_THREADS: 8   # Reduced threads (shares GPU with other services)
+      UVICORN_WORKERS: 1
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      DOCLING_SERVE_ENABLE_UI: 1
+      DOCLING_SERVE_MAX_SYNC_WAIT: 9999
+      NVIDIA_VISIBLE_DEVICES: "all"
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True
 
     restart: "unless-stopped"
     runtime: "nvidia"
+
     volumes:
       - docling_artifacts:/artifacts
+
     deploy:
       resources:
         limits:
@@ -101,28 +188,37 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['3']
+              device_ids: ['3']  # ⚠️ Same GPU as docling_1 (or distribute across GPUs)
               capabilities: [gpu]
+
     networks:
       - soliplex_net
 
 
+  # ===========================================================================
+  # Docling Instance 3 - Tertiary Parsing Service
+  # ===========================================================================
+  # Third instance for maximum throughput
   docling_3:
     image: ghcr.io/docling-project/docling-serve-cu128
+
     environment:
-        DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
-        DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
-        DOCLING_NUM_THREADS: 8
-        UVICORN_WORKERS: 1
-        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-        DOCLING_SERVE_ENABLE_UI: 1
-        DOCLING_SERVE_MAX_SYNC_WAIT: 9999
-        NVIDIA_VISIBLE_DEVICES: "all"
-        DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 4
+      DOCLING_SERVE_ARTIFACTS_PATH: "/artifacts"
+      DOCLING_NUM_THREADS: 8   # Reduced threads (shares GPU)
+      UVICORN_WORKERS: 1
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      DOCLING_SERVE_ENABLE_UI: 1
+      DOCLING_SERVE_MAX_SYNC_WAIT: 9999
+      NVIDIA_VISIBLE_DEVICES: "all"
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: True
+
     restart: "unless-stopped"
     runtime: "nvidia"
+
     volumes:
       - docling_artifacts:/artifacts
+
     deploy:
       resources:
         limits:
@@ -130,64 +226,200 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['3']
+              device_ids: ['3']  # ⚠️ Same GPU (or distribute across GPUs)
               capabilities: [gpu]
+
     networks:
       - soliplex_net
+
+
+  # ===========================================================================
+  # Ollama - Embedding Generation with GPU
+  # ===========================================================================
+  # Provides local embedding models for vector search
+  # Access: http://localhost:11434 (internal)
   ollama_img:
     image: ollama/ollama:latest
     container_name: ollama_img
+
     volumes:
+      # Persistent model storage (models are large!)
       - ollama_img_data:/root/.ollama
+
     restart: always
+
     deploy:
       resources:
         limits:
-          memory: 32000M
+          memory: 32000M  # 32GB limit
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['3']
+              device_ids: ['3']  # ⚠️ Same GPU as Docling (or use separate GPU)
               capabilities: [gpu]
+
     networks:
       - soliplex_net
-# optional for s3 storage
+
+    # To pull models after starting:
+    #   docker-compose exec ollama_img ollama pull nomic-embed-text
+    #   docker-compose exec ollama_img ollama pull qwen3-embedding:4b
+
+
+  # ===========================================================================
+  # SeaweedFS - S3-Compatible Object Storage (Optional)
+  # ===========================================================================
+  # Provides local S3-compatible storage for artifacts and databases
+  # Alternative to filesystem storage
   seaweedfs:
     image: ghcr.io/chrislusf/seaweedfs
     command: server -s3 -s3.config=/config/config.json
+
     ports:
-      - 8333:8333
-      - 9333:9333
+      - 8333:8333  # S3 API endpoint
+      - 9333:9333  # Admin UI: http://localhost:9333
+
     volumes:
-      - seaweedfs_data:/data
-      - ./seaweedfs/config:/config
+      - seaweedfs_data:/data             # Persistent object storage
+      - ./seaweedfs/config:/config       # S3 configuration
+
     networks:
       - soliplex_net
+
     deploy:
       resources:
         limits:
-          memory: 4096M
+          memory: 4096M  # 4GB limit
 
+    # To use SeaweedFS, set in soliplex_ingester environment:
+    #   FILE_STORE_TARGET: s3
+    #   S3_ENDPOINT_URL: http://seaweedfs:8333
+    #   S3_BUCKET_NAME: soliplex-artifacts
+
+
+  # ===========================================================================
+  # SeaweedFS Init - One-time Setup Container
+  # ===========================================================================
+  # Creates S3 bucket and configures credentials
+  # Runs once and exits
   seaweedfs-init:
     image: ghcr.io/chrislusf/seaweedfs
 
     entrypoint: ["/bin/sh"]
-    volumes:
-      - ./seaweedfs/config/init.sh:/init.sh
     command: ["/init.sh"]
+
+    volumes:
+      - ./seaweedfs/config/init.sh:/init.sh  # Initialization script
+
     networks:
       - soliplex_net
 
+    # This container will exit after initialization
+    # Remove or disable after first run if desired
 
 
-
+# =============================================================================
+# Persistent Volumes
+# =============================================================================
+# Docker-managed volumes for data persistence
 volumes:
-  postgres_data:
-  seaweedfs_data:
-  docling_artifacts:
-  ollama_img_data:
+  postgres_data:        # PostgreSQL database files
+  seaweedfs_data:       # SeaweedFS object storage
+  docling_artifacts:    # Docling temporary files (shared across instances)
+  ollama_img_data:      # Ollama models and cache
+
+# Backup volumes with:
+#   docker run --rm -v postgres_data:/data -v $(pwd):/backup \
+#     alpine tar czf /backup/postgres_data.tar.gz -C /data .
 
 
+# =============================================================================
+# Network Configuration
+# =============================================================================
+# Bridge network for internal service communication
 networks:
-      soliplex_net:
-        driver: bridge
+  soliplex_net:
+    driver: bridge
+
+# Services communicate via service names:
+#   soliplex_ingester -> postgres:5432
+#   soliplex_ingester -> haproxy:5004
+#   haproxy -> docling:5001, docling_2:5001, docling_3:5001
+#   soliplex_ingester -> ollama_img:11434
+
+
+# =============================================================================
+# Usage Notes
+# =============================================================================
+#
+# Start all services:
+#   docker-compose up -d
+#
+# View logs:
+#   docker-compose logs -f
+#   docker-compose logs -f soliplex_ingester
+#
+# Check status:
+#   docker-compose ps
+#
+# Stop services:
+#   docker-compose down
+#
+# Reset everything (⚠️ deletes all data):
+#   docker-compose down -v
+#
+# Scale workers (separate API and worker):
+#   docker-compose up -d --scale soliplex_worker=3
+#
+# For authentication with OAuth2 Proxy:
+#   docker-compose -f docker-compose.yml -f docker-compose.auth.yml up -d
+#
+# For comprehensive documentation:
+#   See docs/DOCKER.md
+#
+# =============================================================================
+# GPU Configuration Notes
+# =============================================================================
+#
+# ⚠️ Important: Adjust device_ids for your hardware
+#
+# Check available GPUs:
+#   nvidia-smi -L
+#
+# Current configuration:
+#   - All services use GPU 3
+#   - This works if GPU has 24+ GB VRAM
+#   - Docling memory limits prevent OOM
+#   - HAProxy provides redundancy during restarts
+#
+# To distribute across GPUs:
+#   - docling: device_ids: ['0']
+#   - docling_2: device_ids: ['1']
+#   - docling_3: device_ids: ['2']
+#   - ollama_img: device_ids: ['3']
+#
+# Without GPU (CPU-only):
+#   - Change Docling image to: ghcr.io/docling-project/docling-serve
+#   - Remove 'runtime: nvidia'
+#   - Remove 'deploy.resources.reservations.devices'
+#   - Reduce memory limits to 8-16GB
+#   - Expect slower processing
+#
+# =============================================================================
+# Production Deployment Checklist
+# =============================================================================
+#
+# □ Change all default passwords (postgres, seaweedfs, etc.)
+# □ Configure GPU device_ids for your hardware
+# □ Review and adjust memory limits
+# □ Set up proper backup procedures
+# □ Configure authentication (see docker-compose.auth.yml)
+# □ Enable SSL/TLS (via NGINX or cloud load balancer)
+# □ Set appropriate log levels (LOG_LEVEL=WARNING)
+# □ Configure monitoring and alerting
+# □ Test disaster recovery procedures
+# □ Document your custom configuration
+# □ Set up automated updates for security patches
+#
+# See docs/DOCKER.md for detailed production deployment guide
+# =============================================================================

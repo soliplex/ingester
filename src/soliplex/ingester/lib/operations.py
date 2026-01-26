@@ -9,6 +9,7 @@ from sqlmodel import select
 
 from . import dal
 from . import models
+from . import rag
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -542,16 +543,40 @@ async def delete_orphaned_documents():
     """
     Delete orphaned documents that have no URI pointing to them.
 
-    Also deletes orphaned history records for consistency.
-    Uses SQLModel ORM for cross-database compatibility.
+    Also deletes orphaned history records, HaikuRAG entries, and DocumentDB
+    records for consistency. Uses SQLModel ORM for cross-database compatibility.
 
     Returns
     -------
     dict
-        Statistics about deleted records
+        Statistics about deleted records including:
+        - deleted_documents: Number of Document records deleted
+        - deleted_history: Number of DocumentURIHistory records deleted
+        - deleted_rag_entries: Number of HaikuRAG documents deleted
+        - deleted_documentdb_records: Number of DocumentDB records deleted
     """
+    deleted_rag_entries = 0
+    deleted_documentdb_records = 0
+
     async with models.get_session() as session:
         # Subquery: Get all hashes that are referenced
+        referenced_hashes_subq = select(models.DocumentURI.doc_hash).distinct().subquery()
+
+        # Find orphaned document hashes first (before deletion)
+        orphaned_q = select(models.Document.hash).where(
+            models.Document.hash.not_in(select(referenced_hashes_subq.c.doc_hash))
+        )
+        orphaned_result = await session.exec(orphaned_q)
+        orphaned_hashes = list(orphaned_result.all())
+
+    # Delete from HaikuRAG for each orphaned hash (outside the session to avoid conflicts)
+    for doc_hash in orphaned_hashes:
+        rag_stats = await rag.delete_from_rag_by_hash(doc_hash)
+        deleted_rag_entries += rag_stats["deleted_rag_entries"]
+        deleted_documentdb_records += rag_stats["deleted_documentdb_records"]
+
+    async with models.get_session() as session:
+        # Subquery: Get all hashes that are referenced (re-create for the new session)
         referenced_hashes_subq = select(models.DocumentURI.doc_hash).distinct().subquery()
 
         # Delete orphaned documents
@@ -568,11 +593,16 @@ async def delete_orphaned_documents():
 
         await session.commit()
 
-        logger.info(f"Deleted {deleted_docs} orphaned documents and {deleted_history} history records")
+        logger.info(
+            f"Deleted {deleted_docs} orphaned documents, {deleted_history} history records, "
+            f"{deleted_rag_entries} RAG entries, {deleted_documentdb_records} DocumentDB records"
+        )
 
         return {
             "deleted_documents": deleted_docs,
             "deleted_history": deleted_history,
+            "deleted_rag_entries": deleted_rag_entries,
+            "deleted_documentdb_records": deleted_documentdb_records,
         }
 
 
@@ -677,6 +707,8 @@ async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]:
         deleted_workflow_runs = 0
         deleted_run_steps = 0
         deleted_lifecycle_history = 0
+        deleted_rag_entries = 0
+        deleted_documentdb_records = 0
 
         # Step 3: If this is the only URI, cascade delete everything
         if uri_count == 1:
@@ -716,6 +748,11 @@ async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]:
                         extra=log_context(doc_hash=doc_hash, action="delete_document_uri_by_uri"),
                     )
 
+            # Delete from HaikuRAG and DocumentDB
+            rag_delete_stats = await rag.delete_from_rag_by_hash(doc_hash)
+            deleted_rag_entries = rag_delete_stats["deleted_rag_entries"]
+            deleted_documentdb_records = rag_delete_stats["deleted_documentdb_records"]
+
             # Delete Document
             doc_delete_q = delete(models.Document).where(models.Document.hash == doc_hash)
             doc_result = await session.exec(doc_delete_q)
@@ -740,6 +777,8 @@ async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]:
             "deleted_workflow_runs": deleted_workflow_runs,
             "deleted_run_steps": deleted_run_steps,
             "deleted_lifecycle_history": deleted_lifecycle_history,
+            "deleted_rag_entries": deleted_rag_entries,
+            "deleted_documentdb_records": deleted_documentdb_records,
             "total_deleted": (
                 deleted_document_uris
                 + deleted_uri_history
@@ -747,5 +786,263 @@ async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]:
                 + deleted_workflow_runs
                 + deleted_run_steps
                 + deleted_lifecycle_history
+                + deleted_rag_entries
+                + deleted_documentdb_records
             ),
         }
+
+
+async def list_documentdb_databases() -> list[dict]:
+    """
+    List distinct lancedb_dir/db_name combinations from DocumentDB with document counts.
+
+    Returns
+    -------
+    list[dict]
+        List of dictionaries containing:
+        - lancedb_dir: The LanceDB directory path
+        - db_name: The database name (data_dir)
+        - document_count: Number of documents in this database
+        - total_chunks: Total chunks across all documents
+    """
+    from sqlalchemy import func
+
+    async with models.get_session() as session:
+        # Query distinct lancedb_dir/db_name with counts
+        q = (
+            select(
+                models.DocumentDB.lancedb_dir,
+                models.DocumentDB.db_name,
+                func.count(models.DocumentDB.id).label("document_count"),
+                func.sum(models.DocumentDB.chunk_count).label("total_chunks"),
+            )
+            .group_by(models.DocumentDB.lancedb_dir, models.DocumentDB.db_name)
+            .order_by(models.DocumentDB.lancedb_dir, models.DocumentDB.db_name)
+        )
+
+        result = await session.exec(q)
+        rows = result.all()
+
+        databases = []
+        for row in rows:
+            databases.append(
+                {
+                    "lancedb_dir": row.lancedb_dir,
+                    "db_name": row.db_name,
+                    "document_count": row.document_count,
+                    "total_chunks": row.total_chunks or 0,
+                }
+            )
+
+        return databases
+
+
+async def list_documents_in_rag_db(
+    db_name: str,
+    lancedb_dir: str | None = None,
+) -> list[dict]:
+    """
+    List documents in a specific RAG database from DocumentDB records.
+
+    Joins DocumentDB with DocumentURI and Document to provide full document information.
+
+    Parameters
+    ----------
+    db_name : str
+        The database name (data_dir) to filter by
+    lancedb_dir : str | None
+        The LanceDB directory path. If None, uses default from settings.
+
+    Returns
+    -------
+    list[dict]
+        List of dictionaries containing document information:
+        - doc_hash: The document hash
+        - rag_id: The HaikuRAG document ID
+        - chunk_count: Number of chunks for this document
+        - created_date: When the document was added to RAG
+        - uri: The document URI (from DocumentURI)
+        - source: The source system
+        - mime_type: Document MIME type
+        - file_size: Document file size in bytes
+    """
+    if lancedb_dir is None:
+        lancedb_dir = get_settings().lancedb_dir
+
+    async with models.get_session() as session:
+        # Query DocumentDB joined with DocumentURI and Document
+        q = (
+            select(
+                models.DocumentDB.doc_hash,
+                models.DocumentDB.rag_id,
+                models.DocumentDB.chunk_count,
+                models.DocumentDB.created_date,
+                models.DocumentDB.source,
+                models.DocumentURI.uri,
+                models.Document.mime_type,
+                models.Document.file_size,
+            )
+            .join(models.DocumentURI, models.DocumentDB.doc_hash == models.DocumentURI.doc_hash, isouter=True)
+            .join(models.Document, models.DocumentDB.doc_hash == models.Document.hash, isouter=True)
+            .where(models.DocumentDB.db_name == db_name)
+            .where(models.DocumentDB.lancedb_dir == lancedb_dir)
+            .order_by(models.DocumentDB.created_date.desc())
+        )
+
+        result = await session.exec(q)
+        rows = result.all()
+
+        documents = []
+        for row in rows:
+            documents.append(
+                {
+                    "doc_hash": row.doc_hash,
+                    "rag_id": row.rag_id,
+                    "chunk_count": row.chunk_count or 0,
+                    "created_date": row.created_date.isoformat() if row.created_date else None,
+                    "source": row.source,
+                    "uri": row.uri,
+                    "mime_type": row.mime_type,
+                    "file_size": row.file_size,
+                }
+            )
+
+        return documents
+
+
+async def check_rag_db_consistency(
+    db_name: str,
+    lancedb_dir: str | None = None,
+) -> dict:
+    """
+    Check consistency between LanceDB database and DocumentDB records.
+
+    Compares documents in the actual LanceDB database with records tracked
+    in DocumentDB to find discrepancies.
+
+    Parameters
+    ----------
+    db_name : str
+        The database name (data_dir) to check
+    lancedb_dir : str | None
+        The LanceDB directory path. If None, uses default from settings.
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - db_name: The database name checked
+        - lancedb_dir: The LanceDB directory path
+        - db_path: Full path to the LanceDB database
+        - in_documentdb_only: List of documents in DocumentDB but not in LanceDB
+        - in_lancedb_only: List of documents in LanceDB but not in DocumentDB
+        - matched: Number of documents that exist in both
+        - documentdb_count: Total documents in DocumentDB for this database
+        - lancedb_count: Total documents in LanceDB database
+    """
+    from pathlib import Path
+
+    from haiku.rag.client import HaikuRAG
+    from haiku.rag.config import get_config
+
+    settings = get_settings()
+    if lancedb_dir is None:
+        lancedb_dir = settings.lancedb_dir
+
+    # Build db_path
+    if lancedb_dir.startswith("s3://"):
+        if lancedb_dir.endswith("/"):
+            db_path = f"{lancedb_dir}{db_name}"
+        else:
+            db_path = f"{lancedb_dir}/{db_name}"
+    else:
+        db_path = Path(lancedb_dir) / db_name
+
+    # Get documents from DocumentDB
+    documentdb_docs = await list_documents_in_rag_db(db_name, lancedb_dir)
+    documentdb_rag_ids = {doc["rag_id"] for doc in documentdb_docs if doc["rag_id"]}
+
+    # Get documents from LanceDB
+    lancedb_docs = []
+    lancedb_rag_ids = set()
+
+    try:
+        config = get_config()
+        async with HaikuRAG(
+            db_path=db_path,
+            config=config,
+            read_only=True,
+        ) as client:
+            documents = await client.list_documents()
+            for doc in documents:
+                doc_info = {
+                    "rag_id": doc.id,
+                    "uri": doc.uri,
+                    "title": getattr(doc, "title", None),
+                    "created_at": doc.created_at.isoformat() if getattr(doc, "created_at", None) else None,
+                    "chunk_count": getattr(doc, "chunk_count", None),
+                    "metadata": getattr(doc, "metadata", {}),
+                }
+                lancedb_docs.append(doc_info)
+                if doc.id:
+                    lancedb_rag_ids.add(doc.id)
+    except Exception as e:
+        # Database might not exist or be accessible
+        return {
+            "db_name": db_name,
+            "lancedb_dir": lancedb_dir,
+            "db_path": str(db_path),
+            "error": f"Could not access LanceDB database: {e}",
+            "in_documentdb_only": [
+                {
+                    "rag_id": doc["rag_id"],
+                    "doc_hash": doc["doc_hash"],
+                    "uri": doc["uri"],
+                    "source": doc["source"],
+                }
+                for doc in documentdb_docs
+            ],
+            "in_lancedb_only": [],
+            "matched": 0,
+            "documentdb_count": len(documentdb_docs),
+            "lancedb_count": 0,
+        }
+
+    # Find discrepancies
+    in_documentdb_only_ids = documentdb_rag_ids - lancedb_rag_ids
+    in_lancedb_only_ids = lancedb_rag_ids - documentdb_rag_ids
+    matched_ids = documentdb_rag_ids & lancedb_rag_ids
+
+    # Build detailed lists
+    in_documentdb_only = [
+        {
+            "rag_id": doc["rag_id"],
+            "doc_hash": doc["doc_hash"],
+            "uri": doc["uri"],
+            "source": doc["source"],
+        }
+        for doc in documentdb_docs
+        if doc["rag_id"] in in_documentdb_only_ids
+    ]
+
+    lancedb_by_rag_id = {doc["rag_id"]: doc for doc in lancedb_docs}
+    in_lancedb_only = [
+        {
+            "rag_id": rag_id,
+            "uri": lancedb_by_rag_id[rag_id].get("uri"),
+            "title": lancedb_by_rag_id[rag_id].get("title"),
+            "metadata": lancedb_by_rag_id[rag_id].get("metadata"),
+        }
+        for rag_id in in_lancedb_only_ids
+    ]
+
+    return {
+        "db_name": db_name,
+        "lancedb_dir": lancedb_dir,
+        "db_path": str(db_path),
+        "in_documentdb_only": in_documentdb_only,
+        "in_lancedb_only": in_lancedb_only,
+        "matched": len(matched_ids),
+        "documentdb_count": len(documentdb_docs),
+        "lancedb_count": len(lancedb_docs),
+    }

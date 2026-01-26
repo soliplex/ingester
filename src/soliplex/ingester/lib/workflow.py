@@ -351,7 +351,6 @@ async def chunk_document(
         )
         json_text = json_bytes.decode("utf-8")
         docling_document = DoclingDocument.model_validate_json(json_text)
-
         chunk_objs = await rag.get_chunk_objs(docling_document, step_config.config_json)
         chunk_dicts = [x.model_dump() for x in chunk_objs]
         chunk_json = json.dumps(chunk_dicts)
@@ -480,6 +479,16 @@ async def save_to_rag(
         embed_config,
         _log_con,
     )
+
+    # Create DocumentDB record to track this document in HaikuRAG
+    await rag.create_document_db_record(
+        doc_hash=doc_hash,
+        source=source_uri.source,
+        step_config=step_config,
+        rag_id=rag_id,
+        chunk_count=len(chunk_objs),
+    )
+
     await doc_ops.add_history_for_hash(doc_hash, "ingested", hist_meta={"haiku_id": rag_id}, batch_id=batch_id)
     logger.info(f"save_to_rag completed  {source} {batch_id} {doc_hash}")
 

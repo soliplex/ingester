@@ -140,6 +140,24 @@ def doc_hash(data: bytes) -> str:
     return f"sha256-{hex_digest}"
 
 
+class DocumentDB(SQLModel, table=True):
+    id: int | None = Field(
+        default=None,
+        primary_key=True,
+        sa_column_kwargs={"autoincrement": True},
+    )
+    doc_hash: str = Field(
+        default=None,
+        foreign_key="document.hash",
+    )
+    source: str = Field(default=None)
+    db_name: str = Field(default=None)
+    lancedb_dir: str = Field(default=None)
+    rag_id: str | None = Field(default=None)
+    chunk_count: int | None = Field(default=None)
+    created_date: datetime.datetime = Field(default=None)
+
+
 class DocumentBatch(SQLModel, table=True):
     """
     A batch of documents to be ingested

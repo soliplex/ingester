@@ -302,6 +302,63 @@ def list_batches():
     asyncio.run(_list_batches())
 
 
+async def _check_db(db_name: str, lancedb_dir: str | None):
+    from .lib.models import Database
+    from .lib.operations import check_rag_db_consistency
+
+    await Database.initialize()
+    result = await check_rag_db_consistency(db_name, lancedb_dir)
+
+    print("\n[bold]Database Consistency Check[/bold]")
+    print(f"  db_name:     {result['db_name']}")
+    print(f"  lancedb_dir: {result['lancedb_dir']}")
+    print(f"  db_path:     {result['db_path']}")
+
+    if "error" in result:
+        print(f"\n[red]Error:[/red] {result['error']}")
+
+    print("\n[bold]Summary:[/bold]")
+    print(f"  DocumentDB records: {result['documentdb_count']}")
+    print(f"  LanceDB documents:  {result['lancedb_count']}")
+    print(f"  Matched:            {result['matched']}")
+
+    if result["in_documentdb_only"]:
+        print(f"\n[yellow]In DocumentDB but NOT in LanceDB ({len(result['in_documentdb_only'])}):[/yellow]")
+        for doc in result["in_documentdb_only"]:
+            print(f"  - rag_id: {doc['rag_id']}")
+            print(f"    uri:    {doc['uri']}")
+            print(f"    hash:   {doc['doc_hash']}")
+    else:
+        print("\n[green]No documents in DocumentDB missing from LanceDB[/green]")
+
+    if result["in_lancedb_only"]:
+        print(f"\n[yellow]In LanceDB but NOT in DocumentDB ({len(result['in_lancedb_only'])}):[/yellow]")
+        for doc in result["in_lancedb_only"]:
+            print(f"  - rag_id: {doc['rag_id']}")
+            print(f"    uri:    {doc.get('uri', 'N/A')}")
+            print(f"    title:  {doc.get('title', 'N/A')}")
+    else:
+        print("\n[green]No documents in LanceDB missing from DocumentDB[/green]")
+
+    if not result["in_documentdb_only"] and not result["in_lancedb_only"] and "error" not in result:
+        print("\n[green]✓ Database is consistent[/green]")
+
+
+@app.command("check-db")
+def check_db(
+    db_name: str = typer.Argument(..., help="Database name (data_dir) to check"),
+    lancedb_dir: str = typer.Option(None, "--lancedb-dir", "-l", help="LanceDB directory (uses default if not specified)"),
+):
+    """
+    Check consistency between LanceDB database and DocumentDB records.
+
+    Compares documents in the actual LanceDB database with records tracked
+    in DocumentDB to find discrepancies.
+    """
+    validate_settings(dump=False)
+    asyncio.run(_check_db(db_name, lancedb_dir))
+
+
 @app.command(
     "serve",
 )

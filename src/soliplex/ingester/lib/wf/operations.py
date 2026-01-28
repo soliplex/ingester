@@ -51,29 +51,62 @@ class NotFoundError(Exception):
 
 async def create_workflow_runs_for_batch(
     batch_id: int,
-    workflow_definition_id: str | None = None,
+    workflow_definition_id: str,
     priority: int = 0,
     param_id: str | None = None,
+    only_unparsed: bool = False,
 ) -> tuple[RunGroup, list[WorkflowRun]]:
     """
     Creates a workflow run for each document in a batch
 
     """
-    run_group = await create_run_group(
-        workflow_definition_id=workflow_definition_id,
-        batch_id=batch_id,
-        param_id=param_id,
-    )
-    batch_documents = await get_documents_in_batch(batch_id)
-    runs = []
-    for doc in batch_documents:
-        run, steps = await create_workflow_run(
-            run_group=run_group,
-            doc_id=doc.hash,
-            priority=priority,
+    if only_unparsed:
+        if param_id is None:
+            raise ValueError("param_id must be specified when only_unparsed is True")
+        if workflow_definition_id is None:
+            raise ValueError("workflow_definition_id must be specified when only_unparsed is True")
+        run_groups = await get_run_groups_for_batch(batch_id)
+        run_group = None
+        for r in run_groups:
+            if r.workflow_definition_id == workflow_definition_id and r.param_definition_id == param_id:
+                run_group = r
+                break
+        if run_group is None:
+            run_group = await create_run_group(
+                workflow_definition_id=workflow_definition_id,
+                batch_id=batch_id,
+                param_id=param_id,
+            )
+        batch_documents = await get_documents_in_batch(batch_id)
+
+        existing_runs = await get_workflow_runs_for_group(run_group.id)
+        existing_ids = set([run.doc_id for run in existing_runs])
+        runs = []
+        for doc in batch_documents:
+            if doc.hash not in existing_ids:
+                run, steps = await create_workflow_run(
+                    run_group=run_group,
+                    doc_id=doc.hash,
+                    priority=priority,
+                )
+                runs.append(run)
+        return run_group, runs
+    else:
+        run_group = await create_run_group(
+            workflow_definition_id=workflow_definition_id,
+            batch_id=batch_id,
+            param_id=param_id,
         )
-        runs.append(run)
-    return run_group, runs
+        batch_documents = await get_documents_in_batch(batch_id)
+        runs = []
+        for doc in batch_documents:
+            run, steps = await create_workflow_run(
+                run_group=run_group,
+                doc_id=doc.hash,
+                priority=priority,
+            )
+            runs.append(run)
+        return run_group, runs
 
 
 # @alru_cache(maxsize=1024)
@@ -779,6 +812,17 @@ async def get_workflow_runs(batch_id: int) -> WorkflowRun:
             session.expunge(res)
             return res
         raise NotFoundError(f"workflow run {batch_id} not found")
+
+
+async def get_workflow_runs_for_group(run_group_id: int) -> list[WorkflowRun]:
+    async with get_session() as session:
+        q = select(WorkflowRun).where(WorkflowRun.run_group_id == run_group_id)
+        rs = await session.exec(q)
+        res = rs.all()
+        if res:
+            session.expunge_all()
+            return res
+        return []
 
 
 async def get_run_step(run_step_id: int) -> RunStep:

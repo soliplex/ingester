@@ -15,6 +15,7 @@
 	let selectedWorkflow = $state('');
 	let selectedParamSet = $state('default');
 	let priority = $state(0);
+	let onlyUnparsed = $state(false);
 	let isSubmitting = $state(false);
 	let error = $state<string | null>(null);
 	let success = $state<string | null>(null);
@@ -30,7 +31,8 @@
 				batchId,
 				selectedWorkflow || undefined,
 				priority,
-				selectedParamSet || undefined
+				selectedParamSet || undefined,
+				onlyUnparsed
 			);
 
 			success = `${response.message}: ${response.workflows} workflows started (Run Group: ${response.run_group})`;
@@ -39,6 +41,7 @@
 			selectedWorkflow = '';
 			selectedParamSet = 'default';
 			priority = 0;
+			onlyUnparsed = false;
 
 			// Call success callback
 			if (onSuccess) {
@@ -104,6 +107,22 @@
 			/>
 			<p class="mt-1 text-xs text-gray-500">Higher values = higher priority (default: 0)</p>
 		</div>
+
+		<div class="flex items-center gap-2">
+			<input
+				type="checkbox"
+				id="only-unparsed"
+				bind:checked={onlyUnparsed}
+				disabled={isSubmitting}
+				class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+			/>
+			<label for="only-unparsed" class="text-sm font-medium text-gray-700">
+				Only unparsed documents
+			</label>
+		</div>
+		<p class="mt-1 text-xs text-gray-500">
+			Skip documents that already have a completed workflow run
+		</p>
 
 		{#if error}
 			<div class="rounded-md bg-red-50 p-3" role="alert">

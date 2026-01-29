@@ -173,8 +173,8 @@ async def save_to_rag(
     config = build_storage_config(config, config_dict)
 
     title = None
-    if doc.metadata and "title" in doc.metadata:
-        title = doc.metadata["title"]
+    if doc.doc_meta and "title" in doc.doc_meta:
+        title = doc.doc_meta["title"]
 
     uri = source_uri.uri
     source = source_uri.source

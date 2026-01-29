@@ -255,9 +255,6 @@ async def upload_param_set(
             response.status_code = status.HTTP_400_BAD_REQUEST
             return {"error": f"Invalid parameter set format: {str(e)}"}
 
-        # Force source to 'user' for uploaded params
-        param_set.source = "user"
-
         # Check for duplicate ID
         existing_registry = await wf_registry.load_param_registry()
         if param_set.id in existing_registry:
@@ -268,7 +265,7 @@ async def upload_param_set(
             }
 
         # Save to file
-        file_path = await wf_registry.save_param_set(param_set, overwrite=False)
+        file_path = await wf_registry.save_param_set(yaml_content, overwrite=False)
 
         return {"message": "Parameter set created successfully", "id": param_set.id, "file_path": str(file_path)}
 

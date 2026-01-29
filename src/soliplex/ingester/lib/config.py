@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     parsed_json_store_dir: str = "json"
     chunks_store_dir: str = "chunks"
     embeddings_store_dir: str = "embeddings"
+    stop_phrases: list[str] = []
 
     ingest_queue_concurrency: int = 20
     ingest_worker_concurrency: int = 10

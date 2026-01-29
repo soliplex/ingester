@@ -20,6 +20,7 @@ from .models import ArtifactType
 from .models import StepConfig
 from .models import WorkflowStepType
 from .operations import log_context
+from .processing import find_title
 from .wf import operations as wf_ops
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,11 @@ async def validate_document(
                 meta["is_valid"] = True
                 meta["invalid_reason"] = None
                 meta["page_count"] = len(pdfdoc.pages)
-                # TODO: add more pdf info
+                for k in ["/Author", "/Subject", "/Title", "/Keywords", "/Subject"]:
+                    v = pdfdoc.metadata.get(k)
+                    if v is not None:
+                        cleaned_key = "pdf_" + k.lower().replace("/", "")
+                        meta[cleaned_key] = v
 
             except Exception as e:
                 meta["is_valid"] = False
@@ -442,9 +447,15 @@ async def save_to_rag(
         ),
         doc_ops.get_document_uris_by_hash(doc_hash),
         wf_ops.get_step_config_for_workflow_run(workflow_run.id, WorkflowStepType.EMBED),
+        read_bytes(
+            doc_hash,
+            workflow_run.id,
+            WorkflowStepType.PARSE,
+            ArtifactType.PARSED_MD,
+        ),
     )
 
-    json_bytes, doc_uris, embed_config = await r
+    json_bytes, doc_uris, embed_config, md_bytes = await r
     # older docs don't have md5
     if "md5" not in doc.doc_meta:
         raw_bytes = await read_bytes(
@@ -458,6 +469,8 @@ async def save_to_rag(
     md5_hash = doc.doc_meta["md5"]
     file_size = doc.file_size
     docling_json = json_bytes.decode("utf-8")
+    md_content = md_bytes.decode("utf-8")
+    find_title(doc, md_content)
 
     if len(doc_uris) == 0:
         logger.warning(

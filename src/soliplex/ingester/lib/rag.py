@@ -175,7 +175,7 @@ async def save_to_rag(
     title = None
     if doc.metadata and "title" in doc.metadata:
         title = doc.metadata["title"]
-    doc.title = title
+
     uri = source_uri.uri
     source = source_uri.source
 

@@ -168,13 +168,14 @@ async def save_to_rag(
     for key in required_keys:
         if key not in config_dict:
             raise ValueError(f"Missing required key {key}")
-    # TODO: step config may need to be more predictable
+
     docling_document = DoclingDocument.model_validate_json(docling_json)
     config = build_storage_config(config, config_dict)
 
-    # TODO: decide what to do about doc title/uri
-    # title = doc_hash  # we don't have a title yet
     title = None
+    if doc.doc_meta and "title" in doc.doc_meta:
+        title = doc.doc_meta["title"]
+
     uri = source_uri.uri
     source = source_uri.source
 

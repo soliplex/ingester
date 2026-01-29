@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import datetime
 import itertools
 import logging
 import pathlib
@@ -12,10 +13,13 @@ from haiku.rag.config.models import AppConfig
 from haiku.rag.embeddings import embed_chunks
 from haiku.rag.store.engine import DocumentRecord
 from haiku.rag.store.models.chunk import Chunk
+from sqlalchemy import delete as sa_delete
 
 from . import models
 from .config import get_settings
+from .models import DocumentDB
 from .models import StepConfig
+from .models import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -209,3 +213,126 @@ async def save_to_rag(
                 docling_document=docling_document,
             )
         return new_doc.id
+
+
+async def create_document_db_record(
+    doc_hash: str,
+    source: str,
+    step_config: StepConfig,
+    rag_id: str,
+    chunk_count: int,
+) -> DocumentDB:
+    """
+    Create a DocumentDB record to track a document stored in HaikuRAG.
+
+    Parameters
+    ----------
+    doc_hash : str
+        The document hash (sha256)
+    source : str
+        The source system identifier
+    step_config : StepConfig
+        The step configuration containing data_dir
+    rag_id : str
+        The ID returned by HaikuRAG after import
+    chunk_count : int
+        Number of chunks stored for this document
+
+    Returns
+    -------
+    DocumentDB
+        The created DocumentDB record
+    """
+    env = get_settings()
+    config_dict = step_config.config_json
+    db_name = config_dict.get("data_dir", "")
+    lancedb_dir = env.lancedb_dir
+
+    async with get_session() as session:
+        record = DocumentDB(
+            doc_hash=doc_hash,
+            source=source,
+            db_name=db_name,
+            lancedb_dir=lancedb_dir,
+            rag_id=rag_id,
+            chunk_count=chunk_count,
+            created_date=datetime.datetime.now(datetime.UTC),
+        )
+        session.add(record)
+        await session.flush()
+        await session.refresh(record)
+        session.expunge(record)
+        # session commits automatically on context exit
+    return record
+
+
+async def delete_from_rag_by_hash(doc_hash: str) -> dict[str, int]:
+    """
+    Delete all HaikuRAG entries and DocumentDB records for a document hash.
+
+    Queries DocumentDB for all records matching the hash, deletes each
+    document from its respective HaikuRAG database, then removes the
+    DocumentDB records.
+
+    Parameters
+    ----------
+    doc_hash : str
+        The document hash to delete
+
+    Returns
+    -------
+    dict[str, int]
+        Statistics containing:
+        - deleted_rag_entries: Number of HaikuRAG documents deleted
+        - deleted_documentdb_records: Number of DocumentDB records deleted
+    """
+    deleted_rag_entries = 0
+    deleted_documentdb_records = 0
+
+    async with get_session() as session:
+        # Find all DocumentDB records for this hash
+        from sqlmodel import select
+
+        q = select(DocumentDB).where(DocumentDB.doc_hash == doc_hash)
+        result = await session.exec(q)
+        records = result.all()
+
+        for record in records:
+            # Reconstruct the db_path
+            if record.lancedb_dir.startswith("s3://"):
+                if record.lancedb_dir.endswith("/"):
+                    db_path = f"{record.lancedb_dir}{record.db_name}"
+                else:
+                    db_path = f"{record.lancedb_dir}/{record.db_name}"
+            else:
+                import pathlib
+
+                db_path = pathlib.Path(record.lancedb_dir) / record.db_name
+
+            # Try to delete from HaikuRAG
+            if record.rag_id:
+                try:
+                    # Build minimal config for deletion
+                    config = build_embed_config(HRConfig, {"model": "dummy", "vector_dim": 1, "provider": "ollama"})
+                    config = build_storage_config(config, {"data_dir": record.db_name})
+
+                    async with _rag_lock:
+                        async with HaikuRAG(config=config, create=False, db_path=db_path) as client:
+                            await client.delete_document(record.rag_id)
+                            deleted_rag_entries += 1
+                            logger.info(f"Deleted document {record.rag_id} from HaikuRAG at {db_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete document {record.rag_id} from HaikuRAG at {db_path}: {e}")
+
+        # Delete all DocumentDB records for this hash
+        if records:
+            delete_q = sa_delete(DocumentDB).where(DocumentDB.doc_hash == doc_hash)
+            delete_result = await session.exec(delete_q)
+            deleted_documentdb_records = delete_result.rowcount  # type: ignore
+
+        # session commits automatically on context exit
+
+    return {
+        "deleted_rag_entries": deleted_rag_entries,
+        "deleted_documentdb_records": deleted_documentdb_records,
+    }

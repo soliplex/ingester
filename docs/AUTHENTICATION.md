@@ -13,18 +13,16 @@ Soliplex Ingester uses [OAuth2 Proxy](https://oauth2-proxy.github.io/oauth2-prox
 
 ### Architecture
 
-```
-┌──────────┐     ┌───────────────┐     ┌─────────────────────┐
-│  User    │────▶│ OAuth2 Proxy  │────▶│ Soliplex Ingester   │
-│ Browser  │     │   (OIDC)      │     │   (API + UI)        │
-└──────────┘     └───────────────┘     └─────────────────────┘
-                        │
-                        ▼
-                 ┌──────────────┐
-                 │ OIDC Provider │
-                 │ (Keycloak,   │
-                 │  Auth0, etc) │
-                 └──────────────┘
+```mermaid
+graph LR
+    User([User Browser]) -->|1. Access App| OAuth2[OAuth2 Proxy<br/>OIDC]
+    OAuth2 -->|2. Authenticated<br/>+ Headers| Ingester[Soliplex Ingester<br/>API + UI]
+    OAuth2 -->|3. Verify Token| OIDC[OIDC Provider<br/>Keycloak, Auth0,<br/>Okta, etc.]
+
+    style User fill:#4a90e2,stroke:#2e5c8a,color:#fff
+    style OAuth2 fill:#3ba13b,stroke:#2d7a2d,color:#fff
+    style Ingester fill:#f39c12,stroke:#c27d0e,color:#fff
+    style OIDC fill:#9b59b6,stroke:#7a4691,color:#fff
 ```
 
 ---

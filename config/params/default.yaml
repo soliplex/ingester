@@ -3,7 +3,7 @@ config:
   parse:
     do_ocr: False
     force_ocr: False
-    ocr_engine: easyocr
+    ocr_engine: tesseract
     ocr_lang: en
     pdf_backend: pypdfium2
     table_mode: accurate

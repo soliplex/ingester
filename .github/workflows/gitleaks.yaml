@@ -20,13 +20,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Mark workspace as safe
-        run: git config --global --add safe.directory /github/workspace
-
       - name: Run Gitleaks
         uses: docker://ghcr.io/gitleaks/gitleaks:latest
         with:
-          args: detect --source=/github/workspace --config=/github/workspace/.gitleaks.toml --verbose --redact
+          args: detect --source=/github/workspace --config=/github/workspace/.gitleaks.toml --no-git --verbose --redact
 
       - name: Notify Slack on failure
         if: failure()

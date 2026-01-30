@@ -1,0 +1,42 @@
+name: TruffleHog Secrets Scan
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trufflehog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: TruffleHog scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --no-verification
+
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: [trufflehog]
+    if: failure()
+    timeout-minutes: 2
+    steps:
+      - name: Notify Slack on failure
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_NOTIFY_URL }}
+          SLACK_CHANNEL: soliplex
+          SLACK_USERNAME: trufflehog-ci
+          SLACK_ICON_EMOJI: ':pig:'
+          SLACK_COLOR: danger
+          SLACK_TITLE: TruffleHog Secret Scan Failed
+          SLACK_MESSAGE: 'Potential secrets detected on ${{ github.ref_name }} - check ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'

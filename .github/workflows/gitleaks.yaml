@@ -25,7 +25,7 @@ jobs:
         uses: docker://ghcr.io/gitleaks/gitleaks:latest
         continue-on-error: true
         with:
-          args: detect --source=/github/workspace --config=/github/workspace/.gitleaks.toml --no-git --verbose --redact 
+          args: detect --source=/github/workspace --config=/github/workspace/.gitleaks.toml --no-git --verbose --redact --report-format json --report-path /github/workspace/gitleaks-report.json
 
       - name: Parse Gitleaks report
         id: parse-report

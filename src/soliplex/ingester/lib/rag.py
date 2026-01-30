@@ -120,6 +120,8 @@ async def get_chunk_objs(
     config = build_chunk_config(HRConfig, config_dict)
     chunker = get_chunker(config)
     chunks = await chunker.chunk(docling_document)
+    if len(chunks) == 0:
+        raise ValueError("No chunks found ")
     return chunks
 
 

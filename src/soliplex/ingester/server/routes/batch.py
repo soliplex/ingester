@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import logging
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -14,6 +15,7 @@ from soliplex.ingester.lib.models import RunStatus
 from soliplex.ingester.lib.wf import operations as wf_ops
 
 batch_router = APIRouter(prefix="/api/v1/batch", tags=["batch"], dependencies=[Depends(get_current_user)])
+logger = logging.getLogger(__name__)
 
 
 @batch_router.get("/", status_code=status.HTTP_200_OK, summary="Get all batches")
@@ -41,6 +43,7 @@ async def start_workflows(
     workflow_definition_id: str | None = Form(None),
     priority: int = Form(0),
     param_id: str = Form(None),
+    only_unparsed: bool = Form(False),
 ):
     try:
         run_group, runs = await wf_ops.create_workflow_runs_for_batch(
@@ -48,6 +51,7 @@ async def start_workflows(
             workflow_definition_id=workflow_definition_id,
             priority=priority,
             param_id=param_id,
+            only_unparsed=only_unparsed,
         )
         return {
             "message": "Workflows started",
@@ -58,6 +62,7 @@ async def start_workflows(
         response.status_code = status.HTTP_404_NOT_FOUND
         return {"error": f"Batch {batch_id} not found"}
     except Exception as e:
+        logger.exception("error starting workflows", exc_info=e)
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {"error": str(e)}
 

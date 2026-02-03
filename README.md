@@ -61,6 +61,22 @@ Soliplex ingester has been designed alongside [agents](https://github.com/solipl
   - Deployment patterns
   - Systemd integration
 
+- **[Docker Deployment](docs/DOCKER.md)** - Docker Compose setup and production deployment
+  - Quick start guide
+  - Service configuration
+  - GPU setup and optimization
+  - Authentication with OAuth2 Proxy
+  - Production best practices
+  - Comprehensive troubleshooting
+
+- **[Parameter Sets](docs/PARAMETER_SETS.md)** - Document processing configuration
+  - YAML schema reference
+  - Creating and managing parameter sets
+  - Embedding model configuration
+  - Chunking strategies
+  - Storage configuration
+  - Best practices and examples
+
 ## Quick Links
 
 ### For New Users
@@ -75,10 +91,12 @@ Soliplex ingester has been designed alongside [agents](https://github.com/solipl
 4. Review [Configuration](docs/CONFIGURATION.md) for environment setup
 
 ### For Operations
-1. Review [Configuration](docs/CONFIGURATION.md) for deployment settings
-2. Use [CLI Reference](docs/CLI.md) for management commands
-3. Monitor using [API Reference](docs/API.md) stats endpoints
-4. Troubleshoot with [Workflows](docs/WORKFLOWS.md) debugging section
+1. Start with [Docker Deployment](docs/DOCKER.md) for production setup
+2. Review [Configuration](docs/CONFIGURATION.md) for deployment settings
+3. Use [CLI Reference](docs/CLI.md) for management commands
+4. Configure [Parameter Sets](docs/PARAMETER_SETS.md) for document processing
+5. Monitor using [API Reference](docs/API.md) stats endpoints
+6. Troubleshoot with [Workflows](docs/WORKFLOWS.md) and [Docker](docs/DOCKER.md) guides
 
 ## Document Summaries
 
@@ -191,6 +209,40 @@ Command-line tool reference:
 
 ---
 
+### DOCKER.md
+Comprehensive Docker deployment guide:
+- Quick start with docker-compose
+- Service architecture and overview
+- GPU configuration and setup
+- Environment variable configuration
+- Volume management and backups
+- Load balancing with HAProxy
+- Authentication with OAuth2 Proxy
+- Production deployment checklist
+- Performance tuning
+- Detailed troubleshooting guide
+
+**Audience:** DevOps engineers, system administrators
+**Time to read:** 30-40 minutes
+
+---
+
+### PARAMETER_SETS.md
+Parameter set configuration reference:
+- Complete YAML schema documentation
+- Parse, chunk, embed, and store configuration
+- Creating parameter sets (file, API, Web UI)
+- Managing and versioning parameter sets
+- Embedding provider configuration (Ollama, OpenAI, Azure)
+- Chunking strategies and best practices
+- Real-world examples
+- Troubleshooting guide
+
+**Audience:** Data engineers, ML engineers, power users
+**Time to read:** 25-30 minutes
+
+---
+
 
 
 
@@ -200,7 +252,37 @@ Check `config/` directory for:
 - `workflows/*.yaml` - Example workflow definitions
 - `params/*.yaml` - Example parameter sets
 
-Check `docker/` directory for how to use docker compose to provision support services.
+### Docker Deployment
+
+For production deployment with Docker Compose, see the **[Docker Deployment Guide](docs/DOCKER.md)**.
+
+**Quick Start:**
+```bash
+cd docker
+docker-compose up -d
+```
+
+The docker-compose configuration includes:
+- **Soliplex Ingester** - Main application (API + Worker)
+- **PostgreSQL** - Document and workflow database
+- **Docling** (x3) - PDF parsing services with GPU support and HAProxy load balancing
+- **Ollama** - Embedding generation with GPU
+- **SeaweedFS** - S3-compatible object storage
+
+**Access the application:**
+- **Web UI:** http://localhost:8002
+- **API Docs:** http://localhost:8002/docs
+
+**Comprehensive guide includes:**
+- Service configuration and resource requirements
+- GPU setup and optimization
+- Volume management and backups
+- Authentication with OAuth2 Proxy
+- Production deployment best practices
+- Monitoring and maintenance
+- Detailed troubleshooting
+
+See **[docs/DOCKER.md](docs/DOCKER.md)** for complete instructions.
 
 ## Documentation Maintenance
 

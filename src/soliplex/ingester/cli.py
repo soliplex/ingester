@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import platform
+import selectors
 import shutil
 import signal
 import sys
@@ -18,6 +19,12 @@ import soliplex.ingester
 from .lib.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _windows_selector_loop_factory():
+    """Create a SelectorEventLoop on Windows for psycopg async PostgreSQL compatibility."""
+    selector = selectors.SelectSelector()
+    return asyncio.SelectorEventLoop(selector)
 
 
 def init():
@@ -374,6 +381,10 @@ def serve(
         "host": host,
         "port": port,
     }
+
+    # Use SelectorEventLoop on Windows for psycopg async PostgreSQL compatibility
+    if platform.system() == "Windows":
+        uvicorn_kw["loop"] = _windows_selector_loop_factory
 
     if uds is not None:
         uvicorn_kw["uds"] = uds

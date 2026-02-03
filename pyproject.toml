@@ -1,17 +1,18 @@
 [project]
 name = "soliplex-ingester"
-version = "0.3.1"
+version = "0.4.2"
 description = "ingestion workflow manager for soliplex"
 authors = [{ name = "Enfold Systems", email = "info@enfoldsystems.net" }]
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 keywords = ["pdf", "docling", "document-processing", "parallel-processing","workflow","soliplex","ingester","document-conversion"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Text Processing :: General",
@@ -27,12 +28,12 @@ dependencies = [
     "docling-core>=2.51.1",
     "fastapi[standard]>=0.125.0",
     "fsspec>=2025.12.0",
-    "haiku-rag-slim>=0.26.6",
+    "haiku-rag-slim>=0.27.1",
     "opendal>=0.46.0",
     "pdf-splitter",
     "psycopg[binary,pool]>=3.3.2",
     "pydantic-settings>=2.12.0",
-    "pypdf>=6.6.0",
+    "pypdf>=6.6.2",
     "sqlmodel>=0.0.27",
     "tenacity>=9.1.2",
     "typer>=0.19.2",

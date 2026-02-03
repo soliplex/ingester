@@ -38,9 +38,10 @@ if errorlevel 1 (
 )
 echo.
 
-REM Copy build artifacts to server static directory
+REM Clear and copy build artifacts to server static directory
 echo [3/3] Copying build artifacts...
-if not exist "..\src\soliplex\ingester\server\static" mkdir "..\src\soliplex\ingester\server\static"
+if exist "..\src\soliplex\ingester\server\static" rmdir /S /Q "..\src\soliplex\ingester\server\static"
+mkdir "..\src\soliplex\ingester\server\static"
 xcopy /E /I /Y /Q build\* "..\src\soliplex\ingester\server\static\" >nul
 if errorlevel 1 (
     echo ERROR: Failed to copy build artifacts

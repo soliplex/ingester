@@ -4,9 +4,11 @@ import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ params }) => {
 	try {
+		const yamlContent = await apiClient.getParamSetYaml(params.id);
 		const paramSet = await apiClient.getParamSet(params.id);
 		return {
-			paramSet
+			paramSet,
+			yamlContent
 		};
 	} catch (err) {
 		console.error('Failed to load parameter set:', err);

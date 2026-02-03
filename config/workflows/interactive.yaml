@@ -2,7 +2,7 @@ id: interactive
 meta: {}
 name: Interactive Workflow
 lifecycle_events:
-    
+
 item_steps:
   parse:
     name: docling parse

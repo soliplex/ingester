@@ -17,6 +17,7 @@
 	let previewName = $state<string | null>(null);
 	let previewSteps = $state<string[]>([]);
 	let validationError = $state<string | null>(null);
+	let isLoadingExample = $state(false);
 
 	// Real-time YAML validation
 	$effect(() => {
@@ -111,22 +112,19 @@
 		success = null;
 	}
 
-	function loadExample() {
-		yamlContent = `id: my_custom_params
-name: My Custom Parameters
-config:
-  parse:
-    do_ocr: false
-    pdf_backend: pypdfium2
-  chunk:
-    chunker: docling-serve
-    chunk_size: 512
-  embed:
-    provider: ollama
-    model: qwen3-embedding:4b
-    vector_dim: 2560
-  store:
-    data_dir: my_custom_lancedb`;
+	async function loadExample() {
+		isLoadingExample = true;
+		error = null;
+
+		try {
+			const defaultYaml = await apiClient.getParamSetYaml('default');
+			yamlContent = defaultYaml;
+		} catch (err) {
+			error =
+				err instanceof Error ? `Failed to load default: ${err.message}` : 'Failed to load default';
+		} finally {
+			isLoadingExample = false;
+		}
 	}
 </script>
 
@@ -143,9 +141,10 @@ config:
 				<button
 					type="button"
 					onclick={loadExample}
-					class="text-sm text-blue-600 hover:text-blue-700"
+					disabled={isLoadingExample}
+					class="text-sm text-blue-600 hover:text-blue-700 disabled:text-gray-400"
 				>
-					Load Example
+					{isLoadingExample ? 'Loading...' : 'Load Default'}
 				</button>
 			</div>
 			<textarea

@@ -1,5 +1,6 @@
 // API Client Service for Soliplex Ingester
 
+import yaml from 'js-yaml';
 import { API_BASE_URL, API_TIMEOUT } from '$lib/config/api';
 import { handleApiError } from '$lib/utils/errors';
 import type {
@@ -198,7 +199,15 @@ class ApiClient {
 	}
 
 	async getWorkflowDefinition(workflowId: string): Promise<WorkflowDefinition> {
-		return this.get<WorkflowDefinition>(`/workflow/definitions/${workflowId}`);
+		const yamlContent = await this.getWorkflowDefinitionYaml(workflowId);
+		return yaml.load(yamlContent) as WorkflowDefinition;
+	}
+
+	async getWorkflowDefinitionYaml(workflowId: string): Promise<string> {
+		const response = await this.fetchWithTimeout(
+			`${this.baseUrl}/workflow/definitions/${workflowId}`
+		);
+		return response.text();
 	}
 
 	// Parameter Set Endpoints
@@ -208,7 +217,13 @@ class ApiClient {
 	}
 
 	async getParamSet(setId: string): Promise<WorkflowParams> {
-		return this.get<WorkflowParams>(`/workflow/param-sets/${setId}`);
+		const yamlContent = await this.getParamSetYaml(setId);
+		return yaml.load(yamlContent) as WorkflowParams;
+	}
+
+	async getParamSetYaml(setId: string): Promise<string> {
+		const response = await this.fetchWithTimeout(`${this.baseUrl}/workflow/param-sets/${setId}`);
+		return response.text();
 	}
 
 	async getParamSetsByTarget(target: string): Promise<WorkflowParams[]> {

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -11,6 +12,8 @@ from fastapi import status
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib import workflow as workflow
 from soliplex.ingester.lib.auth import get_current_user
+from soliplex.ingester.lib.dal import get_storage_operator
+from soliplex.ingester.lib.models import ArtifactType
 
 logger = logging.getLogger(__name__)
 
@@ -170,3 +173,69 @@ async def delete_document_by_uri(response: Response, uri: str, source: str) -> d
             "source": source,
             "statistics": result,
         }
+
+
+@doc_router.get(
+    "/validate_storage",
+    status_code=status.HTTP_200_OK,
+    summary="Validate that all documents in a batch exist in storage",
+)
+async def validate_storage(batch_id: int, response: Response, clean_up: bool = False):
+    """
+    Check that all documents in a batch exist in storage for ArtifactType.DOC.
+
+    Parameters
+    ----------
+    batch_id : int
+        The batch ID to validate
+    clean_up : bool
+        If True, delete all records for documents missing from storage.
+        This includes Document, DocumentURI, DocumentURIHistory, WorkflowRun,
+        RunStep, and LifecycleHistory records.
+
+    Returns
+    -------
+    dict
+        Validation results including:
+        - batch_id: The batch ID validated
+        - total: Total documents in batch
+        - valid: Count of documents that exist in storage
+        - missing: Count of documents missing from storage
+        - missing_hashes: List of document hashes not found in storage
+        - cleanup_stats: (if clean_up=True) Statistics about deleted records
+    """
+    batch = await operations.get_batch(batch_id)
+    if not batch:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"error": f"Batch {batch_id} not found"}
+
+    try:
+        docs = await operations.get_documents_in_batch(batch_id)
+        operator = get_storage_operator(ArtifactType.DOC)
+
+        async def check_exists(doc_hash: str) -> tuple[str, bool]:
+            exists = await operator.exists(doc_hash)
+            return (doc_hash, exists)
+
+        results = await asyncio.gather(*[check_exists(doc.hash) for doc in docs])
+
+        missing_hashes = [doc_hash for doc_hash, exists in results if not exists]
+        valid_count = len(results) - len(missing_hashes)
+
+        result = {
+            "batch_id": batch_id,
+            "total": len(docs),
+            "valid": valid_count,
+            "missing": len(missing_hashes),
+            "missing_hashes": missing_hashes,
+        }
+
+        if clean_up and missing_hashes:
+            cleanup_stats = await operations.delete_documents_by_hashes(missing_hashes)
+            result["cleanup_stats"] = cleanup_stats
+    except Exception as e:
+        logger.exception("Error validating storage for batch", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}
+    else:
+        return result

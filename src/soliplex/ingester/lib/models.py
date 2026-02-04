@@ -3,7 +3,7 @@ import hashlib
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from enum import Enum
+from enum import StrEnum
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -200,7 +200,7 @@ class Document(SQLModel, table=True):
         super().__init__(**kwargs)
 
 
-class ArtifactType(Enum):
+class ArtifactType(StrEnum):
     DOC = "document"
     PARSED_MD = "parsed_markdown"
     PARSED_JSON = "parsed_json"
@@ -209,7 +209,7 @@ class ArtifactType(Enum):
     RAG = "rag"
 
 
-class WorkflowStepType(str, Enum):
+class WorkflowStepType(StrEnum):
     INGEST: str = "ingest"
     VALIDATE: str = "validate"
     PARSE: str = "parse"
@@ -238,7 +238,7 @@ ARTIFACTS_TO_STEPS = {
 }
 
 
-class LifeCycleEvent(str, Enum):
+class LifeCycleEvent(StrEnum):
     GROUP_START: str = "group_start"
     GROUP_END: str = "group_end"
     ITEM_START: str = "item_start"
@@ -308,7 +308,7 @@ class SyncState(SQLModel, table=True):
 # ----------------- workflow related models ----------------------
 
 
-class RunStatus(str, Enum):
+class RunStatus(StrEnum):
     PENDING = "PENDING"  # hasn't started
     RUNNING = "RUNNING"  # currently running
     COMPLETED = "COMPLETED"  # success

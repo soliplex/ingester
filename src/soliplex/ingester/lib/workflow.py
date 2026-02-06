@@ -153,6 +153,7 @@ async def split_parse_document(
     step_config: StepConfig = None,
     workflow_run: models.WorkflowRun = None,
     force: bool = False,
+    file_bytes_override: bytes = None,
 ):
     """
     splits document into pieces using pdf_splitter , parses each piece then combines the results
@@ -195,6 +196,7 @@ async def split_parse_document(
             force=force,
             step_config=step_config,
             workflow_run=workflow_run,
+            file_bytes_override=file_bytes_override,
         )
         return
 
@@ -207,8 +209,10 @@ async def split_parse_document(
     if exists and not force:
         logger.info(f"skipping parse for {doc_hash} already exists", extra=_lc)
         return
-
-    file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
+    if file_bytes_override is not None:
+        file_bytes = file_bytes_override
+    else:
+        file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
     async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
         tf = Path(temp_dir)
         outfile = tf / "input.pdf"
@@ -282,9 +286,11 @@ async def parse_document(
     force: bool = False,
     step_config: StepConfig = None,
     workflow_run: models.WorkflowRun = None,
+    file_bytes_override: bytes = None,
 ):
     """
     parses document using docling  as one piece.  stores markdown and docling json documents to storage
+    if file_bytes_override is provided, it will be used instead of reading from storage
 
     """
     logger.info(f"parse_document started  {source} {batch_id} {doc_hash}")
@@ -305,6 +311,10 @@ async def parse_document(
             )
             return
         source_uri = doc_uris[0].uri
+        if file_bytes_override is None:
+            file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
+        else:
+            file_bytes = file_bytes_override
         file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
         parsed = await docling_convert(
             file_bytes,

@@ -42,6 +42,10 @@ def do_repl(data):
     return data
 
 
+def is_html(file_bytes: bytes) -> bool:
+    return (file_bytes.startswith(b"<!DOCTYPE html>") or b"<html" in file_bytes[:100]) and b"<body" in file_bytes
+
+
 @retry(stop=stop_after_attempt(4), wait=wait_exponential_jitter(), reraise=True)
 async def docling_convert(
     file_bytes: bytes,
@@ -102,8 +106,13 @@ async def docling_convert(
             parameters["do_picture_description"] = False
 
         file_name = source_uri.split("/")[-1]
+
         if mime_type and "markdown" in mime_type and not file_name.endswith(".md"):
             file_name = file_name + ".md"
+        if is_html(file_bytes):
+            parameters["from_formats"] = ["html"]
+            file_name = file_name + ".html"
+
         f = BytesIO(file_bytes)
         files = {
             "files": (file_name, f, mime_type),

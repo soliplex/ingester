@@ -109,6 +109,7 @@ async def docling_convert(
 
         if mime_type and "markdown" in mime_type and not file_name.endswith(".md"):
             file_name = file_name + ".md"
+        # docling requires some special handling for html
         if is_html(file_bytes):
             parameters["from_formats"] = ["html"]
             file_name = file_name + ".html"

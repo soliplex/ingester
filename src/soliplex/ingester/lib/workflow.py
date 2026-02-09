@@ -315,7 +315,7 @@ async def parse_document(
             file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
         else:
             file_bytes = file_bytes_override
-        file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
+
         parsed = await docling_convert(
             file_bytes,
             doc.mime_type,

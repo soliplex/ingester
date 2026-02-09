@@ -118,10 +118,10 @@ async def docling_convert(
         files = {
             "files": (file_name, f, mime_type),
         }
-        logger.info(f"using {parameters} on {file_name}")
+        logger.debug(f"using {parameters} on {file_name}")
         response = await _async_client.post(async_url, files=files, data=parameters)
         async_res = response.json()
-        logger.info(async_res)
+        logger.debug(async_res)
         if "task_id" not in async_res:
             raise ValueError(f"no task_id in response: {async_res}")
         task_id = async_res["task_id"]

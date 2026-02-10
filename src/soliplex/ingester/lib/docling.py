@@ -42,6 +42,10 @@ def do_repl(data):
     return data
 
 
+def is_html(file_bytes: bytes) -> bool:
+    return (file_bytes.startswith(b"<!DOCTYPE html>") or b"<html" in file_bytes[:100]) and b"<body" in file_bytes
+
+
 @retry(stop=stop_after_attempt(4), wait=wait_exponential_jitter(), reraise=True)
 async def docling_convert(
     file_bytes: bytes,
@@ -102,16 +106,22 @@ async def docling_convert(
             parameters["do_picture_description"] = False
 
         file_name = source_uri.split("/")[-1]
+
         if mime_type and "markdown" in mime_type and not file_name.endswith(".md"):
             file_name = file_name + ".md"
+        # docling requires some special handling for html
+        if is_html(file_bytes):
+            parameters["from_formats"] = ["html"]
+            file_name = file_name + ".html"
+
         f = BytesIO(file_bytes)
         files = {
             "files": (file_name, f, mime_type),
         }
-        logger.info(f"using {parameters} on {file_name}")
+        logger.debug(f"using {parameters} on {file_name}")
         response = await _async_client.post(async_url, files=files, data=parameters)
         async_res = response.json()
-        logger.info(async_res)
+        logger.debug(async_res)
         if "task_id" not in async_res:
             raise ValueError(f"no task_id in response: {async_res}")
         task_id = async_res["task_id"]

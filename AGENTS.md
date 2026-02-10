@@ -8,6 +8,7 @@ Document ingestion and RAG pipeline system. Processes documents through configur
 
 **Stack:** Python 3.12+, FastAPI, SQLModel, Pydantic v2, Typer CLI
 
+
 ## Setup and Commands
 
 ```bash
@@ -18,11 +19,12 @@ uv run ruff format . && uv run ruff check .    # Format & lint
 uv run mypy src/                               # Type checking
 si-cli bootstrap                               # Initialize config files
 si-cli db-init                                 # Initialize database
+
 ```
 
 ## Project Structure
 
-```text
+```
 src/soliplex/ingester/
 ├── cli.py              # CLI entry point (si-cli)
 ├── server/             # FastAPI app and routes
@@ -36,19 +38,20 @@ src/soliplex/ingester/
     └── wf/             # Workflow execution engine
         ├── runner.py   # Async worker
         ├── operations.py
-        └── registry.py # Workflow/param loading from dual directories
+        └── registry.py # Workflow/param loading
 
 config/
 ├── workflows/*.yaml    # Workflow definitions
-├── params/*.yaml       # System parameter sets (source: app)
-└── user_params/*.yaml  # User-uploaded parameter sets (source: user)
+└── params/*.yaml       # Parameter sets
 
 tests/
 ├── unit/              # Unit tests (50% coverage min)
 └── functional/        # Integration tests
 ```
 
-## Code Style
+## Code Conventions
+
+### Python Style
 
 - PEP8 with 126 char line length (ruff configured)
 - snake_case for functions/variables, PascalCase for classes
@@ -56,7 +59,7 @@ tests/
 - numpy-style docstrings
 - Single-line imports, grouped: stdlib, third-party, local
 
-## Async Requirements
+### Async Requirements
 
 All I/O operations must use async/await:
 
@@ -72,28 +75,77 @@ operator = get_operator(store_type)
 await operator.write(path, data)
 ```
 
-## Import Paths
+### Import Paths
 
 Use `soliplex.ingester` (dot notation), not `soliplex_ingester`:
 
 ```python
+# Correct
 from soliplex.ingester.lib.models import Document
 from soliplex.ingester.lib.config import get_settings
+
+# Incorrect
+from soliplex_ingester.lib.models import Document
 ```
 
 ## Testing
 
 ```bash
-uv run pytest                                              # Run all
-uv run pytest --cov=soliplex.ingester --cov-report=term-missing  # With coverage
-uv run pytest tests/unit/test_operations.py                # Specific file
-uv run pytest -k "test_batch"                              # Pattern match
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=soliplex.ingester --cov-report=term-missing
+
+# Run specific test file
+uv run pytest tests/unit/test_operations.py
+
+# Run tests matching pattern
+uv run pytest -k "test_batch"
 ```
 
+**Requirements:**
 - 50% coverage minimum enforced
 - Mock external services (Docling, HaikuRAG, Ollama)
 - Unit tests in `tests/unit/test_*.py`
 - Functional tests in `tests/functional/`
+
+## Database
+
+**Development:** SQLite with aiosqlite
+**Production:** PostgreSQL with psycopg
+
+```bash
+# Initialize database
+si-cli db-init
+
+# Connection string format
+DOC_DB_URL="sqlite+aiosqlite:///./db/documents.db"
+DOC_DB_URL="postgresql+psycopg://user:pass@host:5432/soliplex"
+```
+
+## Key Models
+
+| Model | Table | Purpose |
+|-------|-------|---------|
+| DocumentBatch | documentbatch | Groups documents for processing |
+| Document | document | Unique documents by hash |
+| DocumentURI | documenturi | Maps URIs to documents |
+| WorkflowRun | workflowrun | Single workflow execution |
+| RunStep | runstep | Individual step in workflow |
+| RunGroup | rungroup | Groups workflow runs |
+| SyncState | sync_state | Incremental sync tracking |
+
+## API Routes
+
+| Prefix | Module | Purpose |
+|--------|--------|---------|
+| /api/v1/batch | routes/batch.py | Batch management |
+| /api/v1/document | routes/document.py | Document ingestion |
+| /api/v1/workflow | routes/workflow.py | Workflow control |
+| /api/v1/lancedb | routes/lancedb.py | Vector DB management |
+| /api/v1/stats | routes/stats.py | Statistics |
+| /api/v1/sync-state | routes/sync.py | Sync state tracking |
 
 ## Configuration
 
@@ -104,19 +156,9 @@ Key optional settings:
 - `OLLAMA_BASE_URL` - Embedding model server
 - `FILE_STORE_TARGET` - Storage backend (fs, s3)
 - `LANCEDB_DIR` - Vector database location
-- `PARAM_DIR` / `USER_PARAM_DIR` - System and user parameter set directories (must differ)
-- `WORKFLOW_DIR` - Workflow definitions directory
+- `WORKFLOW_DIR` / `PARAM_DIR` - Config directories
 
-See [CONFIGURATION.md](docs/CONFIGURATION.md) for full reference.
-
-## File Organization
-
-When adding features:
-- Database models go in `lib/models.py`
-- API endpoints go in `server/routes/`
-- Workflow step handlers go in `lib/workflow.py`
-- Storage operations use DAL from `lib/dal.py` (never direct file I/O for artifacts)
-- Tests go in `tests/unit/` or `tests/functional/`
+See `docs/CONFIGURATION.md` for full reference.
 
 ## Critical Warnings
 
@@ -126,23 +168,23 @@ When adding features:
 - Never commit secrets - use environment variables
 - Always use DAL from `lib/dal.py` for artifact storage
 
-## Documentation Standards
+## File Organization
 
-All markdown files are linted by pymarkdown via pre-commit. After editing any `.md` file, run:
+When adding features:
+- Database models go in `lib/models.py`
+- API endpoints go in `server/routes/`
+- Workflow step handlers go in `lib/workflow.py`
+- Tests go in `tests/unit/` or `tests/functional/`
 
-```bash
-pre-commit run --all-files pymarkdown                # Lint all markdown
-pre-commit run --files docs/MYFILE.md pymarkdown     # Lint specific file
-```
+## Documentation
 
-Common rules enforced (disabled: MD013, MD024, MD033, MD036, MD041, MD060):
-
-- **MD022:** Blank line required after every heading
-- **MD025:** Only one top-level `#` heading per file
-- **MD031:** Blank lines required before and after fenced code blocks
-- **MD032:** Blank lines required before and after lists
-- **MD034:** No bare URLs — wrap in angle brackets `<URL>` or markdown links
-- **MD040:** Fenced code blocks must specify a language (e.g. `` ```bash ``, `` ```python ``)
+Detailed docs in `docs/` folder:
+- ARCHITECTURE.md - System design
+- API.md - REST endpoint reference
+- WORKFLOWS.md - Workflow configuration
+- DATABASE.md - Schema reference
+- CONFIGURATION.md - Environment variables
+- CLI.md - Command reference
 
 ## Commit Standards
 

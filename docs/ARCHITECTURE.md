@@ -21,7 +21,7 @@ Server entry point: `src/soliplex_ingester/server/__init__.py:30`
 
 The workflow system orchestrates multi-step document processing pipelines:
 
-```
+```text
 Document → Validate → Parse → Chunk → Embed → Store
 ```
 
@@ -33,6 +33,7 @@ Document → Validate → Parse → Chunk → Embed → Store
 - **RunStep** - Individual step execution within a workflow run
 
 **Step Types:**
+
 - `INGEST` - Load document into system
 - `VALIDATE` - Validate document format and content
 - `PARSE` - Extract text and structure from document
@@ -58,11 +59,13 @@ Worker implementation: `src/soliplex_ingester/lib/wf/runner.py`
 ### 4. Storage Layer
 
 **Database:**
+
 - SQLModel + SQLAlchemy with async support
 - Supports SQLite (dev) and PostgreSQL (production)
 - Alembic for migrations
 
 **File Storage:**
+
 - Configurable backends (filesystem, S3-compatible via OpenDAL)
 - Separate storage locations for different artifact types:
   - Raw documents
@@ -72,6 +75,7 @@ Worker implementation: `src/soliplex_ingester/lib/wf/runner.py`
   - Embeddings
 
 **Vector Storage:**
+
 - LanceDB for vector embeddings
 - HaikuRAG client for retrieval operations
 
@@ -93,11 +97,13 @@ graph LR
 ### 6. External Services
 
 **Docling Server:**
+
 - Document parsing service
 - Extracts text, structure, and metadata
 - Configurable via `DOCLING_SERVER_URL`
 
 **HaikuRAG:**
+
 - RAG backend for document retrieval
 - Vector search and document management
 - Optional (controlled by `DO_RAG` setting)
@@ -141,16 +147,19 @@ See `src/soliplex_ingester/lib/config.py:15` for full configuration schema.
 ## Scalability
 
 **Horizontal Scaling:**
+
 - Multiple workers can run concurrently
 - Database row-level locking prevents duplicate processing
 - Stateless API servers can be load balanced
 
 **Vertical Scaling:**
+
 - Configurable concurrency per worker
 - Batch size controls for embedding operations
 - Connection pooling for database access
 
 **Workflow Parallelism:**
+
 - Multiple workflows can process simultaneously
 - Steps within a workflow run sequentially
 - Different documents process independently
@@ -170,6 +179,7 @@ See `src/soliplex_ingester/lib/config.py:15` for full configuration schema.
 
 **Custom Workflow Steps:**
 Define custom step handlers by:
+
 1. Creating a new async function matching the EventHandler signature
 2. Registering in workflow YAML configuration
 3. Implementing retry logic and error handling
@@ -179,6 +189,7 @@ Configure via `FILE_STORE_TARGET` environment variable and OpenDAL configuration
 
 **Custom Lifecycle Events:**
 Add event handlers in workflow configuration to respond to:
+
 - `GROUP_START` / `GROUP_END`
 - `ITEM_START` / `ITEM_END`
 - `STEP_START` / `STEP_END`
@@ -187,12 +198,14 @@ Add event handlers in workflow configuration to respond to:
 ## Monitoring
 
 **Database Tables:**
+
 - `workflowrun` - Track run status and duration
 - `runstep` - Monitor individual step execution
 - `workcheckin` - Worker health and activity
 - `lifecyclehistory` - Audit trail of events
 
 **Metrics Available:**
+
 - Document processing throughput
 - Step success/failure rates
 - Worker utilization

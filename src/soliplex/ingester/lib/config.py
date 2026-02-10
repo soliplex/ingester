@@ -1,5 +1,7 @@
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
@@ -37,7 +39,17 @@ class Settings(BaseSettings):
     workflow_dir: str = "config/workflows"
     default_workflow_id: str = "batch_split"
     param_dir: str = "config/params"
+    user_param_dir: str = "config/user_params"
     default_param_id: str = "default"
+
+    @model_validator(mode="after")
+    def validate_param_dirs(self) -> "Settings":
+        if Path(self.param_dir).resolve() == Path(self.user_param_dir).resolve():
+            raise ValueError(
+                f"user_param_dir must be different from param_dir, both resolve to '{Path(self.param_dir).resolve()}'"
+            )
+        return self
+
     worker_checkin_interval: int = 120
     worker_checkin_timeout: int = 600
     worker_task_count: int = 5

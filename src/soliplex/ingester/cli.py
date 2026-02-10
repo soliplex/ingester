@@ -159,8 +159,10 @@ def init_config():
     print("initializing  default config files...")
     wf_path = Path(".") / "config" / "workflows"
     param_path = Path(".") / "config" / "params"
+    user_param_path = Path(".") / "config" / "user_params"
     wf_path.mkdir(parents=True, exist_ok=True)
     param_path.mkdir(parents=True, exist_ok=True)
+    user_param_path.mkdir(parents=True, exist_ok=True)
 
     import soliplex.ingester.example as ex
 
@@ -267,15 +269,19 @@ async def _list_params():
 
     settings = get_settings()
     set_ids = []
-    for p in Path(settings.param_dir).glob("*.yaml"):
-        try:
-            pset = await load_param_set(p)
-            set_ids.append(pset.id)
-        except ValidationError as ve:
-            print(f"invalid param set {p}: ")
-            for e in ve.errors():
-                print(f"loc: {e['loc']}\t msg: {e['msg']}")
-            return
+    param_dirs = [Path(settings.param_dir), Path(settings.user_param_dir)]
+    for param_dir in param_dirs:
+        if not param_dir.exists():
+            continue
+        for p in param_dir.glob("*.yaml"):
+            try:
+                pset = await load_param_set(p)
+                set_ids.append(pset.id)
+            except ValidationError as ve:
+                print(f"invalid param set {p}: ")
+                for e in ve.errors():
+                    print(f"loc: {e['loc']}\t msg: {e['msg']}")
+                return
 
     for wf in set_ids:
         print(wf)

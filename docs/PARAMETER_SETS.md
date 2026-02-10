@@ -23,9 +23,15 @@ Parameter sets control every aspect of document processing:
 - **Embedding:** Which model to use for vector embeddings
 - **Storage:** Where to store the resulting vector database
 
-Parameter sets are stored as YAML files and can be created via:
+Parameter sets are stored as YAML files in two separate directories:
+- **System parameter sets** (`config/params/` by default) — built-in, `source: app`, cannot be deleted via API
+- **User parameter sets** (`config/user_params/` by default) — user-uploaded, `source: user`, can be deleted via API
+
+Both directories are merged transparently at load time. Parameter set IDs must be unique across both directories.
+
+Parameter sets can be created via:
 - Configuration files in `config/params/` (built-in)
-- REST API uploads (user-created)
+- REST API uploads (stored in `config/user_params/`)
 - Web UI (if available)
 
 ---
@@ -172,6 +178,7 @@ embed:
 **Providers:**
 
 #### Ollama
+
 ```yaml
 embed:
   provider: ollama
@@ -188,6 +195,7 @@ embed:
 - `qwen3-embedding:4b` - 2560 dimensions, multilingual
 
 #### OpenAI
+
 ```yaml
 embed:
   provider: openai
@@ -202,8 +210,6 @@ embed:
 - `text-embedding-3-small` - 1536 dimensions, cost-effective
 - `text-embedding-3-large` - 3072 dimensions, highest quality
 - `text-embedding-ada-002` - 1536 dimensions (legacy)
-
-
 
 **Important:** The `vector_dim` must match the actual dimension output by the model. Incorrect values will cause embedding errors.
 
@@ -240,16 +246,16 @@ Example:
 
 ## Creating Parameter Sets
 
-### Via Configuration File
+### Via Configuration File (System)
 
-1. **Create YAML file in `config/params/`:**
+1. **Create YAML file in `config/params/` (system parameter sets):**
 
 ```bash
 cd config/params
 nano my_custom_params.yaml
 ```
 
-2. **Define parameter set:**
+1. **Define parameter set:**
 
 ```yaml
 id: my_custom_params
@@ -271,7 +277,7 @@ config:
     data_dir: custom_db
 ```
 
-3. **Validate:**
+1. **Validate:**
 
 ```bash
 si-cli validate-settings
@@ -302,6 +308,7 @@ EOF
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Parameter set created successfully",
@@ -355,16 +362,19 @@ async with httpx.AsyncClient() as client:
 ### List All Parameter Sets
 
 **CLI:**
+
 ```bash
 si-cli list-param-sets
 ```
 
 **REST API:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/param-sets"
 ```
 
 **Response:**
+
 ```json
 [
   {
@@ -387,11 +397,13 @@ curl "http://localhost:8000/api/v1/workflow/param-sets"
 ### View Parameter Set
 
 **CLI:**
+
 ```bash
 si-cli dump-param-set default
 ```
 
 **REST API:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/param-sets/default"
 ```
@@ -403,11 +415,13 @@ Returns the raw YAML content.
 **Only user-uploaded parameter sets can be deleted.**
 
 **REST API:**
+
 ```bash
 curl -X DELETE "http://localhost:8000/api/v1/workflow/param-sets/my_custom_params"
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Parameter set deleted successfully"
@@ -415,6 +429,7 @@ curl -X DELETE "http://localhost:8000/api/v1/workflow/param-sets/my_custom_param
 ```
 
 **Error if built-in:**
+
 ```json
 {
   "error": "Cannot delete built-in parameter sets",
@@ -534,6 +549,7 @@ config:
 ```
 
 **Environment configuration:**
+
 ```bash
 FILE_STORE_TARGET=s3
 S3_ENDPOINT_URL=http://seaweedfs:8333
@@ -612,6 +628,7 @@ config:
 When upgrading models or changing configurations:
 
 1. **Create new parameter set with version suffix:**
+
    ```yaml
    id: reports_v2
    store:
@@ -623,6 +640,7 @@ When upgrading models or changing configurations:
    - Old databases remain accessible
 
 3. **Document changes:**
+
    ```yaml
    id: reports_v2
    name: Report Processing v2 (upgraded to text-embedding-3-small)
@@ -633,6 +651,7 @@ When upgrading models or changing configurations:
 Before processing large batches:
 
 1. **Create test parameter set:**
+
    ```yaml
    id: test_params
    store:
@@ -640,6 +659,7 @@ Before processing large batches:
    ```
 
 2. **Process small sample:**
+
    ```bash
    # Create test batch with 5-10 documents
    curl -X POST "http://localhost:8000/api/v1/batch/" \
@@ -657,6 +677,7 @@ Before processing large batches:
    - Embedding quality
 
 4. **Iterate and deploy:**
+
    ```yaml
    id: production_params
    # Copy tested configuration
@@ -699,13 +720,14 @@ store:
 
 **Solutions:**
 1. List available parameter sets:
+
    ```bash
    si-cli list-param-sets
    ```
 
 2. Check parameter set ID matches exactly (case-sensitive)
 
-3. Verify file exists in `config/params/` or user uploads
+3. Verify file exists in `config/params/` (system) or `config/user_params/` (user uploads)
 
 ### Invalid YAML Syntax
 
@@ -713,6 +735,7 @@ store:
 
 **Solutions:**
 1. Validate YAML syntax:
+
    ```bash
    python -c "import yaml; yaml.safe_load(open('params.yaml'))"
    ```
@@ -744,6 +767,7 @@ store:
 - Only parameter sets with `source: user` can be deleted
 - Built-in parameter sets are protected
 - Create a copy if you need to modify:
+
   ```bash
   # Copy built-in set
   curl "http://localhost:8000/api/v1/workflow/param-sets/default" > my_params.yaml
@@ -767,7 +791,7 @@ store:
 
 ## Additional Resources
 
-- **HaikuRAG Documentation:** https://github.com/ggozad/haiku.rag
-- **Docling Documentation:** https://docling-project.github.io/docling/
-- **Ollama Models:** https://ollama.com/library
-- **OpenAI Embeddings:** https://platform.openai.com/docs/guides/embeddings
+- **HaikuRAG Documentation:** <https://github.com/ggozad/haiku.rag>
+- **Docling Documentation:** <https://docling-project.github.io/docling/>
+- **Ollama Models:** <https://ollama.com/library>
+- **OpenAI Embeddings:** <https://platform.openai.com/docs/guides/embeddings>

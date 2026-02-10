@@ -13,16 +13,19 @@ Soliplex Ingester is configured via environment variables using Pydantic Setting
 Database connection URL.
 
 **SQLite Example:**
+
 ```bash
 DOC_DB_URL="sqlite+aiosqlite:///./db/documents.db"
 ```
 
 **PostgreSQL Example:**
+
 ```bash
 DOC_DB_URL="postgresql+psycopg://username:password@localhost:5432/soliplex"
 ```
 
 **Notes:**
+
 - Must use async drivers (`aiosqlite` for SQLite or `psycopg` for PostgreSQL)
 - SQLite uses relative or absolute file paths
 - PostgreSQL requires credentials and network access
@@ -38,11 +41,13 @@ Docling document parsing service endpoint.
 **Default:** `http://localhost:5001/v1`
 
 **Example:**
+
 ```bash
 DOCLING_SERVER_URL="http://docling.internal.company.com/v1"
 ```
 
 **Notes:**
+
 - Used for document parsing (PDF, DOCX, etc.)
 - Must be accessible from worker nodes
 - Health check: `GET {url}/health`
@@ -54,11 +59,13 @@ Docling service endpoint for chunking operations.
 **Default:** `http://localhost:5001/v1`
 
 **Example:**
+
 ```bash
 DOCLING_CHUNK_SERVER_URL="http://docling-chunker.internal.company.com/v1"
 ```
 
 **Notes:**
+
 - Used by haiku.rag for document chunking via docling-serve
 - Can point to a different Docling instance than `DOCLING_SERVER_URL` for load distribution
 - If not set, defaults to the same endpoint as parsing
@@ -71,11 +78,13 @@ HTTP timeout for Docling requests in seconds.
 **Default:** `600` (10 minutes)
 
 **Example:**
+
 ```bash
 DOCLING_HTTP_TIMEOUT=300
 ```
 
 **Notes:**
+
 - Large documents may require longer timeouts
 - Adjust based on document size and complexity
 
@@ -86,11 +95,13 @@ Ollama server endpoint for embedding generation.
 **Default:** `http://ollama:11434`
 
 **Example:**
+
 ```bash
 OLLAMA_BASE_URL="http://ollama.internal.company.com:11434"
 ```
 
 **Notes:**
+
 - Used for generating document embeddings during the embed step
 - Must be accessible from worker nodes
 - The Ollama server should have the required embedding models loaded
@@ -102,11 +113,13 @@ Ollama server endpoint for Docling chunking operations.
 **Default:** `http://ollama:11434`
 
 **Example:**
+
 ```bash
 OLLAMA_BASE_URL_DOCLING="http://ollama-chunker.internal.company.com:11434"
 ```
 
 **Notes:**
+
 - Used by docling-serve for document chunking operations
 - Can point to a different Ollama instance than `OLLAMA_BASE_URL` for load distribution
 - If not set, defaults to the same URL as `OLLAMA_BASE_URL`
@@ -125,6 +138,7 @@ Python logging level.
 **Options:** `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
 
 **Example:**
+
 ```bash
 LOG_LEVEL=DEBUG
 ```
@@ -140,10 +154,12 @@ Storage backend type.
 **Default:** `fs` (filesystem)
 
 **Options:**
+
 - `fs` - Local filesystem
 - `s3` - S3-compatible storage (requires OpenDAL config)
 
 **Example:**
+
 ```bash
 FILE_STORE_TARGET=s3
 ```
@@ -155,11 +171,13 @@ Base directory for file storage.
 **Default:** `file_store`
 
 **Example:**
+
 ```bash
 FILE_STORE_DIR=/var/lib/soliplex/files
 ```
 
 **Notes:**
+
 - Used when `FILE_STORE_TARGET=fs`
 - Must be writable by the application user
 - Consider disk space requirements
@@ -207,16 +225,19 @@ Directory for LanceDB vector storage.
 **Default:** `lancedb`
 
 **Filesystem Example:**
+
 ```bash
 LANCEDB_DIR=/var/lib/soliplex/lancedb
 ```
 
 **S3 Example:**
+
 ```bash
 LANCEDB_DIR=s3://my-bucket/lancedb
 ```
 
 **Notes:**
+
 - Local filesystem paths or S3 URIs are supported
 - When using S3, LanceDB requires standard AWS environment variables (see below)
 - Stores vector embeddings for RAG retrieval
@@ -224,6 +245,7 @@ LANCEDB_DIR=s3://my-bucket/lancedb
 - Periodically compact for performance
 
 **Required AWS Environment Variables for S3:**
+
 ```bash
 AWS_ACCESS_KEY_ID=your_access_key_id
 AWS_SECRET_ACCESS_KEY=your_secret_key
@@ -231,6 +253,7 @@ AWS_REGION=us-east-1
 ```
 
 **Optional AWS Environment Variables:**
+
 ```bash
 # For S3-compatible providers (MinIO, SeaweedFS, etc.)
 AWS_ENDPOINT=http://127.0.0.1:8333
@@ -250,11 +273,13 @@ Maximum concurrent queue operations.
 **Default:** `20`
 
 **Example:**
+
 ```bash
 INGEST_QUEUE_CONCURRENCY=50
 ```
 
 **Notes:**
+
 - Controls internal queue processing
 - Higher values increase throughput but use more memory
 
@@ -265,11 +290,13 @@ Maximum concurrent workflow steps per worker.
 **Default:** `10`
 
 **Example:**
+
 ```bash
 INGEST_WORKER_CONCURRENCY=20
 ```
 
 **Notes:**
+
 - Primary throughput control
 - Balance against CPU and external service limits
 - Monitor resource usage when tuning
@@ -281,11 +308,13 @@ Maximum concurrent Docling requests.
 **Default:** `3`
 
 **Example:**
+
 ```bash
 DOCLING_CONCURRENCY=5
 ```
 
 **Notes:**
+
 - Prevents overwhelming Docling service
 - Coordinate with Docling server capacity
 - Increase if Docling can handle load
@@ -297,11 +326,13 @@ Number of workflow steps to fetch per query.
 **Default:** `5`
 
 **Example:**
+
 ```bash
 WORKER_TASK_COUNT=10
 ```
 
 **Notes:**
+
 - Batch size for step queries
 - Higher values reduce database round-trips
 - Lower values improve fairness across workers
@@ -313,11 +344,13 @@ Worker heartbeat interval in seconds.
 **Default:** `120` (2 minutes)
 
 **Example:**
+
 ```bash
 WORKER_CHECKIN_INTERVAL=60
 ```
 
 **Notes:**
+
 - How often workers update health status
 - Lower values increase database load slightly
 - Used for monitoring worker liveness
@@ -329,11 +362,13 @@ Worker timeout threshold in seconds.
 **Default:** `600` (10 minutes)
 
 **Example:**
+
 ```bash
 WORKER_CHECKIN_TIMEOUT=300
 ```
 
 **Notes:**
+
 - When to consider a worker stale
 - Should be significantly larger than `WORKER_CHECKIN_INTERVAL`
 - Used for detecting crashed workers
@@ -345,11 +380,13 @@ Batch size for embedding operations.
 **Default:** `1000`
 
 **Example:**
+
 ```bash
 EMBED_BATCH_SIZE=500
 ```
 
 **Notes:**
+
 - Number of chunks to embed at once
 - Higher values improve throughput
 - Limited by embedding service capacity and memory
@@ -365,11 +402,13 @@ Directory containing workflow YAML definitions.
 **Default:** `config/workflows`
 
 **Example:**
+
 ```bash
 WORKFLOW_DIR=/etc/soliplex/workflows
 ```
 
 **Notes:**
+
 - Scanned for `*.yaml` files at startup
 - Hot-reload if `--reload` flag is used
 
@@ -380,23 +419,38 @@ Default workflow to use when not specified.
 **Default:** `batch_split`
 
 **Example:**
+
 ```bash
 DEFAULT_WORKFLOW_ID=batch
 ```
 
 **Notes:**
+
 - Must match an `id` in workflow YAML files
 - Used when API requests omit `workflow_definition_id`
 
 #### PARAM_DIR
 
-Directory containing parameter set YAML files.
+Directory containing system parameter set YAML files.
 
 **Default:** `config/params`
 
 **Example:**
+
 ```bash
 PARAM_DIR=/etc/soliplex/params
+```
+
+#### USER_PARAM_DIR
+
+Directory containing user-uploaded parameter set YAML files. Must be different from `PARAM_DIR`. Both directories are merged transparently at load time; parameter set IDs must be unique across both.
+
+**Default:** `config/user_params`
+
+**Example:**
+
+```bash
+USER_PARAM_DIR=/etc/soliplex/user_params
 ```
 
 #### DEFAULT_PARAM_ID
@@ -406,11 +460,13 @@ Default parameter set to use when not specified.
 **Default:** `default`
 
 **Example:**
+
 ```bash
 DEFAULT_PARAM_ID=high_quality
 ```
 
 **Notes:**
+
 - Must match an `id` in parameter YAML files
 
 ---
@@ -424,11 +480,13 @@ Enable/disable HaikuRAG integration.
 **Default:** `True`
 
 **Example:**
+
 ```bash
 DO_RAG=false
 ```
 
 **Notes:**
+
 - Set to `false` for testing without RAG backend
 - When disabled, `store` step becomes a no-op
 - Useful for CI/CD testing
@@ -444,11 +502,13 @@ Static API key for programmatic access.
 **Default:** None (disabled)
 
 **Example:**
+
 ```bash
 API_KEY=your-secret-api-key-here
 ```
 
 **Notes:**
+
 - Generate with: `openssl rand -hex 32`
 - Must also set `API_KEY_ENABLED=true` to enforce
 - Clients pass via `Authorization: Bearer <token>` header
@@ -461,11 +521,13 @@ Enable API key authentication.
 **Default:** `False`
 
 **Example:**
+
 ```bash
 API_KEY_ENABLED=true
 ```
 
 **Notes:**
+
 - When `true`, all API requests require valid `Authorization: Bearer` header
 - When `false`, API is open (or protected by OAuth2 Proxy)
 - Can be combined with `AUTH_TRUST_PROXY_HEADERS` for hybrid auth
@@ -477,11 +539,13 @@ Trust user identity headers from OAuth2 Proxy.
 **Default:** `False`
 
 **Example:**
+
 ```bash
 AUTH_TRUST_PROXY_HEADERS=true
 ```
 
 **Notes:**
+
 - Enable when running behind OAuth2 Proxy
 - Reads user identity from `X-Auth-Request-User`, `X-Auth-Request-Email` headers
 - **Security:** Only enable when behind a trusted reverse proxy
@@ -494,6 +558,7 @@ AUTH_TRUST_PROXY_HEADERS=true
 While the system uses environment variables, you can organize them in a `.env` file:
 
 **.env Example:**
+
 ```bash
 # Database
 DOC_DB_URL=sqlite+aiosqlite:///./db/documents.db
@@ -522,6 +587,7 @@ EMBED_BATCH_SIZE=1000
 WORKFLOW_DIR=config/workflows
 DEFAULT_WORKFLOW_ID=batch
 PARAM_DIR=config/params
+USER_PARAM_DIR=config/user_params
 DEFAULT_PARAM_ID=default
 
 # Features
@@ -529,6 +595,7 @@ DO_RAG=true
 ```
 
 Load with:
+
 ```bash
 export $(cat .env | xargs)
 si-cli serve
@@ -545,6 +612,7 @@ This project supports S3 storage in two different contexts with different config
 **Purpose:** Stores vector embeddings for RAG retrieval
 **Configuration Method:** Standard AWS environment variables
 **Example:**
+
 ```bash
 LANCEDB_DIR=s3://my-vector-bucket/lancedb
 AWS_ACCESS_KEY_ID=your_key_id
@@ -557,6 +625,7 @@ AWS_REGION=us-east-1
 **Purpose:** Stores intermediate processing artifacts (documents, markdown, chunks, embeddings)
 **Configuration Method:** Nested Pydantic settings with `__` delimiter
 **Example:**
+
 ```bash
 FILE_STORE_TARGET=s3
 ARTIFACT_S3__BUCKET=my-artifact-bucket
@@ -567,6 +636,7 @@ ARTIFACT_S3__ENDPOINT_URL=http://127.0.0.1:8333
 ```
 
 **Important Notes:**
+
 - These are independent systems and can use different S3 buckets or providers
 - LanceDB uses standard AWS SDK naming (`AWS_SECRET_ACCESS_KEY`)
 - Artifact/Input S3 uses Pydantic nested naming (`ARTIFACT_S3__ACCESS_SECRET`)
@@ -579,6 +649,7 @@ ARTIFACT_S3__ENDPOINT_URL=http://127.0.0.1:8333
 Pydantic Settings supports nested configuration using `__` delimiter for structured settings.
 
 **Artifact S3 Configuration:**
+
 ```bash
 ARTIFACT_S3__BUCKET=soliplex-artifacts
 ARTIFACT_S3__ACCESS_KEY_ID=soliplex
@@ -588,6 +659,7 @@ ARTIFACT_S3__ENDPOINT_URL=http://127.0.0.1:8333
 ```
 
 **Input S3 Configuration:**
+
 ```bash
 INPUT_S3__BUCKET=soliplex-inputs
 INPUT_S3__ACCESS_KEY_ID=soliplex
@@ -597,6 +669,7 @@ INPUT_S3__ENDPOINT_URL=http://127.0.0.1:8333
 ```
 
 **Notes:**
+
 - `ACCESS_SECRET` (not `SECRET_ACCESS_KEY`) is used for nested config fields
 - Nested delimiter is `__` (double underscore)
 - Both `INPUT_S3` and `ARTIFACT_S3` can point to different buckets/providers
@@ -616,7 +689,8 @@ si-cli validate-settings
 ```
 
 **Output:**
-```
+
+```text
 doc_db_url='sqlite+aiosqlite:///./db/documents.db'
 docling_server_url='http://localhost:5001/v1'
 log_level='INFO'
@@ -624,7 +698,8 @@ log_level='INFO'
 ```
 
 **Validation Errors:**
-```
+
+```text
 invalid settings
 {'type': 'missing', 'loc': ('doc_db_url',), 'msg': 'Field required'}
 ```
@@ -636,6 +711,7 @@ invalid settings
 ### Development
 
 **dev.env:**
+
 ```bash
 DOC_DB_URL=sqlite+aiosqlite:///./db/dev.db
 LOG_LEVEL=DEBUG
@@ -646,6 +722,7 @@ DO_RAG=false
 ### Staging
 
 **staging.env:**
+
 ```bash
 DOC_DB_URL=postgresql+psycopg://user:pass@staging-db:5432/soliplex
 LOG_LEVEL=INFO
@@ -657,6 +734,7 @@ DO_RAG=true
 ### Production
 
 **production.env:**
+
 ```bash
 DOC_DB_URL=postgresql+psycopg://user:pass@prod-db:5432/soliplex
 LOG_LEVEL=WARNING
@@ -675,6 +753,7 @@ WORKER_CHECKIN_INTERVAL=60
 ### Docker Compose Example
 
 **docker-compose.yml:**
+
 ```yaml
 version: '3.8'
 
@@ -718,6 +797,7 @@ volumes:
 ### Kubernetes ConfigMap
 
 **configmap.yaml:**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -730,6 +810,7 @@ data:
   INGEST_WORKER_CONCURRENCY: "20"
   WORKFLOW_DIR: "/config/workflows"
   PARAM_DIR: "/config/params"
+  USER_PARAM_DIR: "/config/user_params"
 ```
 
 ---
@@ -746,6 +827,7 @@ EMBED_BATCH_SIZE=2000
 ```
 
 **Notes:**
+
 - Requires powerful hardware
 - Monitor CPU, memory, and I/O
 - Coordinate with external service capacity
@@ -760,6 +842,7 @@ EMBED_BATCH_SIZE=500
 ```
 
 **Notes:**
+
 - Reduces memory and CPU usage
 - Lower throughput but more stable
 - Good for shared environments
@@ -774,6 +857,7 @@ WORKER_CHECKIN_INTERVAL=300
 ```
 
 **Notes:**
+
 - Optimized for processing large batches
 - Reduces monitoring overhead
 - Assumes long-running workers
@@ -794,16 +878,19 @@ DOC_DB_URL=postgresql+psycopg://user:$(cat /run/secrets/db_password)@db/soliplex
 ### Using Secret Management Tools
 
 **AWS Secrets Manager:**
+
 ```bash
 export DOC_DB_URL=$(aws secretsmanager get-secret-value --secret-id db-url --query SecretString --output text)
 ```
 
 **HashiCorp Vault:**
+
 ```bash
 export DOC_DB_URL=$(vault kv get -field=url secret/soliplex/db)
 ```
 
 **Kubernetes Secrets:**
+
 ```yaml
 env:
   - name: DOC_DB_URL
@@ -822,6 +909,7 @@ env:
 **Symptom:** Application uses default values
 
 **Solutions:**
+
 1. Verify environment variables are set: `env | grep DOC_`
 2. Check for typos in variable names
 3. Ensure `.env` file is in correct directory
@@ -832,6 +920,7 @@ env:
 **Symptom:** Application fails to start with validation error
 
 **Solutions:**
+
 1. Run `si-cli validate-settings` to see errors
 2. Check required fields are set
 3. Verify value types (e.g., integers for ports)
@@ -842,6 +931,7 @@ env:
 **Symptom:** Cannot connect to database or Docling
 
 **Solutions:**
+
 1. Verify URLs are correct
 2. Test connectivity: `curl http://docling-url/health`
 3. Check network policies/firewall
@@ -852,6 +942,7 @@ env:
 **Symptom:** Cannot write to storage directories
 
 **Solutions:**
+
 1. Check directory exists and is writable
 2. Verify application user permissions
 3. Create directories if needed: `mkdir -p file_store lancedb`
@@ -887,7 +978,8 @@ env:
 | `OLLAMA_BASE_URL_DOCLING` | str | No | `http://ollama:11434` | Ollama server URL for Docling chunking (can differ for load distribution) |
 | `WORKFLOW_DIR` | str | No | `config/workflows` | Workflow definitions dir |
 | `DEFAULT_WORKFLOW_ID` | str | No | `batch_split` | Default workflow |
-| `PARAM_DIR` | str | No | `config/params` | Parameter sets dir |
+| `PARAM_DIR` | str | No | `config/params` | System parameter sets dir |
+| `USER_PARAM_DIR` | str | No | `config/user_params` | User parameter sets dir |
 | `DEFAULT_PARAM_ID` | str | No | `default` | Default parameter set |
 | `AWS_ACCESS_KEY_ID` | str | Conditional | - | AWS access key (required for S3 LanceDB) |
 | `AWS_SECRET_ACCESS_KEY` | str | Conditional | - | AWS secret key (required for S3 LanceDB) |

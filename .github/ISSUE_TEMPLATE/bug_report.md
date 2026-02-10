@@ -5,20 +5,25 @@ labels: bug
 ---
 
 ## Description
+
 A clear description of the bug.
 
 ## Steps to Reproduce
-1.
-2.
-3.
+
+1. Step one
+2. Step two
+3. Step three
 
 ## Expected Behavior
+
 What you expected to happen.
 
 ## Actual Behavior
+
 What actually happened.
 
 ## Environment
+
 - OS:
 - Python version:
 - Ingester version:

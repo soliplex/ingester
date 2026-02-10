@@ -390,13 +390,24 @@ DEFAULT_WORKFLOW_ID=batch
 
 #### PARAM_DIR
 
-Directory containing parameter set YAML files.
+Directory containing system parameter set YAML files.
 
 **Default:** `config/params`
 
 **Example:**
 ```bash
 PARAM_DIR=/etc/soliplex/params
+```
+
+#### USER_PARAM_DIR
+
+Directory containing user-uploaded parameter set YAML files. Must be different from `PARAM_DIR`. Both directories are merged transparently at load time; parameter set IDs must be unique across both.
+
+**Default:** `config/user_params`
+
+**Example:**
+```bash
+USER_PARAM_DIR=/etc/soliplex/user_params
 ```
 
 #### DEFAULT_PARAM_ID
@@ -522,6 +533,7 @@ EMBED_BATCH_SIZE=1000
 WORKFLOW_DIR=config/workflows
 DEFAULT_WORKFLOW_ID=batch
 PARAM_DIR=config/params
+USER_PARAM_DIR=config/user_params
 DEFAULT_PARAM_ID=default
 
 # Features
@@ -730,6 +742,7 @@ data:
   INGEST_WORKER_CONCURRENCY: "20"
   WORKFLOW_DIR: "/config/workflows"
   PARAM_DIR: "/config/params"
+  USER_PARAM_DIR: "/config/user_params"
 ```
 
 ---
@@ -887,7 +900,8 @@ env:
 | `OLLAMA_BASE_URL_DOCLING` | str | No | `http://ollama:11434` | Ollama server URL for Docling chunking (can differ for load distribution) |
 | `WORKFLOW_DIR` | str | No | `config/workflows` | Workflow definitions dir |
 | `DEFAULT_WORKFLOW_ID` | str | No | `batch_split` | Default workflow |
-| `PARAM_DIR` | str | No | `config/params` | Parameter sets dir |
+| `PARAM_DIR` | str | No | `config/params` | System parameter sets dir |
+| `USER_PARAM_DIR` | str | No | `config/user_params` | User parameter sets dir |
 | `DEFAULT_PARAM_ID` | str | No | `default` | Default parameter set |
 | `AWS_ACCESS_KEY_ID` | str | Conditional | - | AWS access key (required for S3 LanceDB) |
 | `AWS_SECRET_ACCESS_KEY` | str | Conditional | - | AWS secret key (required for S3 LanceDB) |

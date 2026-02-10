@@ -23,9 +23,15 @@ Parameter sets control every aspect of document processing:
 - **Embedding:** Which model to use for vector embeddings
 - **Storage:** Where to store the resulting vector database
 
-Parameter sets are stored as YAML files and can be created via:
+Parameter sets are stored as YAML files in two separate directories:
+- **System parameter sets** (`config/params/` by default) — built-in, `source: app`, cannot be deleted via API
+- **User parameter sets** (`config/user_params/` by default) — user-uploaded, `source: user`, can be deleted via API
+
+Both directories are merged transparently at load time. Parameter set IDs must be unique across both directories.
+
+Parameter sets can be created via:
 - Configuration files in `config/params/` (built-in)
-- REST API uploads (user-created)
+- REST API uploads (stored in `config/user_params/`)
 - Web UI (if available)
 
 ---
@@ -240,9 +246,9 @@ Example:
 
 ## Creating Parameter Sets
 
-### Via Configuration File
+### Via Configuration File (System)
 
-1. **Create YAML file in `config/params/`:**
+1. **Create YAML file in `config/params/` (system parameter sets):**
 
 ```bash
 cd config/params
@@ -705,7 +711,7 @@ store:
 
 2. Check parameter set ID matches exactly (case-sensitive)
 
-3. Verify file exists in `config/params/` or user uploads
+3. Verify file exists in `config/params/` (system) or `config/user_params/` (user uploads)
 
 ### Invalid YAML Syntax
 

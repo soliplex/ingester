@@ -8,7 +8,6 @@ Document ingestion and RAG pipeline system. Processes documents through configur
 
 **Stack:** Python 3.12+, FastAPI, SQLModel, Pydantic v2, Typer CLI
 
-
 ## Setup and Commands
 
 ```bash
@@ -24,7 +23,7 @@ si-cli db-init                                 # Initialize database
 
 ## Project Structure
 
-```
+```text
 src/soliplex/ingester/
 ├── cli.py              # CLI entry point (si-cli)
 ├── server/             # FastAPI app and routes
@@ -38,11 +37,12 @@ src/soliplex/ingester/
     └── wf/             # Workflow execution engine
         ├── runner.py   # Async worker
         ├── operations.py
-        └── registry.py # Workflow/param loading
+        └── registry.py # Workflow/param loading from dual directories
 
 config/
 ├── workflows/*.yaml    # Workflow definitions
-└── params/*.yaml       # Parameter sets
+├── params/*.yaml       # System parameter sets (source: app)
+└── user_params/*.yaml  # User-uploaded parameter sets (source: user)
 
 tests/
 ├── unit/              # Unit tests (50% coverage min)
@@ -156,7 +156,8 @@ Key optional settings:
 - `OLLAMA_BASE_URL` - Embedding model server
 - `FILE_STORE_TARGET` - Storage backend (fs, s3)
 - `LANCEDB_DIR` - Vector database location
-- `WORKFLOW_DIR` / `PARAM_DIR` - Config directories
+- `PARAM_DIR` / `USER_PARAM_DIR` - System and user parameter set directories (must differ)
+- `WORKFLOW_DIR` - Workflow definitions directory
 
 See `docs/CONFIGURATION.md` for full reference.
 
@@ -185,6 +186,24 @@ Detailed docs in `docs/` folder:
 - DATABASE.md - Schema reference
 - CONFIGURATION.md - Environment variables
 - CLI.md - Command reference
+
+## Documentation Standards
+
+All markdown files are linted by pymarkdown via pre-commit. After editing any `.md` file, run:
+
+```bash
+pre-commit run --all-files pymarkdown                # Lint all markdown
+pre-commit run --files docs/MYFILE.md pymarkdown     # Lint specific file
+```
+
+Common rules enforced (disabled: MD013, MD024, MD033, MD036, MD041, MD060):
+
+- **MD022:** Blank line required after every heading
+- **MD025:** Only one top-level `#` heading per file
+- **MD031:** Blank lines required before and after fenced code blocks
+- **MD032:** Blank lines required before and after lists
+- **MD034:** No bare URLs — wrap in angle brackets `<URL>` or markdown links
+- **MD040:** Fenced code blocks must specify a language (e.g. `` ```bash ``, `` ```python ``)
 
 ## Commit Standards
 

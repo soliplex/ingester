@@ -11,6 +11,7 @@ Database models defined in: `src/soliplex/ingester/lib/models.py`
 ### Configuration
 
 Set via environment variable:
+
 ```bash
 DOC_DB_URL="sqlite+aiosqlite:///./db/documents.db"
 # or
@@ -62,6 +63,7 @@ Represents a batch of documents ingested together.
 **Table:** `documentbatch`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment batch ID
 - `name` (str) - Human-readable batch name
 - `source` (str) - Source system identifier
@@ -70,9 +72,11 @@ Represents a batch of documents ingested together.
 - `batch_params` (dict[str, str]) - JSON metadata
 
 **Computed Fields:**
+
 - `duration` (float) - Processing time in seconds (None if not completed)
 
 **Example:**
+
 ```json
 {
   "id": 1,
@@ -94,18 +98,21 @@ Represents a unique document identified by content hash.
 **Table:** `document`
 
 **Fields:**
+
 - `hash` (str, primary key) - SHA256 content hash (format: "sha256-...")
 - `mime_type` (str) - Document MIME type
 - `file_size` (int, nullable) - Size in bytes
 - `doc_meta` (dict[str, str]) - JSON metadata
 
 **Relationships:**
+
 - Multiple `DocumentURI` records can reference the same document
 
 **Deduplication:**
 Documents are deduplicated by hash. If the same file is ingested multiple times, only one Document record exists.
 
 **Example:**
+
 ```json
 {
   "hash": "sha256-a1b2c3d4e5f6...",
@@ -127,6 +134,7 @@ Maps source URIs to document hashes, allowing multiple URIs to reference the sam
 **Table:** `documenturi`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment ID
 - `doc_hash` (str, foreign key) - References `document.hash`
 - `uri` (str) - Source system path/identifier
@@ -135,14 +143,17 @@ Maps source URIs to document hashes, allowing multiple URIs to reference the sam
 - `batch_id` (int, foreign key, nullable) - Associated batch
 
 **Constraints:**
+
 - Unique constraint on `(uri, source)` - One active URI per source
 
 **Use Cases:**
+
 - Track document locations across source systems
 - Detect when a document at a URI has changed (hash mismatch)
 - Support document versioning
 
 **Example:**
+
 ```json
 {
   "id": 42,
@@ -163,6 +174,7 @@ Tracks historical versions of documents at specific URIs.
 **Table:** `documenturihistory`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment ID
 - `doc_uri_id` (int, foreign key) - References `documenturi.id`
 - `version` (int) - Version number
@@ -173,11 +185,13 @@ Tracks historical versions of documents at specific URIs.
 - `histmeta` (dict[str, str]) - JSON metadata
 
 **Use Cases:**
+
 - Audit trail of document changes
 - Rollback to previous versions
 - Compliance and record-keeping
 
 **Example:**
+
 ```json
 {
   "id": 100,
@@ -200,6 +214,7 @@ Stores raw file bytes and artifacts in the database.
 **Table:** `documentbytes`
 
 **Fields:**
+
 - `hash` (str, primary key) - Document hash
 - `artifact_type` (str, primary key) - Type of artifact
 - `storage_root` (str, primary key) - Storage location identifier
@@ -207,6 +222,7 @@ Stores raw file bytes and artifacts in the database.
 - `file_bytes` (bytes) - Raw binary data
 
 **Artifact Types:**
+
 - `document` - Raw document
 - `parsed_markdown` - Extracted markdown
 - `parsed_json` - Structured JSON
@@ -217,6 +233,7 @@ Stores raw file bytes and artifacts in the database.
 **Note:** For production, consider using file storage instead of database storage for large binaries.
 
 **Example:**
+
 ```json
 {
   "hash": "sha256-a1b2c3d4e5f6...",
@@ -238,6 +255,7 @@ Groups related workflow runs together.
 **Table:** `rungroup`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment ID
 - `name` (str, nullable) - Optional group name
 - `workflow_definition_id` (str) - Workflow used
@@ -252,10 +270,12 @@ Groups related workflow runs together.
 - `status_meta` (dict[str, str]) - JSON metadata
 
 **Relationships:**
+
 - Has many `WorkflowRun` records
 - Has many `LifecycleHistory` records
 
 **Example:**
+
 ```json
 {
   "id": 5,
@@ -282,6 +302,7 @@ Represents a single workflow execution for one document.
 **Table:** `workflowrun`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment ID
 - `workflow_definition_id` (str) - Workflow definition ID
 - `run_group_id` (int, foreign key) - Parent group
@@ -298,14 +319,17 @@ Represents a single workflow execution for one document.
 - `run_params` (dict[str, str|int|bool]) - Runtime parameters
 
 **Computed Fields:**
+
 - `duration` (float) - Processing time in seconds (None if not completed)
 
 **Relationships:**
+
 - Has many `RunStep` records
 - Belongs to `RunGroup`
 - References `Document` via `doc_id`
 
 **Example:**
+
 ```json
 {
   "id": 100,
@@ -335,6 +359,7 @@ Represents one step within a workflow run.
 **Table:** `runstep`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment ID
 - `workflow_run_id` (int, foreign key) - Parent workflow run
 - `workflow_step_number` (int) - Step sequence number
@@ -355,13 +380,16 @@ Represents one step within a workflow run.
 - `worker_id` (str, nullable) - Worker processing this step
 
 **Computed Fields:**
+
 - `duration` (float) - Execution time in seconds (None if not completed)
 
 **Relationships:**
+
 - Belongs to `WorkflowRun`
 - References `StepConfig`
 
 **Example:**
+
 ```json
 {
   "id": 500,
@@ -395,6 +423,7 @@ Stores step configuration for reuse and tracking.
 **Table:** `stepconfig`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment ID
 - `created_date` (datetime, nullable) - When config was created
 - `step_type` (WorkflowStepType) - Type of step
@@ -402,11 +431,13 @@ Stores step configuration for reuse and tracking.
 - `cuml_config_json` (str, nullable) - Cumulative config from previous steps
 
 **Use Cases:**
+
 - Deduplicate identical configurations
 - Track which configuration was used for each run
 - Audit changes to processing parameters
 
 **Example:**
+
 ```json
 {
   "id": 10,
@@ -429,16 +460,19 @@ Represents a complete parameter set configuration.
 **Table:** `configset`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment ID
 - `yaml_id` (str) - Parameter set ID from YAML
 - `yaml_contents` (str) - Full YAML contents
 - `created_date` (datetime, nullable) - When loaded
 
 **Relationships:**
+
 - Has many `ConfigSetItem` records (junction table)
 - Links to multiple `StepConfig` records
 
 **Use Cases:**
+
 - Track which parameter sets were used
 - Reproduce exact configurations
 - Version control for processing parameters
@@ -452,6 +486,7 @@ Junction table linking config sets to step configs.
 **Table:** `configsetitem`
 
 **Fields:**
+
 - `config_set_id` (int, primary key, foreign key) - References `configset.id`
 - `config_id` (int, primary key, foreign key) - References `stepconfig.id`
 
@@ -464,6 +499,7 @@ Tracks lifecycle events during workflow execution.
 **Table:** `lifecyclehistory`
 
 **Fields:**
+
 - `id` (int, primary key) - Auto-increment ID
 - `event` (LifeCycleEvent) - Type of event
 - `handler_name` (str, nullable) - Name of the handler processing the event
@@ -478,11 +514,13 @@ Tracks lifecycle events during workflow execution.
 - `status_meta` (dict[str, str]) - JSON metadata
 
 **Event Types:**
+
 - `group_start` / `group_end`
 - `item_start` / `item_end` / `item_failed`
 - `step_start` / `step_end` / `step_failed`
 
 **Use Cases:**
+
 - Audit trail of workflow execution
 - Performance monitoring
 - Debugging workflow issues
@@ -496,19 +534,23 @@ Tracks worker health and activity.
 **Table:** `workercheckin`
 
 **Fields:**
+
 - `id` (str, primary key) - Worker identifier
 - `first_checkin` (datetime) - When worker first registered
 - `last_checkin` (datetime) - Most recent heartbeat
 
 **Constraints:**
+
 - Unique constraint on `id`
 
 **Use Cases:**
+
 - Monitor active workers
 - Detect stale/crashed workers
 - Worker load balancing
 
 **Example:**
+
 ```json
 {
   "id": "worker-abc-123",
@@ -585,6 +627,7 @@ class LifeCycleEvent(str, Enum):
 ## Artifact Mapping
 
 **Workflow Steps to Artifacts:**
+
 - INGEST - DOC
 - PARSE - PARSED_MD, PARSED_JSON
 - CHUNK - CHUNKS
@@ -595,7 +638,7 @@ class LifeCycleEvent(str, Enum):
 
 ## Relationships Diagram
 
-```
+```text
 DocumentBatch
     | (1:N)
 DocumentURI --> Document (N:1)
@@ -699,15 +742,18 @@ Cascading deletion function for run groups and all dependent records.
 **Location:** `src/soliplex/ingester/lib/wf/operations.py`
 
 **Signature:**
+
 ```python
 async def delete_run_group(run_group_id: int) -> dict[str, int]
 ```
 
 **Database Compatibility:**
+
 - SQLite (via aiosqlite)
 - PostgreSQL (via asyncpg)
 
 **Behavior:**
+
 1. Verifies the RunGroup exists (raises `NotFoundError` if not found)
 2. Retrieves all WorkflowRun IDs for the RunGroup
 3. Deletes all RunStep records for those WorkflowRuns
@@ -719,6 +765,7 @@ async def delete_run_group(run_group_id: int) -> dict[str, int]
 All operations occur within a single database transaction to ensure atomicity.
 
 **Usage:**
+
 ```python
 from soliplex.ingester.lib.wf.operations import delete_run_group, NotFoundError
 
@@ -733,6 +780,7 @@ print(f"Total records deleted: {result['total_deleted']}")
 ```
 
 **Returns:**
+
 ```python
 {
     "deleted_runsteps": 150,
@@ -744,6 +792,7 @@ print(f"Total records deleted: {result['total_deleted']}")
 ```
 
 **Raises:**
+
 - `NotFoundError` - If the RunGroup with the specified ID does not exist
 
 ---
@@ -755,11 +804,13 @@ Cascading deletion function for DocumentURI and all dependent records.
 **Location:** `src/soliplex/ingester/lib/operations.py`
 
 **Signature:**
+
 ```python
 async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]
 ```
 
 **Behavior:**
+
 1. Finds the DocumentURI by `uri` and `source`
 2. Counts how many DocumentURIs reference the same document hash
 3. If only one URI references the document (cascade delete):
@@ -777,6 +828,7 @@ async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]
    - Preserves the Document and all workflow-related records
 
 **Returns:**
+
 ```python
 {
     "deleted_document_uris": 1,
@@ -790,6 +842,7 @@ async def delete_document_uri_by_uri(uri: str, source: str) -> dict[str, int]
 ```
 
 **Usage:**
+
 ```python
 from soliplex.ingester.lib.operations import delete_document_uri_by_uri
 from soliplex.ingester.lib.operations import DocumentURINotFoundError
@@ -805,6 +858,7 @@ except DocumentURINotFoundError as e:
 ```
 
 **Notes:**
+
 - All deletions occur within a single transaction
 - Works with both SQLite and PostgreSQL
 - Raises `DocumentURINotFoundError` if the URI/source combination does not exist
@@ -815,22 +869,27 @@ except DocumentURINotFoundError as e:
 ## Migrations
 
 ### Location
+
 `src/soliplex/ingester/migrations/`
 
 ### Configuration
+
 `alembic.ini` (project root)
 
 ### Create Migration
+
 ```bash
 alembic revision --autogenerate -m "description"
 ```
 
 ### Apply Migration
+
 ```bash
 alembic upgrade head
 ```
 
 ### Rollback
+
 ```bash
 alembic downgrade -1
 ```
@@ -860,21 +919,25 @@ CREATE INDEX idx_workercheckin_last ON workercheckin(last_checkin);
 ## Backup and Maintenance
 
 ### SQLite Backup
+
 ```bash
 sqlite3 db/documents.db ".backup backup.db"
 ```
 
 ### PostgreSQL Backup
+
 ```bash
 pg_dump -h localhost -U user soliplex > backup.sql
 ```
 
 ### Vacuum (SQLite)
+
 ```bash
 sqlite3 db/documents.db "VACUUM;"
 ```
 
 ### Analyze (PostgreSQL)
+
 ```bash
 psql -h localhost -U user -d soliplex -c "ANALYZE;"
 ```
@@ -884,6 +947,7 @@ psql -h localhost -U user -d soliplex -c "ANALYZE;"
 ## Query Examples
 
 ### Find Failed Workflows
+
 ```python
 from soliplex.ingester.lib.models import WorkflowRun, RunStatus, get_session
 from sqlmodel import select
@@ -895,6 +959,7 @@ async with get_session() as session:
 ```
 
 ### Get Batch Statistics
+
 ```python
 from sqlmodel import func, select
 
@@ -911,6 +976,7 @@ async with get_session() as session:
 ```
 
 ### Find Stale Workers
+
 ```python
 from datetime import datetime, timedelta
 

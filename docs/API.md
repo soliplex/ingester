@@ -17,14 +17,17 @@ Authentication is enforced when `API_KEY_ENABLED=true` or `AUTH_TRUST_PROXY_HEAD
 Get documents by source or batch ID.
 
 **Query Parameters:**
+
 - `source` (string, optional) - Source identifier to filter documents
 - `batch_id` (integer, optional) - Batch ID to filter documents
 
 **Response:**
+
 - `200 OK` - Array of DocumentURI objects
 - `400 Bad Request` - Neither source nor batch_id provided
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/document/?batch_id=1"
 ```
@@ -38,6 +41,7 @@ Ingest a new document into the system.
 **Content-Type:** `multipart/form-data`
 
 **Form Parameters:**
+
 - `file` (file, optional) - Document file to upload
 - `input_uri` (string, optional) - URI to fetch document from
 - `mime_type` (string, optional) - MIME type of the document
@@ -48,12 +52,14 @@ Ingest a new document into the system.
 - `priority` (integer, optional) - Processing priority (default: 0)
 
 **Response:**
+
 - `201 Created` - Document ingested successfully (new document)
 - `203 Non-Authoritative Information` - Document already exists in a different batch
 - `400 Bad Request` - Invalid parameters or metadata
 - `500 Internal Server Error` - Processing error
 
 **Success Response Body:**
+
 ```json
 {
   "batch_id": 1,
@@ -65,11 +71,13 @@ Ingest a new document into the system.
 ```
 
 **Notes:**
+
 - The `batch_id` in the response reflects the batch where the document URI actually resides
 - If a document with the same hash already exists in a different batch, the response returns `203` with the original batch ID
 - This prevents duplicate processing while informing the caller that the document was previously ingested
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/document/ingest-document" \
   -F "file=@document.pdf" \
@@ -86,10 +94,12 @@ curl -X POST "http://localhost:8000/api/v1/document/ingest-document" \
 Delete orphaned documents with no URI references.
 
 **Response:**
+
 - `200 OK` - Cleanup successful with statistics
 - `500 Internal Server Error` - Processing error
 
 **Success Response Body:**
+
 ```json
 {
   "message": "Orphaned documents cleaned up",
@@ -101,6 +111,7 @@ Delete orphaned documents with no URI references.
 ```
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/document/cleanup-orphans"
 ```
@@ -116,15 +127,18 @@ If only one DocumentURI references the underlying document, all associated recor
 If multiple DocumentURIs reference the same document, only the specified DocumentURI and its history are deleted; the document is preserved.
 
 **Query Parameters:**
+
 - `uri` (string, required) - The document URI to delete
 - `source` (string, required) - The source system identifier
 
 **Response:**
+
 - `200 OK` - Deletion successful with statistics
 - `404 Not Found` - DocumentURI not found
 - `500 Internal Server Error` - Processing error
 
 **Success Response Body:**
+
 ```json
 {
   "message": "DocumentURI deleted successfully",
@@ -143,11 +157,13 @@ If multiple DocumentURIs reference the same document, only the specified Documen
 ```
 
 **Notes:**
+
 - When `deleted_documents` is 0, other DocumentURIs still reference the document
 - All deletions occur within a single transaction for atomicity
 - File artifacts are also deleted from configured storage (filesystem, S3, or database)
 
 **Example:**
+
 ```bash
 curl -X DELETE "http://localhost:8000/api/v1/document/by-uri?uri=/documents/report.pdf&source=filesystem"
 ```
@@ -161,9 +177,11 @@ curl -X DELETE "http://localhost:8000/api/v1/document/by-uri?uri=/documents/repo
 List all document batches.
 
 **Response:**
+
 - `200 OK` - Array of DocumentBatch objects
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/batch/"
 ```
@@ -177,13 +195,16 @@ Create a new document batch.
 **Content-Type:** `application/x-www-form-urlencoded`
 
 **Form Parameters:**
+
 - `source` (string, required) - Source system identifier
 - `name` (string, required) - Human-readable batch name
 
 **Response:**
+
 - `201 Created` - Batch created successfully
 
 **Response Body:**
+
 ```json
 {
   "batch_id": 1
@@ -191,6 +212,7 @@ Create a new document batch.
 ```
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/batch/" \
   -d "source=filesystem" \
@@ -206,17 +228,20 @@ Start workflow processing for all documents in a batch.
 **Content-Type:** `application/x-www-form-urlencoded`
 
 **Form Parameters:**
+
 - `batch_id` (integer, required) - Batch ID to process
 - `workflow_definition_id` (string, optional) - Workflow to use (default: from config)
 - `priority` (integer, optional) - Processing priority (default: 0)
 - `param_id` (string, optional) - Parameter set ID (default: from config)
 
 **Response:**
+
 - `201 Created` - Workflows started successfully
 - `404 Not Found` - Batch not found
 - `500 Internal Server Error` - Processing error
 
 **Response Body:**
+
 ```json
 {
   "message": "Workflows started",
@@ -226,6 +251,7 @@ Start workflow processing for all documents in a batch.
 ```
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/batch/start-workflows" \
   -d "batch_id=1" \
@@ -240,13 +266,16 @@ curl -X POST "http://localhost:8000/api/v1/batch/start-workflows" \
 Get detailed status for a batch.
 
 **Query Parameters:**
+
 - `batch_id` (integer, required) - Batch ID
 
 **Response:**
+
 - `200 OK` - Batch status details
 - `404 Not Found` - Batch not found
 
 **Response Body:**
+
 ```json
 {
   "batch": {
@@ -269,6 +298,7 @@ Get detailed status for a batch.
 ```
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/batch/status?batch_id=1"
 ```
@@ -280,13 +310,16 @@ curl "http://localhost:8000/api/v1/batch/status?batch_id=1"
 Get all workflow steps for a batch.
 
 **Path Parameters:**
+
 - `batch_id` (integer, required) - Batch ID
 
 **Response:**
+
 - `200 OK` - Array of RunStep objects
 - `500 Internal Server Error` - Processing error
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/batch/1/steps"
 ```
@@ -300,6 +333,7 @@ curl "http://localhost:8000/api/v1/batch/1/steps"
 Get workflow runs with optional pagination.
 
 **Query Parameters:**
+
 - `batch_id` (integer, optional) - Filter by batch ID
 - `include_steps` (boolean, optional) - Include step details (default: false)
 - `include_doc_info` (boolean, optional) - Include document info (default: false)
@@ -307,9 +341,11 @@ Get workflow runs with optional pagination.
 - `rows_per_page` (integer, optional) - Results per page (default: 10 when paginated)
 
 **Response:**
+
 - `200 OK` - Array of WorkflowRun objects (unpaginated) or PaginatedResponse (paginated)
 
 **Paginated Response Body:**
+
 ```json
 {
   "items": [...],
@@ -321,6 +357,7 @@ Get workflow runs with optional pagination.
 ```
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/?batch_id=1&page=1&rows_per_page=20"
 ```
@@ -332,6 +369,7 @@ curl "http://localhost:8000/api/v1/workflow/?batch_id=1&page=1&rows_per_page=20"
 Get workflow runs filtered by status with optional pagination.
 
 **Query Parameters:**
+
 - `status` (enum, required) - One of: PENDING, RUNNING, COMPLETED, ERROR, FAILED
 - `batch_id` (integer, optional) - Filter by batch ID
 - `include_doc_info` (boolean, optional) - Include document info (default: false)
@@ -339,9 +377,11 @@ Get workflow runs filtered by status with optional pagination.
 - `rows_per_page` (integer, optional) - Results per page
 
 **Response:**
+
 - `200 OK` - Array of WorkflowRun objects or PaginatedResponse
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/by-status?status=FAILED"
 ```
@@ -353,9 +393,11 @@ curl "http://localhost:8000/api/v1/workflow/by-status?status=FAILED"
 List all available workflow definitions.
 
 **Response:**
+
 - `200 OK` - Array of workflow definition summaries
 
 **Response Body:**
+
 ```json
 [
   {
@@ -370,6 +412,7 @@ List all available workflow definitions.
 ```
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/definitions"
 ```
@@ -381,13 +424,16 @@ curl "http://localhost:8000/api/v1/workflow/definitions"
 Get workflow definition YAML content by ID.
 
 **Path Parameters:**
+
 - `workflow_id` (string, required) - Workflow definition ID
 
 **Response:**
+
 - `200 OK` - YAML content (Content-Type: text/yaml)
 - `404 Not Found` - Workflow definition not found
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/definitions/batch"
 ```
@@ -399,9 +445,11 @@ curl "http://localhost:8000/api/v1/workflow/definitions/batch"
 List all available parameter sets.
 
 **Response:**
+
 - `200 OK` - Array of parameter set summaries
 
 **Response Body:**
+
 ```json
 [
   {
@@ -418,6 +466,7 @@ List all available parameter sets.
 ```
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/param-sets"
 ```
@@ -429,13 +478,16 @@ curl "http://localhost:8000/api/v1/workflow/param-sets"
 Get parameter set YAML content by ID.
 
 **Path Parameters:**
+
 - `set_id` (string, required) - Parameter set ID
 
 **Response:**
+
 - `200 OK` - YAML content (Content-Type: text/yaml)
 - `404 Not Found` - Parameter set not found
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/param-sets/default"
 ```
@@ -447,12 +499,15 @@ curl "http://localhost:8000/api/v1/workflow/param-sets/default"
 Get parameter sets that target a specific LanceDB directory.
 
 **Path Parameters:**
+
 - `target` (string, required) - LanceDB data directory path
 
 **Response:**
+
 - `200 OK` - Array of matching WorkflowParams objects
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/param_sets/target/lancedb"
 ```
@@ -466,15 +521,18 @@ Upload a new parameter set from YAML content.
 **Content-Type:** `application/x-www-form-urlencoded`
 
 **Form Parameters:**
+
 - `yaml_content` (string, required) - Raw YAML content
 
 **Response:**
+
 - `201 Created` - Parameter set created successfully
 - `400 Bad Request` - Invalid YAML syntax or format
 - `409 Conflict` - Parameter set with same ID already exists
 - `500 Internal Server Error` - Processing error
 
 **Success Response Body:**
+
 ```json
 {
   "message": "Parameter set created successfully",
@@ -484,10 +542,12 @@ Upload a new parameter set from YAML content.
 ```
 
 **Notes:**
+
 - Uploaded parameter sets have `source` set to "user"
 - The parameter set ID is taken from the YAML content
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/workflow/param-sets" \
   -d "yaml_content=id: my_params\nname: My Parameters\nconfig:\n  parse:\n    format: markdown"
@@ -500,19 +560,23 @@ curl -X POST "http://localhost:8000/api/v1/workflow/param-sets" \
 Delete a user-uploaded parameter set.
 
 **Path Parameters:**
+
 - `set_id` (string, required) - Parameter set ID to delete
 
 **Response:**
+
 - `200 OK` - Parameter set deleted successfully
 - `403 Forbidden` - Cannot delete built-in parameter sets
 - `404 Not Found` - Parameter set not found
 - `500 Internal Server Error` - Processing error
 
 **Notes:**
+
 - Only parameter sets with `source="user"` can be deleted
 - Built-in parameter sets cannot be deleted via API
 
 **Example:**
+
 ```bash
 curl -X DELETE "http://localhost:8000/api/v1/workflow/param-sets/my_params"
 ```
@@ -524,12 +588,15 @@ curl -X DELETE "http://localhost:8000/api/v1/workflow/param-sets/my_params"
 Get workflow steps filtered by status.
 
 **Query Parameters:**
+
 - `status` (enum, required) - One of: PENDING, RUNNING, COMPLETED, ERROR, FAILED
 
 **Response:**
+
 - `200 OK` - Array of RunStep objects
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/steps?status=RUNNING"
 ```
@@ -541,13 +608,16 @@ curl "http://localhost:8000/api/v1/workflow/steps?status=RUNNING"
 Get workflow run groups, optionally filtered by batch ID.
 
 **Query Parameters:**
+
 - `batch_id` (integer, optional) - Filter by batch ID
 
 **Response:**
+
 - `200 OK` - Array of RunGroup objects
 - `500 Internal Server Error` - Processing error
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/run-groups?batch_id=1"
 ```
@@ -559,13 +629,16 @@ curl "http://localhost:8000/api/v1/workflow/run-groups?batch_id=1"
 Get specific run group by ID.
 
 **Path Parameters:**
+
 - `run_group_id` (integer, required) - Run group ID
 
 **Response:**
+
 - `200 OK` - RunGroup object
 - `500 Internal Server Error` - Processing error
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/run_groups/5"
 ```
@@ -577,14 +650,17 @@ curl "http://localhost:8000/api/v1/workflow/run_groups/5"
 Delete a run group and all dependent records.
 
 **Path Parameters:**
+
 - `run_group_id` (integer, required) - Run group ID to delete
 
 **Response:**
+
 - `200 OK` - Run group deleted successfully
 - `404 Not Found` - Run group does not exist
 - `500 Internal Server Error` - Processing error
 
 **Response Body:**
+
 ```json
 {
   "message": "RunGroup 5 deleted successfully",
@@ -599,11 +675,13 @@ Delete a run group and all dependent records.
 ```
 
 **Notes:**
+
 - Works with both SQLite and PostgreSQL databases
 - Deletes all dependent records: RunSteps, LifecycleHistory, WorkflowRuns, and the RunGroup
 - The deletion is performed within a transaction and rolled back if any error occurs
 
 **Example:**
+
 ```bash
 curl -X DELETE "http://localhost:8000/api/v1/workflow/run_groups/5"
 ```
@@ -615,13 +693,16 @@ curl -X DELETE "http://localhost:8000/api/v1/workflow/run_groups/5"
 Get statistics for a run group.
 
 **Path Parameters:**
+
 - `run_group_id` (integer, required) - Run group ID
 
 **Response:**
+
 - `200 OK` - Statistics object with status counts
 - `500 Internal Server Error` - Processing error
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/run_groups/5/stats"
 ```
@@ -633,12 +714,15 @@ curl "http://localhost:8000/api/v1/workflow/run_groups/5/stats"
 Get workflow runs for a batch.
 
 **Query Parameters:**
+
 - `batch_id` (integer, required) - Batch ID
 
 **Response:**
+
 - `200 OK` - Array of WorkflowRun objects
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/runs?batch_id=1"
 ```
@@ -650,12 +734,15 @@ curl "http://localhost:8000/api/v1/workflow/runs?batch_id=1"
 Get specific workflow run by ID, including steps.
 
 **Path Parameters:**
+
 - `workflow_id` (integer, required) - Workflow run ID
 
 **Response:**
+
 - `200 OK` - WorkflowRun object with steps array
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/runs/42"
 ```
@@ -667,14 +754,17 @@ curl "http://localhost:8000/api/v1/workflow/runs/42"
 Get lifecycle history events for a specific workflow run.
 
 **Path Parameters:**
+
 - `workflow_id` (integer, required) - Workflow run ID
 
 **Response:**
+
 - `200 OK` - Array of LifecycleHistory objects ordered by start_date
 - `400 Bad Request` - Invalid workflow ID
 - `500 Internal Server Error` - Processing error
 
 **Response Body:**
+
 ```json
 [
   {
@@ -695,11 +785,13 @@ Get lifecycle history events for a specific workflow run.
 ```
 
 **Event Types:**
+
 - `group_start` / `group_end` - Run group lifecycle
 - `item_start` / `item_end` / `item_failed` - Item processing lifecycle
 - `step_start` / `step_end` / `step_failed` - Individual step lifecycle
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/runs/42/lifecycle"
 ```
@@ -713,16 +805,19 @@ Start a new workflow run for a single document.
 **Content-Type:** `application/x-www-form-urlencoded`
 
 **Form Parameters:**
+
 - `doc_id` (string, required) - Document hash to process
 - `workflow_definiton_id` (string, optional) - Workflow to use
 - `param_id` (string, optional) - Parameter set ID
 - `priority` (integer, optional) - Processing priority (default: 0)
 
 **Response:**
+
 - `201 Created` - Workflow run created
 - `500 Internal Server Error` - Processing error
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/workflow/" \
   -d "doc_id=sha256-abc123..." \
@@ -739,13 +834,16 @@ Retry failed workflow steps for a run group.
 **Content-Type:** `application/x-www-form-urlencoded`
 
 **Form Parameters:**
+
 - `run_group_id` (integer, required) - Run group ID to retry
 
 **Response:**
+
 - `201 Created` - Failed steps reset successfully
 - `500 Internal Server Error` - Processing error
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/workflow/retry" \
   -d "run_group_id=5"
@@ -762,13 +860,16 @@ Check document status for a source system.
 **Content-Type:** `application/x-www-form-urlencoded`
 
 **Form Parameters:**
+
 - `source` (string, required) - Source system identifier
 - `hashes` (string, required) - JSON object mapping URIs to hashes
 
 **Response:**
+
 - `200 OK` - Status object indicating new/changed/deleted documents
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/source-status" \
   -d "source=filesystem" \
@@ -784,13 +885,16 @@ curl -X POST "http://localhost:8000/api/v1/source-status" \
 Get workflow durations by run group.
 
 **Query Parameters:**
+
 - `run_group_id` (integer, required) - Run group ID
 
 **Response:**
+
 - `200 OK` - Duration statistics
 - `500 Internal Server Error` - Processing error
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/stats/durations?run_group_id=5"
 ```
@@ -802,13 +906,16 @@ curl "http://localhost:8000/api/v1/stats/durations?run_group_id=5"
 Get workflow step statistics by run group.
 
 **Query Parameters:**
+
 - `run_group_id` (integer, required) - Run group ID
 
 **Response:**
+
 - `200 OK` - Step statistics
 - `500 Internal Server Error` - Processing error
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/stats/step-stats?run_group_id=5"
 ```
@@ -822,9 +929,11 @@ curl "http://localhost:8000/api/v1/stats/step-stats?run_group_id=5"
 List all LanceDB vector databases in the configured directory.
 
 **Response:**
+
 - `200 OK` - List of databases with metadata
 
 **Response Body:**
+
 ```json
 {
   "status": "ok",
@@ -842,6 +951,7 @@ List all LanceDB vector databases in the configured directory.
 ```
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/lancedb/list"
 ```
@@ -853,14 +963,17 @@ curl "http://localhost:8000/api/v1/lancedb/list"
 Get detailed information about a specific LanceDB database.
 
 **Query Parameters:**
+
 - `db` (string, required) - Database name relative to lancedb_dir
 
 **Response:**
+
 - `200 OK` - Database information
 - `404 Not Found` - Database does not exist
 - `500 Internal Server Error` - Failed to open database
 
 **Response Body:**
+
 ```json
 {
   "status": "ok",
@@ -897,6 +1010,7 @@ Get detailed information about a specific LanceDB database.
 ```
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/lancedb/info?db=default"
 ```
@@ -910,13 +1024,16 @@ curl "http://localhost:8000/api/v1/lancedb/info?db=default"
 Optimize and clean up database tables to reduce disk usage.
 
 **Query Parameters:**
+
 - `db` (string, required) - Database name relative to lancedb_dir
 
 **Response:**
+
 - `200 OK` - Vacuum completed successfully
 - `500 Internal Server Error` - Vacuum failed
 
 **Response Body:**
+
 ```json
 {
   "status": "ok"
@@ -924,6 +1041,7 @@ Optimize and clean up database tables to reduce disk usage.
 ```
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/lancedb/vacuum?db=default"
 ```
@@ -937,17 +1055,20 @@ curl "http://localhost:8000/api/v1/lancedb/vacuum?db=default"
 List documents stored in a LanceDB database.
 
 **Query Parameters:**
+
 - `db` (string, required) - Database name relative to lancedb_dir
 - `limit` (integer, optional) - Maximum number of documents to return
 - `offset` (integer, optional) - Number of documents to skip
 - `filter` (string, optional) - SQL WHERE clause to filter documents
 
 **Response:**
+
 - `200 OK` - List of documents
 - `404 Not Found` - Database does not exist
 - `500 Internal Server Error` - Query error
 
 **Response Body:**
+
 ```json
 {
   "status": "ok",
@@ -968,11 +1089,13 @@ List documents stored in a LanceDB database.
 ```
 
 **Example:**
+
 ```bash
 curl "http://localhost:8000/api/v1/lancedb/documents?db=default&limit=10"
 ```
 
 **Example with filter:**
+
 ```bash
 curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIKE%20'%25report%25'"
 ```
@@ -982,6 +1105,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 ## Data Models
 
 ### DocumentBatch
+
 ```json
 {
   "id": 1,
@@ -995,6 +1119,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 ```
 
 ### Document
+
 ```json
 {
   "hash": "sha256-abc123...",
@@ -1005,6 +1130,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 ```
 
 ### DocumentURI
+
 ```json
 {
   "id": 42,
@@ -1017,6 +1143,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 ```
 
 ### WorkflowRun
+
 ```json
 {
   "id": 100,
@@ -1038,6 +1165,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 ```
 
 ### RunStep
+
 ```json
 {
   "id": 500,
@@ -1063,6 +1191,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 ```
 
 ### RunGroup
+
 ```json
 {
   "id": 5,
@@ -1081,6 +1210,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 ```
 
 ### LifecycleHistory
+
 ```json
 {
   "id": 1,
@@ -1099,6 +1229,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 ```
 
 ### RunStatus Enum
+
 - `PENDING` - Not yet started
 - `RUNNING` - Currently executing
 - `COMPLETED` - Finished successfully
@@ -1106,6 +1237,7 @@ curl "http://localhost:8000/api/v1/lancedb/documents?db=default&filter=uri%20LIK
 - `FAILED` - Permanently failed after all retries
 
 ### WorkflowStepType Enum
+
 - `ingest` - Load document
 - `validate` - Validate document
 - `parse` - Extract text/structure
@@ -1129,6 +1261,7 @@ All error responses follow this format:
 ```
 
 Common HTTP status codes:
+
 - `400 Bad Request` - Invalid parameters
 - `403 Forbidden` - Permission denied
 - `404 Not Found` - Resource not found
@@ -1140,5 +1273,6 @@ Common HTTP status codes:
 ## OpenAPI/Swagger Documentation
 
 Interactive API documentation is available at:
+
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`

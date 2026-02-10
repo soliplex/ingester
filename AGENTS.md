@@ -22,7 +22,7 @@ si-cli db-init                                 # Initialize database
 
 ## Project Structure
 
-```
+```text
 src/soliplex/ingester/
 ├── cli.py              # CLI entry point (si-cli)
 ├── server/             # FastAPI app and routes
@@ -125,6 +125,24 @@ When adding features:
 - Do not modify workflows while runs in progress
 - Never commit secrets - use environment variables
 - Always use DAL from `lib/dal.py` for artifact storage
+
+## Documentation Standards
+
+All markdown files are linted by pymarkdown via pre-commit. After editing any `.md` file, run:
+
+```bash
+pre-commit run --all-files pymarkdown                # Lint all markdown
+pre-commit run --files docs/MYFILE.md pymarkdown     # Lint specific file
+```
+
+Common rules enforced (disabled: MD013, MD024, MD033, MD036, MD041, MD060):
+
+- **MD022:** Blank line required after every heading
+- **MD025:** Only one top-level `#` heading per file
+- **MD031:** Blank lines required before and after fenced code blocks
+- **MD032:** Blank lines required before and after lists
+- **MD034:** No bare URLs — wrap in angle brackets `<URL>` or markdown links
+- **MD040:** Fenced code blocks must specify a language (e.g. `` ```bash ``, `` ```python ``)
 
 ## Commit Standards
 

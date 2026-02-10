@@ -77,9 +77,9 @@ After Vite build completes, this script:
 
 ```json
 {
-	"scripts": {
-		"build": "vite build && node scripts/static-filenames.js"
-	}
+  "scripts": {
+    "build": "vite build && node scripts/static-filenames.js"
+  }
 }
 ```
 
@@ -87,7 +87,7 @@ After Vite build completes, this script:
 
 After build:
 
-```
+```text
 build/
 ├── index.html                          # Updated with static names + query strings
 ├── _app/
@@ -121,12 +121,12 @@ build/
 
 <!-- SvelteKit initialization -->
 <script>
-	Promise.all([
-		import('/_app/immutable/entry/start.js?v=1767399045204'),
-		import('/_app/immutable/entry/app.js?v=1767399045204')
-	]).then(([kit, app]) => {
-		kit.start(app, element);
-	});
+    Promise.all([
+        import('/_app/immutable/entry/start.js?v=1767399045204'),
+        import('/_app/immutable/entry/app.js?v=1767399045204')
+    ]).then(([kit, app]) => {
+        kit.start(app, element);
+    });
 </script>
 ```
 

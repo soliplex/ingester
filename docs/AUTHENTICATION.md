@@ -4,7 +4,9 @@ This guide covers setting up authentication for Soliplex Ingester using OAuth2 P
 
 ## Overview
 
-Soliplex Ingester uses [OAuth2 Proxy](https://oauth2-proxy.github.io/oauth2-proxy/) as a reverse proxy to handle OIDC authentication. This approach:
+Soliplex Ingester uses
+[OAuth2 Proxy](https://oauth2-proxy.github.io/oauth2-proxy/)
+as a reverse proxy to handle OIDC authentication. This approach:
 
 - Requires **zero code changes** to the application
 - Supports any OIDC-compliant identity provider
@@ -13,7 +15,7 @@ Soliplex Ingester uses [OAuth2 Proxy](https://oauth2-proxy.github.io/oauth2-prox
 
 ### Architecture
 
-```
+```text
 ┌──────────┐     ┌───────────────┐     ┌─────────────────────┐
 │  User    │────▶│ OAuth2 Proxy  │────▶│ Soliplex Ingester   │
 │ Browser  │     │   (OIDC)      │     │   (API + UI)        │
@@ -64,13 +66,15 @@ OAUTH2_PROXY_REDIRECT_URL=http://localhost:4180/oauth2/callback
 ### 3. Start with Authentication
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.auth up
+docker compose -f docker-compose.yml \
+  -f docker-compose.auth.yml \
+  --env-file .env.auth up
 ```
 
 ### 4. Access the Application
 
-- **With auth:** http://localhost:4180 (redirects to OIDC login)
-- **Direct API (no auth):** http://localhost:8002 (if port still exposed)
+- **With auth:** <http://localhost:4180> (redirects to OIDC login)
+- **Direct API (no auth):** <http://localhost:8002> (if port still exposed)
 
 ---
 
@@ -95,6 +99,7 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.
    - Token Claim Name: `groups`
 
 4. Environment settings:
+
    ```bash
    OAUTH2_PROXY_OIDC_ISSUER_URL=https://keycloak.example.com/realms/your-realm
    # Or use keycloak-oidc provider for role support:
@@ -108,6 +113,7 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.
 3. Enable the following connections as needed
 
 4. Environment settings:
+
    ```bash
    OAUTH2_PROXY_OIDC_ISSUER_URL=https://your-tenant.auth0.com/
    ```
@@ -119,6 +125,7 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.
 3. Create a client secret
 
 4. Environment settings:
+
    ```bash
    OAUTH2_PROXY_OIDC_ISSUER_URL=https://login.microsoftonline.com/{tenant-id}/v2.0
    # Or use azure provider:
@@ -131,6 +138,7 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.
 2. Set Sign-in redirect URI: `http://localhost:4180/oauth2/callback`
 
 3. Environment settings:
+
    ```bash
    OAUTH2_PROXY_OIDC_ISSUER_URL=https://your-org.okta.com
    ```
@@ -207,7 +215,8 @@ async def protected_endpoint(user: dict = Depends(get_current_user)):
 
 ## API Key Fallback
 
-For programmatic access (scripts, CI/CD), you can enable API key authentication alongside OIDC:
+For programmatic access (scripts, CI/CD), you can enable
+API key authentication alongside OIDC:
 
 ### Enable API Key Support
 
@@ -229,7 +238,11 @@ curl -H "Authorization: Bearer your-api-key" http://localhost:4180/api/v1/batch/
 curl -H "Authorization: Bearer your-api-key" http://localhost:8002/api/v1/batch/
 ```
 
-**How it works:** OAuth2 Proxy is configured with `skip_jwt_bearer_tokens = true`, which allows requests with an `Authorization: Bearer` header to pass through without OIDC authentication. The backend then validates the token.
+**How it works:** OAuth2 Proxy is configured with
+`skip_jwt_bearer_tokens = true`, which allows requests
+with an `Authorization: Bearer` header to pass through
+without OIDC authentication.
+The backend then validates the token.
 
 ---
 
@@ -240,6 +253,7 @@ curl -H "Authorization: Bearer your-api-key" http://localhost:8002/api/v1/batch/
 1. Update redirect URL in OIDC provider
 2. Configure SSL certificates
 3. Update environment:
+
    ```bash
    OAUTH2_PROXY_COOKIE_SECURE=true
    OAUTH2_PROXY_REDIRECT_URL=https://your-domain.com/oauth2/callback
@@ -265,7 +279,8 @@ Update the application's CORS settings to only allow your domain.
 
 ### "Invalid redirect" Error
 
-Ensure the redirect URL in `.env.auth` exactly matches what's configured in your OIDC provider.
+Ensure the redirect URL in `.env.auth` exactly matches
+what's configured in your OIDC provider.
 
 ### "Token audience doesn't match"
 
@@ -273,11 +288,13 @@ For Keycloak, add an Audience mapper to your client (see Keycloak section above)
 
 ### Headers Not Reaching Backend
 
-Ensure `set_xauthrequest = true` is in `oauth2-proxy.cfg` and the backend trusts proxy headers.
+Ensure `set_xauthrequest = true` is in `oauth2-proxy.cfg`
+and the backend trusts proxy headers.
 
 ### Session Expires Frequently
 
 Increase cookie lifetime:
+
 ```ini
 # oauth2-proxy.cfg
 cookie_expire = "168h"
@@ -287,6 +304,7 @@ cookie_refresh = "1h"
 ### Debug Logging
 
 Enable verbose logging:
+
 ```ini
 # oauth2-proxy.cfg
 standard_logging = true

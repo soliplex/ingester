@@ -21,39 +21,44 @@ This guide covers deploying Soliplex Ingester using Docker Compose for productio
 ### Starting Services
 
 1. **Navigate to docker directory:**
-```bash
-cd docker
-```
+
+   ```bash
+   cd docker
+   ```
 
 2. **Start all services:**
-```bash
-docker-compose up -d
-```
+
+   ```bash
+   docker-compose up -d
+   ```
 
 3. **Verify services are running:**
-```bash
-docker-compose ps
-```
+
+   ```bash
+   docker-compose ps
+   ```
 
 4. **Access the application:**
-   - **Web UI**: http://localhost:8002
-   - **API Documentation**: http://localhost:8002/docs
+   - **Web UI**: <http://localhost:8002>
+   - **API Documentation**: <http://localhost:8002/docs>
    - **PostgreSQL**: localhost:5432
-   - **SeaweedFS**: http://localhost:8333 (S3) / http://localhost:9333 (Admin)
+   - **SeaweedFS**: <http://localhost:8333> (S3) / <http://localhost:9333> (Admin)
 
 5. **View logs:**
-```bash
-# All services
-docker-compose logs -f
 
-# Specific service
-docker-compose logs -f soliplex_ingester
-```
+   ```bash
+   # All services
+   docker-compose logs -f
+
+   # Specific service
+   docker-compose logs -f soliplex_ingester
+   ```
 
 6. **Stop services:**
-```bash
-docker-compose down
-```
+
+   ```bash
+   docker-compose down
+   ```
 
 ---
 
@@ -119,11 +124,13 @@ graph TB
 ### Resource Requirements
 
 **Minimum (Development - No GPU):**
+
 - CPU: 4 cores
 - RAM: 8 GB
 - Disk: 20 GB
 
 **Recommended (Production with GPU):**
+
 - CPU: 16+ cores
 - RAM: 64+ GB
 - GPU: NVIDIA GPU with 24+ GB VRAM (for Docling + Ollama)
@@ -136,38 +143,42 @@ graph TB
 ### Required Software
 
 1. **Docker Engine 20.10+**
-```bash
-docker --version
-```
+
+   ```bash
+   docker --version
+   ```
 
 2. **Docker Compose 2.0+**
-```bash
-docker-compose --version
-```
+
+   ```bash
+   docker-compose --version
+   ```
 
 ### For GPU Support
 
-3. **NVIDIA Container Toolkit**
+1. **NVIDIA Container Toolkit**
 
-Install NVIDIA Container Toolkit for GPU support:
+   Install NVIDIA Container Toolkit for GPU support:
 
-**Ubuntu/Debian:**
-```bash
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+   **Ubuntu/Debian:**
 
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-sudo systemctl restart docker
-```
+   ```bash
+   distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+   curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+     sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
-**Verify GPU access:**
-```bash
-docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
-```
+   sudo apt-get update
+   sudo apt-get install -y nvidia-container-toolkit
+   sudo systemctl restart docker
+   ```
+
+   **Verify GPU access:**
+
+   ```bash
+   docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
+   ```
 
 ---
 
@@ -229,12 +240,14 @@ volumes:
 ```
 
 **Local bind mounts:**
+
 ```yaml
 ./file_store:/var/soliplex/file_store   # Document artifacts
 ./lancedb:/var/soliplex/lancedb         # Vector database
 ```
 
 **Backup volumes:**
+
 ```bash
 # Backup PostgreSQL
 docker-compose exec postgres pg_dump -U postgres soliplex_attrib > backup.sql
@@ -244,6 +257,7 @@ docker run --rm -v postgres_data:/data -v $(pwd):/backup alpine tar czf /backup/
 ```
 
 **Restore volumes:**
+
 ```bash
 docker run --rm -v postgres_data:/data -v $(pwd):/backup alpine sh -c "cd /data && tar xzf /backup/postgres_data.tar.gz"
 ```
@@ -265,12 +279,14 @@ deploy:
 ```
 
 **Check available GPUs:**
+
 ```bash
 nvidia-smi -L
 ```
 
 **Example output:**
-```
+
+```text
 GPU 0: NVIDIA A100-SXM4-80GB
 GPU 1: NVIDIA A100-SXM4-80GB
 GPU 2: NVIDIA A100-SXM4-80GB
@@ -280,11 +296,13 @@ GPU 3: NVIDIA A100-SXM4-80GB
 **Multiple services sharing one GPU:**
 
 The default configuration runs 3 Docling instances + Ollama all on GPU 3. This works if:
+
 - GPU has sufficient VRAM (24+ GB recommended)
 - Memory limits are properly configured
 - Workload is I/O bound (services wait on data)
 
 **Distribute across GPUs:**
+
 ```yaml
 # Docling on GPU 0
 device_ids: ['0']
@@ -316,6 +334,7 @@ All services run on the `soliplex_net` bridge network for internal communication
 | 9333 | 9333 | seaweedfs | Admin UI |
 
 **Change ports if conflicts exist:**
+
 ```yaml
 ports:
   - "8080:8000"  # Map to different host port
@@ -328,6 +347,7 @@ ports:
 ### Soliplex Ingester
 
 **Configuration:**
+
 ```yaml
 soliplex_ingester:
   image: soliplex_ingester:latest
@@ -348,6 +368,7 @@ soliplex_ingester:
 ```
 
 **Building the image:**
+
 ```bash
 # From project root
 docker build -t soliplex_ingester:latest .
@@ -376,6 +397,7 @@ soliplex_worker:
 ### PostgreSQL
 
 **Configuration:**
+
 ```yaml
 postgres:
   image: postgres:18-trixie
@@ -415,7 +437,8 @@ GRANT ALL PRIVILEGES ON DATABASE soliplex_attrib TO soliplex_attrib;
 4. Enable SSL/TLS connections
 
 **Connection string format:**
-```
+
+```text
 postgresql+psycopg://user:password@host:port/database
 ```
 
@@ -424,6 +447,7 @@ postgresql+psycopg://user:password@host:port/database
 Docling converts PDF documents to markdown and structured JSON.
 
 **Configuration (per instance):**
+
 ```yaml
 docling:
   image: ghcr.io/docling-project/docling-serve-cu128
@@ -473,6 +497,7 @@ docling:
 **Without GPU:**
 
 Remove GPU configuration and use CPU-only image:
+
 ```yaml
 docling:
   image: ghcr.io/docling-project/docling-serve  # CPU-only
@@ -489,6 +514,7 @@ docling:
 HAProxy distributes requests across multiple Docling instances.
 
 **Configuration:**
+
 ```yaml
 haproxy:
   image: docker.io/library/haproxy:3.3-alpine
@@ -537,6 +563,7 @@ Docling parsing is stateful for multi-step conversions. The ingester client uses
 Ollama provides embedding generation for vector search.
 
 **Configuration:**
+
 ```yaml
 ollama_img:
   image: ollama/ollama:latest
@@ -556,12 +583,14 @@ ollama_img:
 ```
 
 **Pull models:**
+
 ```bash
 docker-compose exec ollama_img ollama pull nomic-embed-text
 docker-compose exec ollama_img ollama pull llama2
 ```
 
 **List installed models:**
+
 ```bash
 docker-compose exec ollama_img ollama list
 ```
@@ -569,6 +598,7 @@ docker-compose exec ollama_img ollama list
 **Ingester Configuration:**
 
 Set in `.env`:
+
 ```bash
 OLLAMA_BASE_URL=http://ollama_img:11434
 ```
@@ -578,6 +608,7 @@ OLLAMA_BASE_URL=http://ollama_img:11434
 SeaweedFS provides S3-compatible object storage for artifacts.
 
 **Configuration:**
+
 ```yaml
 seaweedfs:
   image: ghcr.io/chrislusf/seaweedfs
@@ -604,6 +635,7 @@ seaweedfs-init:
 ```
 
 **Example init.sh:**
+
 ```bash
 #!/bin/sh
 # Wait for SeaweedFS to start
@@ -618,6 +650,7 @@ curl -X PUT http://seaweedfs:8333/soliplex-artifacts
 **Ingester Configuration:**
 
 Set in `.env`:
+
 ```bash
 FILE_STORE_TARGET=s3
 S3_ENDPOINT_URL=http://seaweedfs:8333
@@ -646,11 +679,13 @@ For production deployments with authentication, use `docker-compose.auth.yml`.
 ### OAuth2 Proxy Stack
 
 The auth configuration adds:
+
 - **NGINX** - Reverse proxy with SSL termination
 - **OAuth2 Proxy** - OIDC authentication
 - **Soliplex Ingester** - Configured to trust proxy headers
 
 **Start with authentication:**
+
 ```bash
 docker-compose -f docker-compose.yml -f docker-compose.auth.yml up -d
 ```
@@ -659,33 +694,33 @@ docker-compose -f docker-compose.yml -f docker-compose.auth.yml up -d
 
 1. **Create `.env.auth` file:**
 
-See `docker/.env.auth.example`:
+   See `docker/.env.auth.example`:
 
-```bash
-# OIDC Provider Configuration
-OAUTH2_PROVIDER=oidc
-OAUTH2_OIDC_ISSUER_URL=https://your-oidc-provider.com
-OAUTH2_CLIENT_ID=your_client_id
-OAUTH2_CLIENT_SECRET=your_client_secret
-OAUTH2_REDIRECT_URL=https://your-domain.com/oauth2/callback
+   ```bash
+   # OIDC Provider Configuration
+   OAUTH2_PROVIDER=oidc
+   OAUTH2_OIDC_ISSUER_URL=https://your-oidc-provider.com
+   OAUTH2_CLIENT_ID=your_client_id
+   OAUTH2_CLIENT_SECRET=your_client_secret
+   OAUTH2_REDIRECT_URL=https://your-domain.com/oauth2/callback
 
-# OAuth2 Proxy Configuration
-OAUTH2_COOKIE_SECRET=random_32_char_secret_here
-OAUTH2_COOKIE_DOMAIN=your-domain.com
+   # OAuth2 Proxy Configuration
+   OAUTH2_COOKIE_SECRET=random_32_char_secret_here
+   OAUTH2_COOKIE_DOMAIN=your-domain.com
 
-# Soliplex Ingester Configuration
-AUTH_TRUST_PROXY_HEADERS=true
-AUTH_USER_HEADER=X-Forwarded-User
-AUTH_EMAIL_HEADER=X-Forwarded-Email
-```
+   # Soliplex Ingester Configuration
+   AUTH_TRUST_PROXY_HEADERS=true
+   AUTH_USER_HEADER=X-Forwarded-User
+   AUTH_EMAIL_HEADER=X-Forwarded-Email
+   ```
 
 2. **Configure NGINX:**
 
-Edit `docker/nginx/nginx.conf` for your domain and SSL certificates.
+   Edit `docker/nginx/nginx.conf` for your domain and SSL certificates.
 
 3. **Configure OAuth2 Proxy:**
 
-Edit `docker/oauth2-proxy/oauth2-proxy.cfg` for your OIDC provider.
+   Edit `docker/oauth2-proxy/oauth2-proxy.cfg` for your OIDC provider.
 
 **See [AUTHENTICATION.md](AUTHENTICATION.md) for detailed setup instructions.**
 
@@ -696,42 +731,46 @@ Edit `docker/oauth2-proxy/oauth2-proxy.cfg` for your OIDC provider.
 ### Security Best Practices
 
 1. **Use Strong Passwords:**
-```bash
-# Generate secure password
-openssl rand -base64 32
-```
+
+   ```bash
+   # Generate secure password
+   openssl rand -base64 32
+   ```
 
 2. **Use Docker Secrets:**
-```yaml
-secrets:
-  db_password:
-    file: ./secrets/db_password.txt
 
-services:
-  postgres:
-    secrets:
-      - db_password
-    environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-```
+   ```yaml
+   secrets:
+     db_password:
+       file: ./secrets/db_password.txt
+
+   services:
+     postgres:
+       secrets:
+         - db_password
+       environment:
+         POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+   ```
 
 3. **Restrict Network Access:**
-```yaml
-services:
-  postgres:
-    ports: []  # Don't expose to host
-    networks:
-      - soliplex_net  # Internal only
-```
+
+   ```yaml
+   services:
+     postgres:
+       ports: []  # Don't expose to host
+       networks:
+         - soliplex_net  # Internal only
+   ```
 
 4. **Enable SSL/TLS:**
 
-Use NGINX with Let's Encrypt certificates or cloud load balancer.
+   Use NGINX with Let's Encrypt certificates or cloud load balancer.
 
 5. **Scan Images:**
-```bash
-docker scan soliplex_ingester:latest
-```
+
+   ```bash
+   docker scan soliplex_ingester:latest
+   ```
 
 ### Scaling Configuration
 
@@ -821,16 +860,19 @@ logging:
 ### Health Checks
 
 **Check service status:**
+
 ```bash
 docker-compose ps
 ```
 
 **View resource usage:**
+
 ```bash
 docker stats
 ```
 
 **Check specific service:**
+
 ```bash
 docker-compose exec soliplex_ingester curl http://localhost:8000/api/v1/stats/durations
 ```
@@ -838,6 +880,7 @@ docker-compose exec soliplex_ingester curl http://localhost:8000/api/v1/stats/du
 ### Log Management
 
 **View logs:**
+
 ```bash
 # All services
 docker-compose logs -f
@@ -853,6 +896,7 @@ docker-compose logs --since 2026-01-22T10:00:00
 ```
 
 **Export logs:**
+
 ```bash
 docker-compose logs > logs.txt
 ```
@@ -860,16 +904,19 @@ docker-compose logs > logs.txt
 ### Database Maintenance
 
 **Backup:**
+
 ```bash
 docker-compose exec postgres pg_dump -U postgres soliplex_attrib | gzip > backup_$(date +%Y%m%d).sql.gz
 ```
 
 **Restore:**
+
 ```bash
 gunzip < backup_20260122.sql.gz | docker-compose exec -T postgres psql -U postgres soliplex_attrib
 ```
 
 **Vacuum database:**
+
 ```bash
 docker-compose exec postgres psql -U postgres -d soliplex_attrib -c "VACUUM ANALYZE;"
 ```
@@ -877,11 +924,13 @@ docker-compose exec postgres psql -U postgres -d soliplex_attrib -c "VACUUM ANAL
 ### Vector Database Maintenance
 
 **Vacuum LanceDB:**
+
 ```bash
 curl "http://localhost:8002/api/v1/lancedb/vacuum?db=default"
 ```
 
 **Check database size:**
+
 ```bash
 docker-compose exec soliplex_ingester du -sh /var/soliplex/lancedb
 ```
@@ -889,18 +938,21 @@ docker-compose exec soliplex_ingester du -sh /var/soliplex/lancedb
 ### Updates
 
 **Update images:**
+
 ```bash
 docker-compose pull
 docker-compose up -d
 ```
 
 **Update single service:**
+
 ```bash
 docker-compose pull soliplex_ingester
 docker-compose up -d soliplex_ingester
 ```
 
 **Rebuild custom image:**
+
 ```bash
 docker build -t soliplex_ingester:latest .
 docker-compose up -d soliplex_ingester
@@ -915,16 +967,19 @@ docker-compose up -d soliplex_ingester
 #### Services Won't Start
 
 **Check logs:**
+
 ```bash
 docker-compose logs <service_name>
 ```
 
 **Check configuration:**
+
 ```bash
 docker-compose config
 ```
 
 **Validate environment variables:**
+
 ```bash
 docker-compose exec soliplex_ingester env | grep DOC_DB_URL
 ```
@@ -934,12 +989,14 @@ docker-compose exec soliplex_ingester env | grep DOC_DB_URL
 **Error:** `connection to server at "postgres" (172.18.0.2), port 5432 failed`
 
 **Solutions:**
+
 1. Verify postgres is running: `docker-compose ps postgres`
 2. Check network: `docker-compose exec soliplex_ingester ping postgres`
 3. Verify credentials in `DOC_DB_URL`
 4. Check postgres logs: `docker-compose logs postgres`
 
 **Test connection:**
+
 ```bash
 docker-compose exec soliplex_ingester psql "postgresql://soliplex_attrib:soliplex_attrib@postgres:5432/soliplex_attrib"
 ```
@@ -949,11 +1006,13 @@ docker-compose exec soliplex_ingester psql "postgresql://soliplex_attrib:soliple
 **Error:** `could not select device driver "" with capabilities: [[gpu]]`
 
 **Solutions:**
+
 1. Install NVIDIA Container Toolkit (see [Prerequisites](#prerequisites))
 2. Restart Docker daemon: `sudo systemctl restart docker`
 3. Verify GPU access: `docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi`
 
 **Check GPU usage:**
+
 ```bash
 docker-compose exec docling nvidia-smi
 ```
@@ -963,12 +1022,14 @@ docker-compose exec docling nvidia-smi
 **Error:** `CUDA out of memory` or container crashes
 
 **Solutions:**
+
 1. Reduce `DOCLING_NUM_THREADS` in docker-compose.yml
 2. Reduce `DOCLING_SERVE_ENG_LOC_NUM_WORKERS`
 3. Increase GPU memory by using dedicated GPU per instance
 4. Process smaller documents or reduce concurrency
 
 **Monitor memory:**
+
 ```bash
 docker stats docling
 ```
@@ -978,90 +1039,106 @@ docker stats docling
 **Error:** `bind: address already in use`
 
 **Solutions:**
-1. Check what's using the port:
-```bash
-# Linux/macOS
-lsof -i :8002
 
-# Windows
-netstat -ano | findstr :8002
-```
+1. Check what's using the port:
+
+   ```bash
+   # Linux/macOS
+   lsof -i :8002
+
+   # Windows
+   netstat -ano | findstr :8002
+   ```
 
 2. Change port mapping in docker-compose.yml:
-```yaml
-ports:
-  - "8080:8000"  # Use different host port
-```
+
+   ```yaml
+   ports:
+     - "8080:8000"  # Use different host port
+   ```
 
 #### Volume Permission Errors
 
 **Error:** `permission denied` when accessing volumes
 
 **Solutions:**
+
 1. Check ownership:
-```bash
-ls -la ./file_store ./lancedb
-```
+
+   ```bash
+   ls -la ./file_store ./lancedb
+   ```
 
 2. Fix permissions:
-```bash
-sudo chown -R $(id -u):$(id -g) ./file_store ./lancedb
-```
+
+   ```bash
+   sudo chown -R $(id -u):$(id -g) ./file_store ./lancedb
+   ```
 
 3. Or use Docker's user mapping:
-```yaml
-user: "${UID}:${GID}"
-```
+
+   ```yaml
+   user: "${UID}:${GID}"
+   ```
 
 #### SeaweedFS Connection Errors
 
 **Error:** `Unable to connect to S3 endpoint`
 
 **Solutions:**
+
 1. Verify SeaweedFS is running: `docker-compose ps seaweedfs`
 2. Check initialization completed: `docker-compose logs seaweedfs-init`
 3. Test S3 endpoint:
-```bash
-curl http://localhost:8333
-```
+
+   ```bash
+   curl http://localhost:8333
+   ```
 
 4. Verify bucket exists:
-```bash
-docker-compose exec seaweedfs weed shell
-> s3.bucket.list
-```
+
+   ```bash
+   docker-compose exec seaweedfs weed shell
+   > s3.bucket.list
+   ```
 
 #### HAProxy Routing Issues
 
 **Symptom:** Requests timing out or routing to unhealthy Docling instances
 
 **Debug:**
+
 1. Check HAProxy stats (if enabled):
-```
-http://localhost:5004/stats
-```
+
+   ```text
+   http://localhost:5004/stats
+   ```
 
 2. View HAProxy logs:
-```bash
-docker-compose logs haproxy
-```
+
+   ```bash
+   docker-compose logs haproxy
+   ```
 
 3. Test Docling instances directly:
-```bash
-curl http://localhost:5000/v1/health
-curl http://localhost:5001/v1/health
-```
+
+   ```bash
+   curl http://localhost:5000/v1/health
+   curl http://localhost:5001/v1/health
+   ```
 
 4. Restart HAProxy:
-```bash
-docker-compose restart haproxy
-```
+
+   ```bash
+   docker-compose restart haproxy
+   ```
 
 ### Performance Issues
 
 #### Slow Document Processing
 
 **Diagnose:**
+
 ```bash
 # Check worker activity
 curl http://localhost:8002/api/v1/workflow/steps?status=RUNNING
@@ -1074,6 +1151,7 @@ docker-compose logs docling | grep -i queue
 ```
 
 **Solutions:**
+
 1. Increase worker concurrency: `WORKER_TASK_COUNT=20`
 2. Add more Docling instances
 3. Increase `DOCLING_CONCURRENCY`
@@ -1082,11 +1160,13 @@ docker-compose logs docling | grep -i queue
 #### High Memory Usage
 
 **Monitor:**
+
 ```bash
 docker stats --no-stream
 ```
 
 **Solutions:**
+
 1. Reduce concurrency settings
 2. Increase memory limits
 3. Add swap space (not recommended for production)
@@ -1095,11 +1175,13 @@ docker stats --no-stream
 #### Disk Space Issues
 
 **Check usage:**
+
 ```bash
 docker system df
 ```
 
 **Clean up:**
+
 ```bash
 # Remove unused images
 docker image prune -a
@@ -1118,7 +1200,7 @@ docker system prune -a --volumes
 
 #### Reset Everything
 
-**⚠️ This deletes all data!**
+**This deletes all data!**
 
 ```bash
 docker-compose down -v
@@ -1157,9 +1239,9 @@ docker-compose up -d --force-recreate soliplex_ingester
 - **API Reference:** [API.md](API.md)
 - **Configuration Guide:** [CONFIGURATION.md](CONFIGURATION.md)
 - **Authentication Guide:** [AUTHENTICATION.md](AUTHENTICATION.md)
-- **Docling Documentation:** https://docling-project.github.io/docling/
-- **Docker Compose Documentation:** https://docs.docker.com/compose/
-- **NVIDIA Container Toolkit:** https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/
+- **Docling Documentation:** <https://docling-project.github.io/docling/>
+- **Docker Compose Documentation:** <https://docs.docker.com/compose/>
+- **NVIDIA Container Toolkit:** <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/>
 
 ---
 

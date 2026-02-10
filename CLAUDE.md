@@ -3,13 +3,14 @@
 Python project to load documents into a RAG system using haiku.rag and docling. Uses workflows and parameters defined in YAML files to configure document processing (chunking, embedding, storing).
 
 **Integration Points:**
+
 - Svelte UI in `ui/` directory (see [ui/CLAUDE.md](ui/CLAUDE.md))
 - REST API endpoints for document management and workflow control
 - Agent processes managed by github.com/soliplex/ingester-agents
 
 ---
 
-# Documentation
+## Documentation
 
 Comprehensive docs in `docs/` folder - **always check these first**:
 
@@ -25,7 +26,7 @@ Comprehensive docs in `docs/` folder - **always check these first**:
 
 ---
 
-# Quick Reference
+## Quick Reference
 
 ```bash
 uv sync                                    # Install dependencies

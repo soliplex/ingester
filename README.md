@@ -80,17 +80,20 @@ Soliplex ingester has been designed alongside [agents](https://github.com/solipl
 ## Quick Links
 
 ### For New Users
+
 1. Start with [Getting Started](docs/GETTING_STARTED.md)
 2. Review [Architecture](docs/ARCHITECTURE.md) to understand the system
 3. Explore [API Reference](docs/API.md) for integration
 
 ### For Developers
+
 1. Read [Architecture](docs/ARCHITECTURE.md) for system design
 2. Study [Workflows](docs/WORKFLOWS.md) to understand processing
 3. Check [Database](docs/DATABASE.md) for data models
 4. Review [Configuration](docs/CONFIGURATION.md) for environment setup
 
 ### For Operations
+
 1. Start with [Docker Deployment](docs/DOCKER.md) for production setup
 2. Review [Configuration](docs/CONFIGURATION.md) for deployment settings
 3. Use [CLI Reference](docs/CLI.md) for management commands
@@ -101,6 +104,7 @@ Soliplex ingester has been designed alongside [agents](https://github.com/solipl
 ## Document Summaries
 
 ### GETTING_STARTED.md
+
 Step-by-step guide to:
 - Install Soliplex Ingester
 - Configure the system
@@ -115,6 +119,7 @@ Step-by-step guide to:
 ---
 
 ### ARCHITECTURE.md
+
 Technical overview covering:
 - System components (API server, workers, storage)
 - Workflow execution model
@@ -129,6 +134,7 @@ Technical overview covering:
 ---
 
 ### API.md
+
 Complete REST API reference including:
 - Document ingestion endpoints
 - Batch management APIs
@@ -143,6 +149,7 @@ Complete REST API reference including:
 ---
 
 ### WORKFLOWS.md
+
 In-depth workflow documentation:
 - Workflow concepts and terminology
 - Step types (ingest, parse, chunk, embed, store)
@@ -160,6 +167,7 @@ In-depth workflow documentation:
 ---
 
 ### DATABASE.md
+
 Database schema reference covering:
 - All table definitions
 - Field types and constraints
@@ -176,6 +184,7 @@ Database schema reference covering:
 ---
 
 ### CONFIGURATION.md
+
 Comprehensive configuration guide:
 - All environment variables
 - Default values and types
@@ -194,6 +203,7 @@ Comprehensive configuration guide:
 ---
 
 ### CLI.md
+
 Command-line tool reference:
 - All CLI commands with options
 - Usage examples
@@ -210,6 +220,7 @@ Command-line tool reference:
 ---
 
 ### DOCKER.md
+
 Comprehensive Docker deployment guide:
 - Quick start with docker-compose
 - Service architecture and overview
@@ -228,6 +239,7 @@ Comprehensive Docker deployment guide:
 ---
 
 ### PARAMETER_SETS.md
+
 Parameter set configuration reference:
 - Complete YAML schema documentation
 - Parse, chunk, embed, and store configuration
@@ -243,9 +255,6 @@ Parameter set configuration reference:
 
 ---
 
-
-
-
 ### Configuration Examples
 
 Check `config/` directory for:
@@ -257,6 +266,7 @@ Check `config/` directory for:
 For production deployment with Docker Compose, see the **[Docker Deployment Guide](docs/DOCKER.md)**.
 
 **Quick Start:**
+
 ```bash
 cd docker
 docker-compose up -d
@@ -270,8 +280,8 @@ The docker-compose configuration includes:
 - **SeaweedFS** - S3-compatible object storage
 
 **Access the application:**
-- **Web UI:** http://localhost:8002
-- **API Docs:** http://localhost:8002/docs
+- **Web UI:** <http://localhost:8002>
+- **API Docs:** <http://localhost:8002/docs>
 
 **Comprehensive guide includes:**
 - Service configuration and resource requirements
@@ -316,7 +326,6 @@ Found an error or unclear section? Please:
 - **Version:** 0.1.0
 - **Python:** 3.12+
 
-
 ## License
 
 See LICENSE file in project root.
@@ -326,18 +335,17 @@ See LICENSE file in project root.
 ## Getting Help
 
 ### Documentation Issues
+
 - Found a mistake? Open an issue
 - Need clarification? Start a discussion
 - Have suggestions? Submit a pull request
 
-
-
-
 ### Related Documentation
-- **HaikuRAG:** https://github.com/ggozad/haiku.rag
-- **Docling:** https://docling-project.github.io/docling/
-- **LanceDB:** https://lancedb.com/docs/
-- **Soliplex:** https://github.com/soliplex/soliplex
+
+- **HaikuRAG:** <https://github.com/ggozad/haiku.rag>
+- **Docling:** <https://docling-project.github.io/docling/>
+- **LanceDB:** <https://lancedb.com/docs/>
+- **Soliplex:** <https://github.com/soliplex/soliplex>
 
 ---
 

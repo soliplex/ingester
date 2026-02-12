@@ -1019,7 +1019,10 @@ async def get_run_group_durations(run_group_id: int) -> list[tuple]:
     from soliplex.ingester.lib.config import get_settings
 
     settings = get_settings()
-    if "postgresql" not in settings.doc_db_url:
+    doc_db_url = (
+        settings.doc_db_url.get_secret_value() if hasattr(settings.doc_db_url, "get_secret_value") else settings.doc_db_url
+    )
+    if "postgresql" not in doc_db_url:
         raise RuntimeError("get_run_group_durations requires PostgreSQL (uses PostgreSQL-specific functions)")
 
     async with get_session() as session:
@@ -1086,7 +1089,10 @@ async def get_step_stats(run_group_id: int) -> list[tuple]:
     from soliplex.ingester.lib.config import get_settings
 
     settings = get_settings()
-    if "postgresql" not in settings.doc_db_url:
+    doc_db_url = (
+        settings.doc_db_url.get_secret_value() if hasattr(settings.doc_db_url, "get_secret_value") else settings.doc_db_url
+    )
+    if "postgresql" not in doc_db_url:
         raise RuntimeError("get_step_stats requires PostgreSQL (uses PostgreSQL-specific functions)")
 
     async with get_session() as session:

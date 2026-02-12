@@ -2,7 +2,6 @@ import asyncio
 import http.cookiejar as cj
 import json
 import logging
-import os
 from io import BytesIO
 
 import aiohttp
@@ -15,8 +14,7 @@ from soliplex.ingester.lib.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-DOCLING_PATH = os.getenv("DOCLING_PATH", ".venv/scripts/docling")
-DOCLING_PARAMS = os.getenv("DOCLING_PARAMS", " --no-ocr --no-tables ")
+
 SMALLEST_PNG = (
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 )

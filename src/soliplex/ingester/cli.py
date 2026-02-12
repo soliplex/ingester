@@ -81,7 +81,7 @@ def db_init():
     from sqlmodel import SQLModel
 
     settings = get_settings()
-    engine = create_engine(settings.doc_db_url)
+    engine = create_engine(settings.doc_db_url.get_secret_value())
     SQLModel.metadata.create_all(engine)
     # run_migrations()
 

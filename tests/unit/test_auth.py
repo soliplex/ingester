@@ -21,6 +21,7 @@ from soliplex.ingester.lib.auth import AuthenticatedUser
 from soliplex.ingester.lib.auth import get_current_user
 from soliplex.ingester.lib.auth import get_user_from_proxy_headers
 from soliplex.ingester.lib.auth import require_auth
+from soliplex.ingester.lib.auth import require_auth_in_production
 from soliplex.ingester.lib.auth import validate_api_key
 from soliplex.ingester.lib.config import Settings
 
@@ -469,3 +470,60 @@ class TestAuthenticatedUserDataclass:
         assert user.email == "test@example.com"
         assert user.groups == ["admin", "users"]
         assert user.method == "proxy"
+
+
+class TestProductionMode:
+    """Tests for production mode authentication requirements."""
+
+    @pytest.mark.asyncio
+    async def test_production_mode_blocks_anonymous_user(self):
+        """Test that production mode blocks anonymous users."""
+        settings = Mock(spec=Settings)
+        settings.production_mode = True
+        settings.api_key_enabled = False
+        settings.auth_trust_proxy_headers = False
+
+        user = AuthenticatedUser(identity="anonymous", method="none")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_auth_in_production(user, settings)
+
+        assert exc_info.value.status_code == 401
+        assert "production mode" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_production_mode_allows_authenticated_user(self):
+        """Test that production mode allows authenticated users."""
+        settings = Mock(spec=Settings)
+        settings.production_mode = True
+
+        user = AuthenticatedUser(identity="api-client", method="api-key")
+        result = await require_auth_in_production(user, settings)
+
+        assert result.identity == "api-client"
+        assert result.method == "api-key"
+
+    @pytest.mark.asyncio
+    async def test_development_mode_allows_anonymous_user(self):
+        """Test that development mode (production_mode=False) allows anonymous users."""
+        settings = Mock(spec=Settings)
+        settings.production_mode = False
+
+        user = AuthenticatedUser(identity="anonymous", method="none")
+        result = await require_auth_in_production(user, settings)
+
+        assert result.identity == "anonymous"
+        assert result.method == "none"
+
+    @pytest.mark.asyncio
+    async def test_development_mode_allows_authenticated_user(self):
+        """Test that development mode also allows authenticated users."""
+        settings = Mock(spec=Settings)
+        settings.production_mode = False
+
+        user = AuthenticatedUser(identity="testuser", email="test@example.com", method="proxy")
+        result = await require_auth_in_production(user, settings)
+
+        assert result.identity == "testuser"
+        assert result.email == "test@example.com"
+        assert result.method == "proxy"

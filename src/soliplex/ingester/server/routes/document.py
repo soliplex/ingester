@@ -5,17 +5,28 @@ import logging
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import Form
+from fastapi import Request
 from fastapi import Response
 from fastapi import UploadFile
 from fastapi import status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib import workflow as workflow
 from soliplex.ingester.lib.auth import get_current_user
+from soliplex.ingester.lib.auth import require_auth_in_production
+from soliplex.ingester.lib.config import get_settings
 from soliplex.ingester.lib.dal import get_storage_operator
 from soliplex.ingester.lib.models import ArtifactType
 
 logger = logging.getLogger(__name__)
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
+# Get settings for rate limiting configuration
+settings = get_settings()
 
 doc_router = APIRouter(prefix="/api/v1/document", tags=["document"], dependencies=[Depends(get_current_user)])
 
@@ -36,8 +47,10 @@ async def get_docs(response: Response, source: str = None, batch_id: int = None)
         }
 
 
-@doc_router.post("/ingest-document", status_code=status.HTTP_201_CREATED)
+@doc_router.post("/ingest-document", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_auth_in_production)])
+@limiter.limit(settings.rate_limit_ingest)
 async def ingest_document(
+    request: Request,
     response: Response,
     file: UploadFile = None,
     input_uri: str = Form(None),
@@ -92,11 +105,17 @@ async def ingest_document(
     except KeyError as e:
         logger.exception("Error ingesting document")
         response.status_code = status.HTTP_400_BAD_REQUEST
-        return {"error": str(e)}
+        settings = get_settings()
+        if settings.debug:
+            return {"error": str(e)}
+        return {"error": "Invalid request. Please check your input and try again."}
     except Exception as ex:
         logger.exception("Error ingesting document")
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return {"error": str(ex)}
+        settings = get_settings()
+        if settings.debug:
+            return {"error": str(ex)}
+        return {"error": "An internal error occurred. Please contact support."}
     else:
         return res
 

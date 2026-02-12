@@ -9,8 +9,13 @@ from fastapi import FastAPI
 from fastapi import Form
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib.auth import get_current_user
@@ -25,6 +30,9 @@ from .routes.sync import router as sync_router
 from .routes.workflow import wf_router
 
 logger = logging.getLogger(__name__)
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -48,13 +56,43 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Get settings for middleware configuration
+settings = get_settings()
+
+# Configure CORS with environment-based origins
+allowed_origins = settings.allowed_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=allowed_origins,  # Restrict to specific domains
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Be explicit
+    allow_headers=["Content-Type", "Authorization", "X-Forwarded-User", "X-Forwarded-Email"],  # Be specific
 )
+
+# Add trusted host middleware (configure for production)
+trusted_hosts = settings.trusted_hosts.split(",")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
+
+
+# Add security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    # Only add HSTS in production with HTTPS
+    if settings.enable_hsts:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
 # API router with authentication dependency
 # Auth is only enforced when API_KEY_ENABLED=true or AUTH_TRUST_PROXY_HEADERS=true
 v1_router = APIRouter(prefix="/api/v1", dependencies=[Depends(get_current_user)])

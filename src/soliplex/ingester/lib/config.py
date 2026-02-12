@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -10,13 +11,14 @@ class S3Settings(BaseSettings):
     bucket: str = "default"
     endpoint_url: str = "default"
     access_key_id: str = "default"
-    access_secret: str = "default"
+    access_secret: SecretStr = "default"
     region: str = "default"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_nested_delimiter="__", env_nested_max_split=1)
-    doc_db_url: str
+    model_config = SettingsConfigDict(env_nested_delimiter="__", env_nested_max_split=1, secrets_dir="/run/secrets")
+    doc_db_url: SecretStr
+    doc_db_password: SecretStr | None = None
     docling_server_url: str = "http://localhost:5001/v1"
     docling_chunk_server_url: str = "http://localhost:5001/v1"
     docling_http_timeout: int = 600
@@ -50,6 +52,33 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def substitute_db_password(self) -> "Settings":
+        """Substitute XXXX placeholder in doc_db_url with doc_db_password if specified."""
+        # Only substitute if password is provided
+        if self.doc_db_password is None:
+            return self
+
+        doc_db_url_str = self.doc_db_url.get_secret_value()
+        doc_db_password_str = self.doc_db_password.get_secret_value()
+
+        # Only substitute if password is non-empty and XXXX placeholder exists in URL
+        if doc_db_password_str and "XXXX" in doc_db_url_str:
+            updated_url = doc_db_url_str.replace("XXXX", doc_db_password_str)
+            self.doc_db_url = SecretStr(updated_url)
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_production_auth(self) -> "Settings":
+        """Ensure authentication is enabled when in production mode."""
+        if self.production_mode and not (self.api_key_enabled or self.auth_trust_proxy_headers):
+            raise ValueError(
+                "Production mode requires authentication to be enabled. "
+                "Set API_KEY_ENABLED=true or AUTH_TRUST_PROXY_HEADERS=true"
+            )
+        return self
+
     worker_checkin_interval: int = 120
     worker_checkin_timeout: int = 600
     worker_task_count: int = 5
@@ -58,10 +87,24 @@ class Settings(BaseSettings):
 
     do_rag: bool = True  # used for testing to turn off haiku rag
 
+    # Debug settings
+    debug: bool = False  # Enable verbose error messages (disable for production)
+
+    # Production settings
+    production_mode: bool = False  # Enable production security requirements (mandatory authentication)
+
     # Authentication settings
-    api_key: str | None = None  # Static API key for programmatic access
+    api_key: SecretStr | None = None  # Static API key for programmatic access
     api_key_enabled: bool = False  # Enable API key authentication
     auth_trust_proxy_headers: bool = False  # Trust X-Auth-Request-* headers from OAuth2 Proxy
+
+    # Rate limiting settings
+    rate_limit_ingest: str = "200/minute"  # Rate limit for document ingestion endpoint
+
+    # Security middleware settings
+    allowed_origins: str = "*"  # CORS allowed origins (comma-separated or "*")
+    trusted_hosts: str = "*"  # Trusted hosts for TrustedHostMiddleware (comma-separated or "*")
+    enable_hsts: bool = False  # Enable HTTP Strict Transport Security (only use with HTTPS)
 
 
 @lru_cache(maxsize=1)

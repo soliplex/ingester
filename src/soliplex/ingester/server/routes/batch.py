@@ -11,6 +11,7 @@ from fastapi import status
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib import workflow as workflow
 from soliplex.ingester.lib.auth import get_current_user
+from soliplex.ingester.lib.auth import require_auth_in_production
 from soliplex.ingester.lib.models import RunStatus
 from soliplex.ingester.lib.wf import operations as wf_ops
 
@@ -23,7 +24,9 @@ async def get_batches():
     return await operations.list_batches()
 
 
-@batch_router.post("/", status_code=status.HTTP_201_CREATED, summary="Create a new batch")
+@batch_router.post(
+    "/", status_code=status.HTTP_201_CREATED, summary="Create a new batch", dependencies=[Depends(require_auth_in_production)]
+)
 async def create_batch(
     source: str = Form(...),
     name: str = Form(...),
@@ -36,6 +39,7 @@ async def create_batch(
     "/start-workflows",
     status_code=status.HTTP_201_CREATED,
     summary="Start workflows for all docs in a batch",
+    dependencies=[Depends(require_auth_in_production)],
 )
 async def start_workflows(
     response: Response,

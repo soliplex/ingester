@@ -1,8 +1,55 @@
 # Authentication Guide
 
-This guide covers setting up authentication for Soliplex Ingester using OAuth2 Proxy.
+This guide covers authentication for Soliplex Ingester, including API key authentication and OAuth2 Proxy setup.
 
 ## Overview
+
+Soliplex Ingester supports two authentication methods:
+
+1. **API Key Authentication** - For programmatic access (scripts, CI/CD, agents)
+2. **OAuth2 Proxy** - For web UI access with SSO (Google, GitHub, Azure AD, etc.)
+
+### Production Mode (NEW!)
+
+**Production mode enforces authentication on sensitive endpoints**, preventing accidental deployment without security.
+
+- **Development**: Authentication optional (easy local development)
+- **Production**: Authentication mandatory (secure deployments)
+
+See [Production Mode](#production-mode-mandatory-authentication) section below.
+
+---
+
+## Authentication Methods
+
+### 1. API Key Authentication
+
+Simple Bearer token authentication for programmatic access.
+
+**Configuration:**
+
+```bash
+PRODUCTION_MODE=true
+API_KEY_ENABLED=true
+API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+```
+
+**Usage:**
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" \
+  http://localhost:8002/api/v1/batch/
+```
+
+**Features:**
+- Constant-time comparison (prevents timing attacks)
+- Works with OpenAPI/Swagger UI
+- Simple to configure
+- Ideal for automation and scripts
+
+---
+
+### 2. OAuth2 Proxy (OIDC)
 
 Soliplex Ingester uses
 [OAuth2 Proxy](https://oauth2-proxy.github.io/oauth2-proxy/)
@@ -75,6 +122,87 @@ docker compose -f docker-compose.yml \
 
 - **With auth:** <http://localhost:4180> (redirects to OIDC login)
 - **Direct API (no auth):** <http://localhost:8002> (if port still exposed)
+
+---
+
+## Production Mode (Mandatory Authentication)
+
+**⚠️ NEW SECURITY FEATURE**
+
+Production mode enforces authentication on sensitive endpoints, ensuring you cannot accidentally deploy without proper security.
+
+### Quick Setup
+
+#### Development (Default)
+
+```bash
+# Optional authentication for easy local development
+PRODUCTION_MODE=false  # Default
+```
+
+#### Production
+
+```bash
+# Mandatory authentication - Choose one or both:
+
+# Option 1: API Key
+PRODUCTION_MODE=true
+API_KEY_ENABLED=true
+API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+
+# Option 2: OAuth2 Proxy
+PRODUCTION_MODE=true
+AUTH_TRUST_PROXY_HEADERS=true
+# Then use docker-compose.auth.yml
+
+# Option 3: Both (recommended for hybrid deployments)
+PRODUCTION_MODE=true
+API_KEY_ENABLED=true
+API_KEY=your_secure_key
+AUTH_TRUST_PROXY_HEADERS=true
+```
+
+### How It Works
+
+**When `PRODUCTION_MODE=true`:**
+
+1. **Application validates configuration at startup**
+   - Requires at least one authentication method enabled
+   - Fails fast if auth is not configured
+
+2. **Protected endpoints require authentication:**
+   - `/api/v1/document/ingest-document` - Document ingestion
+   - `/api/v1/batch/` (POST) - Batch creation
+   - `/api/v1/batch/start-workflows` - Workflow initiation
+
+3. **Read-only endpoints remain accessible** (optional):
+   - `/api/v1/document/` (GET) - List documents
+   - `/api/v1/batch/` (GET) - List batches
+   - Health checks and status
+
+### Benefits
+
+✅ **Fail-Safe**: Cannot deploy to production without authentication
+✅ **Developer-Friendly**: No authentication burden during development
+✅ **Explicit**: Clear separation between dev and prod security
+✅ **Flexible**: Apply to specific endpoints as needed
+
+### Testing Production Mode
+
+```bash
+# This will FAIL (production mode without auth)
+export PRODUCTION_MODE=true
+export API_KEY_ENABLED=false
+si-cli serve
+# Error: "Production mode requires authentication to be enabled"
+
+# This will SUCCEED
+export PRODUCTION_MODE=true
+export API_KEY_ENABLED=true
+export API_KEY=test-key
+si-cli serve
+# Server starts successfully
+```
 
 ---
 

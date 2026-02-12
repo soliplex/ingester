@@ -157,3 +157,23 @@ async def require_auth(user: AuthenticatedUser = Depends(get_current_user)) -> A
             detail="Authentication required",
         )
     return user
+
+
+async def require_auth_in_production(
+    user: AuthenticatedUser = Depends(get_current_user),  # noqa: B008
+    settings: Settings = Depends(get_settings),  # noqa: B008
+) -> AuthenticatedUser:
+    """
+    Dependency that requires authentication when in production mode.
+
+    In development (production_mode=False), allows anonymous access.
+    In production (production_mode=True), requires authentication.
+
+    This provides a good balance between developer experience and production security.
+    """
+    if settings.production_mode and user.method == "none":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required in production mode. Set API_KEY_ENABLED=true or AUTH_TRUST_PROXY_HEADERS=true",
+        )
+    return user

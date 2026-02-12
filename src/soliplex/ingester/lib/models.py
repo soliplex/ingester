@@ -59,7 +59,7 @@ class Database:
         if url is None:
             from soliplex.ingester.lib.config import get_settings
 
-            url = get_settings().doc_db_url
+            url = get_settings().doc_db_url.get_secret_value()
 
         connect_args = {}
         if "sqlite" in url:

@@ -18,6 +18,8 @@ from sqlmodel import Field
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from soliplex.ingester.lib.config import get_settings
+
 
 class Database:
     """
@@ -57,8 +59,6 @@ class Database:
             return
 
         if url is None:
-            from soliplex.ingester.lib.config import get_settings
-
             url = get_settings().doc_db_url.get_secret_value()
 
         connect_args = {}
@@ -68,8 +68,9 @@ class Database:
         cls._engine = create_async_engine(url, connect_args=connect_args)
 
         # Create all tables
-        async with cls._engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
+        if get_settings().auto_create_database:
+            async with cls._engine.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.create_all)
 
         cls._initialized = True
 

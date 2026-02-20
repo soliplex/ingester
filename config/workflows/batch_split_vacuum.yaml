@@ -1,0 +1,35 @@
+id: batch_split_vacuum
+meta: {}
+name: Batch workflow with splitting, vacuum and hash checking
+lifecycle_events:
+  group_end:
+    - name: start span
+      method: soliplex.ingester.example.run_end
+      retries: 1
+      parameters: {}
+item_steps:
+  validate:
+    name: validate document
+    retries: 3
+    method: soliplex.ingester.lib.workflow.validate_document
+    parameters: {}
+  parse:
+    name: docling parse
+    retries: 3
+    method: soliplex.ingester.lib.workflow.split_parse_document
+    parameters: {}
+  chunk:
+    name: docling chunk
+    retries: 3
+    method: soliplex.ingester.lib.workflow.chunk_document
+    parameters: {}
+  embed:
+    name: embeddings
+    retries: 3
+    method: soliplex.ingester.lib.workflow.embed_document
+    parameters: {}
+  store:
+    name: save to rag
+    retries: 3
+    method: soliplex.ingester.lib.workflow.save_to_rag
+    parameters: {}

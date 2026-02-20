@@ -12,6 +12,24 @@ Soliplex Ingester is configured via environment variables using Pydantic Setting
 
 Database connection URL.
 
+#### AUTO_CREATE_DATABASE
+
+Automatically create database tables on initialization.
+
+**Default:** `True`
+
+**Example:**
+
+```bash
+AUTO_CREATE_DATABASE=false
+```
+
+**Notes:**
+
+- When `true`, all SQLModel tables are created via `CREATE TABLE IF NOT EXISTS` during `Database.initialize()`
+- Set to `false` when using a migration tool (e.g., Alembic) to manage schema changes
+- Useful in production where schema should be controlled by migrations rather than auto-created
+
 **SQLite Example:**
 
 ```bash
@@ -562,6 +580,7 @@ While the system uses environment variables, you can organize them in a `.env` f
 ```bash
 # Database
 DOC_DB_URL=sqlite+aiosqlite:///./db/documents.db
+AUTO_CREATE_DATABASE=true
 
 # External Services
 DOCLING_SERVER_URL=http://localhost:5001/v1
@@ -955,6 +974,7 @@ env:
 | Variable | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
 | `DOC_DB_URL` | str | Yes | - | Database connection URL |
+| `AUTO_CREATE_DATABASE` | bool | No | `True` | Auto-create database tables on init |
 | `DOCLING_SERVER_URL` | str | No | `http://localhost:5001/v1` | Docling parsing service URL |
 | `DOCLING_CHUNK_SERVER_URL` | str | No | `http://localhost:5001/v1` | Docling chunking service URL |
 | `DOCLING_HTTP_TIMEOUT` | int | No | `600` | Docling timeout (seconds) |

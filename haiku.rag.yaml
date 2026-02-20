@@ -31,7 +31,6 @@ qa:
     enable_thinking: false
     temperature: null
     max_tokens: null
-  max_sub_questions: 3
   max_iterations: 2
   max_concurrency: 1
 research:
@@ -43,8 +42,19 @@ research:
     temperature: null
     max_tokens: null
   max_iterations: 3
-  confidence_threshold: 0.8
   max_concurrency: 1
+rlm:
+  model:
+    provider: ollama
+    name: gpt-oss
+    base_url: null
+    enable_thinking: false
+    temperature: null
+    max_tokens: null
+  code_timeout: 60.0
+  max_output_chars: 50000
+  docker_image: ghcr.io/ggozad/haiku.rag-slim:latest
+  docker_memory_limit: 512m
 processing:
   chunk_size: 256
   converter: docling-local

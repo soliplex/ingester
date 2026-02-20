@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     doc_db_password: SecretStr | None = None
     docling_server_url: str = "http://localhost:5001/v1"
     docling_chunk_server_url: str = "http://localhost:5001/v1"
+    auto_create_database: bool = True
     docling_http_timeout: int = 600
     log_level: str = "INFO"
     file_store_target: str = "fs"

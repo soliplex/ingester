@@ -275,6 +275,63 @@ lifecycle_events:
         message: "Document processing failed"
 ```
 
+### Example: Vacuum Workflow
+
+The `batch_split_vacuum` workflow (`config/workflows/batch_split_vacuum.yaml`) demonstrates a practical use of lifecycle events. It extends the standard `batch_split` workflow by adding a `group_end` handler that vacuums and checksums the LanceDB database after all documents in a group have been processed.
+
+```yaml
+id: batch_split_vacuum
+meta: {}
+name: Batch workflow with splitting, vacuum and hash checking
+lifecycle_events:
+  group_end:
+    - name: start span
+      method: soliplex.ingester.example.run_end
+      retries: 1
+      parameters: {}
+item_steps:
+  validate:
+    name: validate document
+    retries: 3
+    method: soliplex.ingester.lib.workflow.validate_document
+    parameters: {}
+  parse:
+    name: docling parse
+    retries: 3
+    method: soliplex.ingester.lib.workflow.split_parse_document
+    parameters: {}
+  chunk:
+    name: docling chunk
+    retries: 3
+    method: soliplex.ingester.lib.workflow.chunk_document
+    parameters: {}
+  embed:
+    name: embeddings
+    retries: 3
+    method: soliplex.ingester.lib.workflow.embed_document
+    parameters: {}
+  store:
+    name: save to rag
+    retries: 3
+    method: soliplex.ingester.lib.workflow.save_to_rag
+    parameters: {}
+```
+
+The `run_end` handler (in `src/soliplex/ingester/example/__init__.py`) performs two operations:
+
+1. **Vacuum** - Calls `HaikuRAGApp.vacuum()` to compact the LanceDB database, reclaiming disk space from deleted or updated records
+2. **Hash** - Computes a SHA-256 hash of all database files and writes it to `{db_name}.sha256`, providing a way to detect if the database was modified outside the workflow (e.g., by CLI operations)
+
+You can also vacuum a database on demand via the REST API:
+
+```bash
+curl "http://localhost:8000/api/v1/lancedb/vacuum?db=my_database"
+```
+
+**Note:** LanceDB `auto_vacuum` is explicitly disabled in the HaikuRAG storage configuration because it caused reliability issues. Use the vacuum lifecycle event or the API endpoint instead for controlled compaction.
+
+---
+
 ## Retry Logic
 
 ### Automatic Retries

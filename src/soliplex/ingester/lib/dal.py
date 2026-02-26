@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac as hmac_mod
 import logging
 import pathlib
 from typing import Protocol
@@ -6,11 +9,15 @@ from typing import runtime_checkable
 import aiofiles
 import opendal
 from aiofiles import os as aos
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fsspec.core import url_to_fs
 from sqlalchemy import func
 from sqlmodel import select
 
 from . import models
+from .config import ProtectionLevel
 from .config import S3Settings
 from .config import get_settings
 
@@ -48,6 +55,123 @@ class StorageOperator(Protocol):
     def get_uri(self, path: str) -> str:
         """Get a URI representation for the given path."""
         ...
+
+
+class IntegrityError(Exception):
+    """Raised when file integrity verification fails (HASH or HMAC mismatch)."""
+
+
+class ProtectedStorageOperator:
+    """Decorator that adds integrity/confidentiality protection to a StorageOperator.
+
+    Wraps an inner StorageOperator and applies the configured protection level
+    transparently on write and read operations.
+    """
+
+    _PROTECTED_EXTENSIONS = (".hash", ".hmac", ".enc")
+
+    def __init__(
+        self,
+        inner: StorageOperator,
+        protection_level: ProtectionLevel,
+        secret: str | None = None,
+    ):
+        self._inner = inner
+        self._protection_level = protection_level
+        self._hmac_key: bytes = b""
+        self._fernet: Fernet | None = None
+        if protection_level in (ProtectionLevel.HMAC, ProtectionLevel.ENCRYPT):
+            if not secret:
+                raise ValueError(f"secret required for {protection_level}")
+            master_key = secret.encode("utf-8")
+            self._hmac_key = _derive_key(master_key, b"hmac-sha512", 64)
+            fernet_raw = _derive_key(master_key, b"fernet-v1", 32)
+            self._fernet = Fernet(base64.urlsafe_b64encode(fernet_raw))
+
+    async def write(self, path: str, data: bytes) -> None:
+        match self._protection_level:
+            case ProtectionLevel.HASH:
+                digest = hashlib.sha512(data).hexdigest()
+                await self._inner.write(path, data)
+                await self._inner.write(f"{path}.hash", digest.encode())
+            case ProtectionLevel.HMAC:
+                digest = hmac_mod.new(self._hmac_key, data, hashlib.sha512).hexdigest()
+                await self._inner.write(path, data)
+                await self._inner.write(f"{path}.hmac", digest.encode())
+            case ProtectionLevel.ENCRYPT:
+                encrypted = self._fernet.encrypt(data)
+                await self._inner.write(f"{path}.enc", encrypted)
+            case _:
+                await self._inner.write(path, data)
+
+    async def read(self, path: str) -> bytes:
+        match self._protection_level:
+            case ProtectionLevel.HASH:
+                data = await self._inner.read(path)
+                stored_hash = (await self._inner.read(f"{path}.hash")).decode()
+                computed = hashlib.sha512(data).hexdigest()
+                if not hmac_mod.compare_digest(stored_hash, computed):
+                    raise IntegrityError(f"SHA-512 hash mismatch for {path}")
+                return data
+            case ProtectionLevel.HMAC:
+                data = await self._inner.read(path)
+                stored_mac = (await self._inner.read(f"{path}.hmac")).decode()
+                computed = hmac_mod.new(self._hmac_key, data, hashlib.sha512).hexdigest()
+                if not hmac_mod.compare_digest(stored_mac, computed):
+                    raise IntegrityError(f"HMAC-SHA-512 verification failed for {path}")
+                return data
+            case ProtectionLevel.ENCRYPT:
+                encrypted = await self._inner.read(f"{path}.enc")
+                return self._fernet.decrypt(encrypted)
+            case _:
+                return await self._inner.read(path)
+
+    async def exists(self, path: str) -> bool:
+        if self._protection_level == ProtectionLevel.ENCRYPT:
+            return await self._inner.exists(f"{path}.enc")
+        return await self._inner.exists(path)
+
+    async def delete(self, path: str) -> None:
+        if self._protection_level == ProtectionLevel.ENCRYPT:
+            await self._inner.delete(f"{path}.enc")
+        else:
+            await self._inner.delete(path)
+            if self._protection_level == ProtectionLevel.HASH:
+                try:
+                    await self._inner.delete(f"{path}.hash")
+                except FileNotFoundError:
+                    pass
+            elif self._protection_level == ProtectionLevel.HMAC:
+                try:
+                    await self._inner.delete(f"{path}.hmac")
+                except FileNotFoundError:
+                    pass
+
+    async def list(self, prefix: str) -> list[str]:
+        entries = await self._inner.list(prefix)
+        result = []
+        for e in entries:
+            if e.endswith(".enc"):
+                if self._protection_level == ProtectionLevel.ENCRYPT:
+                    result.append(e.removesuffix(".enc"))
+            elif not any(e.endswith(ext) for ext in (".hash", ".hmac")):
+                result.append(e)
+        return result
+
+    def get_uri(self, path: str) -> str:
+        if self._protection_level == ProtectionLevel.ENCRYPT:
+            return self._inner.get_uri(f"{path}.enc")
+        return self._inner.get_uri(path)
+
+
+def _derive_key(master: bytes, info: bytes, length: int) -> bytes:
+    """Derive a purpose-specific key from a master secret using HKDF-SHA256."""
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=length,
+        salt=None,
+        info=info,
+    ).derive(master)
 
 
 async def recursive_listdir(file_dir: pathlib.Path):
@@ -241,8 +365,14 @@ class FileStorageOperator:
             path.mkdir(parents=True, exist_ok=True)
 
     def _get_normalized_path(self, path: str) -> pathlib.Path:
-        """Get the full filesystem path for a given key, creating shard directory if needed."""
-        subdir = path[-self.SHARD_SUFFIX_LENGTH :]
+        """Get the full filesystem path for a given key, creating shard directory if needed.
+
+        Shard directory is computed from the stem (before first dot) so that
+        sidecar files (.hash, .hmac) and encrypted files (.enc) are
+        co-located with their data file.
+        """
+        stem = path.split(".")[0] if "." in path else path
+        subdir = stem[-self.SHARD_SUFFIX_LENGTH :]
         shard_dir = pathlib.Path(self.store_path) / subdir
         shard_dir.mkdir(parents=True, exist_ok=True)
         return shard_dir / path
@@ -347,8 +477,169 @@ def get_storage_operator(
         return OpenDALAdapter(raw_op, root)
     elif target == "fs":
         fs_root = f"{settings.file_store_dir}/{getattr(settings, f'{st}_store_dir')}/{root}"
-        return FileStorageOperator(fs_root)
+        op: StorageOperator = FileStorageOperator(fs_root)
+        if settings.file_protection_level != ProtectionLevel.NONE:
+            secret = settings.file_secret.get_secret_value() if settings.file_secret else None
+            op = ProtectedStorageOperator(op, settings.file_protection_level, secret)
+        return op
     elif target == "db":
         return DBStorageOperator(st, root)
     else:
         raise ValueError(f"Unknown target {target}")
+
+
+def _get_store_dirs() -> list[str]:
+    """Return the list of artifact store subdirectory setting names."""
+    return [
+        "document_store_dir",
+        "parsed_markdown_store_dir",
+        "parsed_json_store_dir",
+        "chunks_store_dir",
+        "embeddings_store_dir",
+    ]
+
+
+async def apply_file_protection(
+    target_level: ProtectionLevel,
+    secret: str | None = None,
+) -> dict[str, int]:
+    """Apply a protection level to all files in the filesystem store.
+
+    Walks every artifact store directory, reads each file (decrypting if
+    currently encrypted), then writes it with the target protection and
+    cleans up old protection artifacts.
+
+    Uses ``FILE_SECRET`` from settings to decrypt existing encrypted files
+    and to apply HMAC/ENCRYPT protection.
+
+    Parameters
+    ----------
+    target_level:
+        The protection level to apply.
+    secret:
+        Master secret.  Required when *target_level* is HMAC or ENCRYPT,
+        or when existing encrypted files must be decrypted.
+
+    Returns
+    -------
+    dict with keys ``processed``, ``skipped``, ``errors``.
+    """
+    settings = get_settings()
+    if settings.file_store_target != "fs":
+        raise ValueError("Protection migration is only supported for filesystem storage (FILE_STORE_TARGET=fs)")
+
+    # Build crypto primitives from secret (if provided)
+    fernet_old: Fernet | None = None
+    fernet_new: Fernet | None = None
+    hmac_key_new: bytes = b""
+
+    if secret:
+        master = secret.encode("utf-8")
+        hmac_key_new = _derive_key(master, b"hmac-sha512", 64)
+        fernet_raw = _derive_key(master, b"fernet-v1", 32)
+        fernet_new = Fernet(base64.urlsafe_b64encode(fernet_raw))
+        fernet_old = fernet_new  # same secret decrypts existing files
+
+    if (
+        target_level
+        in (
+            ProtectionLevel.HMAC,
+            ProtectionLevel.ENCRYPT,
+        )
+        and not secret
+    ):
+        raise ValueError(f"secret required for {target_level}")
+
+    base = pathlib.Path(settings.file_store_dir)
+    stats: dict[str, int] = {"processed": 0, "skipped": 0, "errors": 0}
+
+    for attr in _get_store_dirs():
+        store_subdir = getattr(settings, attr)
+        dir_path = base / store_subdir
+        if not dir_path.exists():
+            continue
+
+        files = await recursive_listdir(dir_path)
+
+        # Collect logical names, skipping sidecars (handled with parent)
+        seen: set[str] = set()
+        for file_path in files:
+            name = file_path.name
+            if name.endswith((".hash", ".hmac")):
+                continue
+            if name.endswith(".enc"):
+                seen.add(name.removesuffix(".enc"))
+            else:
+                seen.add(name)
+
+        for logical_name in sorted(seen):
+            shard = logical_name.split(".")[0] if "." in logical_name else logical_name
+            shard_suffix = shard[-FileStorageOperator.SHARD_SUFFIX_LENGTH :]
+            shard_dir = dir_path / shard_suffix
+
+            enc_path = shard_dir / f"{logical_name}.enc"
+            plain_path = shard_dir / logical_name
+            hash_path = shard_dir / f"{logical_name}.hash"
+            hmac_path = shard_dir / f"{logical_name}.hmac"
+
+            try:
+                # --- Read the data (decrypt if needed) ---
+                if enc_path.exists():
+                    if not fernet_old:
+                        logger.error(
+                            "cannot decrypt %s without FILE_SECRET",
+                            enc_path,
+                        )
+                        stats["errors"] += 1
+                        continue
+                    async with aiofiles.open(enc_path, "rb") as f:
+                        data = fernet_old.decrypt(await f.read())
+                elif plain_path.exists():
+                    async with aiofiles.open(plain_path, "rb") as f:
+                        data = await f.read()
+                else:
+                    stats["skipped"] += 1
+                    continue
+
+                # --- Write with target protection ---
+                match target_level:
+                    case ProtectionLevel.NONE:
+                        if not plain_path.exists():
+                            async with aiofiles.open(plain_path, "wb") as f:
+                                await f.write(data)
+                    case ProtectionLevel.HASH:
+                        if not plain_path.exists():
+                            async with aiofiles.open(plain_path, "wb") as f:
+                                await f.write(data)
+                        digest = hashlib.sha512(data).hexdigest()
+                        async with aiofiles.open(hash_path, "wb") as f:
+                            await f.write(digest.encode())
+                    case ProtectionLevel.HMAC:
+                        if not plain_path.exists():
+                            async with aiofiles.open(plain_path, "wb") as f:
+                                await f.write(data)
+                        digest = hmac_mod.new(hmac_key_new, data, hashlib.sha512).hexdigest()
+                        async with aiofiles.open(hmac_path, "wb") as f:
+                            await f.write(digest.encode())
+                    case ProtectionLevel.ENCRYPT:
+                        encrypted = fernet_new.encrypt(data)
+                        async with aiofiles.open(enc_path, "wb") as f:
+                            await f.write(encrypted)
+
+                # --- Clean up old artifacts ---
+                if target_level != ProtectionLevel.ENCRYPT and enc_path.exists():
+                    enc_path.unlink()
+                if target_level != ProtectionLevel.HASH and hash_path.exists():
+                    hash_path.unlink()
+                if target_level != ProtectionLevel.HMAC and hmac_path.exists():
+                    hmac_path.unlink()
+                if target_level == ProtectionLevel.ENCRYPT and plain_path.exists():
+                    plain_path.unlink()
+
+                stats["processed"] += 1
+
+            except Exception:
+                logger.exception("failed to migrate %s", logical_name)
+                stats["errors"] += 1
+
+    return stats

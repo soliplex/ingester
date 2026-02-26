@@ -1,3 +1,4 @@
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
@@ -5,6 +6,15 @@ from pydantic import SecretStr
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+
+
+class ProtectionLevel(StrEnum):
+    """Controls integrity/confidentiality protection for file-stored artifacts."""
+
+    NONE = "none"
+    HASH = "hash"
+    HMAC = "hmac"
+    ENCRYPT = "encrypt"
 
 
 class S3Settings(BaseSettings):
@@ -26,6 +36,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     file_store_target: str = "fs"
     file_store_dir: str = "file_store"
+    file_protection_level: ProtectionLevel = ProtectionLevel.NONE
+    file_secret: SecretStr | None = None
     lancedb_dir: str = "lancedb"
     document_store_dir: str = "raw"
     parsed_markdown_store_dir: str = "markdown"
@@ -78,6 +90,14 @@ class Settings(BaseSettings):
                 "Production mode requires authentication to be enabled. "
                 "Set API_KEY_ENABLED=true or AUTH_TRUST_PROXY_HEADERS=true"
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_file_protection(self) -> "Settings":
+        """Ensure FILE_SECRET is set when protection level requires it."""
+        if self.file_protection_level in (ProtectionLevel.HMAC, ProtectionLevel.ENCRYPT):
+            if not self.file_secret or not self.file_secret.get_secret_value():
+                raise ValueError(f"FILE_SECRET is required when FILE_PROTECTION_LEVEL={self.file_protection_level.value}")
         return self
 
     worker_checkin_interval: int = 120

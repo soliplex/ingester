@@ -232,6 +232,55 @@ Subdirectory for embedding vectors.
 
 **Default:** `embeddings`
 
+#### FILE_PROTECTION_LEVEL
+
+Protection level for file-stored artifacts. Controls integrity checking and encryption.
+
+**Default:** `none`
+
+**Options:**
+
+- `none` - No protection (current default behavior)
+- `hash` - SHA-512 hash verification: writes a `.hash` sidecar file alongside each artifact
+- `hmac` - HMAC-SHA-512 verification: writes a `.hmac` sidecar file using a keyed hash (requires `FILE_SECRET`)
+- `encrypt` - Fernet encryption: encrypts artifact bytes at rest using authenticated encryption (requires `FILE_SECRET`)
+
+**Example:**
+
+```bash
+FILE_PROTECTION_LEVEL=encrypt
+FILE_SECRET=my-strong-secret-key
+```
+
+**Notes:**
+
+- Only applies when `FILE_STORE_TARGET=fs` (filesystem storage)
+- `hmac` and `encrypt` modes require `FILE_SECRET` to be set
+- A single `FILE_SECRET` is used for both HMAC and encryption; purpose-specific keys are derived internally via HKDF-SHA256
+- Changing protection level does not retroactively modify existing files
+- `hash` mode detects accidental corruption; `hmac` mode detects tampering; `encrypt` mode provides confidentiality
+
+#### FILE_SECRET
+
+Master secret used for HMAC and encryption operations.
+
+**Default:** None
+
+**Example:**
+
+```bash
+FILE_SECRET=my-strong-secret-key
+```
+
+**Notes:**
+
+- Required when `FILE_PROTECTION_LEVEL` is `hmac` or `encrypt`
+- Treated as a secret (stored via `SecretStr`, supports `/run/secrets` directory)
+- Recommended minimum length: 64 bytes (the HMAC-SHA-512 key size). Generate with: `openssl rand -hex 64`
+- Purpose-specific keys are derived internally via HKDF, so any sufficiently long secret works for both HMAC and encryption
+- Keep this value secure - do not commit to version control
+- Changing the secret will make previously protected files unreadable
+
 ---
 
 ### Vector Database
@@ -987,6 +1036,8 @@ env:
 | `PARSED_JSON_STORE_DIR` | str | No | `json` | JSON subdir |
 | `CHUNKS_STORE_DIR` | str | No | `chunks` | Chunks subdir |
 | `EMBEDDINGS_STORE_DIR` | str | No | `embeddings` | Embeddings subdir |
+| `FILE_PROTECTION_LEVEL` | str | No | `none` | File protection level (none/hash/hmac/encrypt) |
+| `FILE_SECRET` | str | Conditional | - | Master secret for HMAC/encryption (required if protection is hmac or encrypt) |
 | `INGEST_QUEUE_CONCURRENCY` | int | No | `20` | Queue concurrency |
 | `INGEST_WORKER_CONCURRENCY` | int | No | `10` | Worker concurrency |
 | `DOCLING_CONCURRENCY` | int | No | `3` | Docling concurrency |

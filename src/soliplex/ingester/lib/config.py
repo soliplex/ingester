@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     auto_create_database: bool = True
     docling_http_timeout: int = 600
     log_level: str = "INFO"
+    log_format: str = "{name}|{asctime}|{levelname}|{message}"
     file_store_target: str = "fs"
     file_store_dir: str = "file_store"
     file_protection_level: ProtectionLevel = ProtectionLevel.NONE

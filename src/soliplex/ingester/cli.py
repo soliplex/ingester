@@ -33,10 +33,18 @@ def init():
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
-        logging.basicConfig(level=get_settings().log_level)
+        settings = get_settings()
+        logging.basicConfig(
+            level=settings.log_level,
+            format=settings.log_format,
+            datefmt="%Y-%m-%dT%H:%M:%S",
+            style="{",
+        )
     except ValidationError:
         print("invalid settings. environment variables might not be set.  Run `si-cli validate-settings`")
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(
+            level=logging.INFO, format="{name}|{asctime}|{levelname}|{message}", datefmt="%Y-%m-%dT%H:%M:%S", style="{"
+        )
 
 
 app = typer.Typer(callback=init)

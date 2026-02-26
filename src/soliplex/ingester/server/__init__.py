@@ -38,7 +38,12 @@ limiter = Limiter(key_func=get_remote_address)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level)
+    logging.basicConfig(
+        level=settings.log_level,
+        format=settings.log_format,
+        datefmt="%Y-%m-%dT%H:%M:%S",
+        style="{",
+    )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logger.info("Starting soliplex-ingester")
 

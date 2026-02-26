@@ -75,6 +75,7 @@ def create_app(db: Path | None = None, read_only: bool = False) -> HaikuRAGApp:
         HaikuRAGApp instance with proper config and db path.
     """
     config = get_config()
+    config.storage.vacuum_retention_seconds = 0
     db_path = db if db else config.storage.data_dir / "haiku.rag.lancedb"
     return HaikuRAGApp(
         db_path=db_path,

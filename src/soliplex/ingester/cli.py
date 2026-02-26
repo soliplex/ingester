@@ -424,5 +424,61 @@ def serve(
         uvicorn.run(app, **uvicorn_kw)
 
 
+async def _apply_protection(level: str):
+    from .lib.config import ProtectionLevel
+    from .lib.dal import apply_file_protection
+
+    try:
+        target = ProtectionLevel(level)
+    except ValueError:
+        print(f"[red]Invalid protection level: {level}[/red]")
+        print(f"Valid options: {', '.join(p.value for p in ProtectionLevel)}")
+        raise typer.Exit(code=1) from None
+
+    settings = get_settings()
+    secret = settings.file_secret.get_secret_value() if settings.file_secret else None
+
+    if target in (ProtectionLevel.HMAC, ProtectionLevel.ENCRYPT) and not secret:
+        print(f"[red]FILE_SECRET is required for protection level '{level}'[/red]")
+        raise typer.Exit(code=1)
+
+    # Secret is also needed to decrypt existing .enc files
+    if target != ProtectionLevel.ENCRYPT and not secret:
+        # Check if any .enc files exist that would need decryption
+        base = Path(settings.file_store_dir)
+        if base.exists():
+            for _p in base.rglob("*.enc"):
+                print("[red]FILE_SECRET is required to decrypt existing encrypted files[/red]")
+                raise typer.Exit(code=1)
+
+    print(f"Applying protection level: [bold]{target.value}[/bold]")
+    stats = await apply_file_protection(target, secret)
+    print(f"Done. processed={stats['processed']} skipped={stats['skipped']} errors={stats['errors']}")
+    if stats["errors"] > 0:
+        raise typer.Exit(code=1)
+
+
+@app.command("protect")
+def protect(
+    level: str = typer.Argument(
+        help="Protection level to apply: none, hash, hmac, encrypt",
+    ),
+):
+    """Apply file protection to all artifacts in the file store.
+
+    Walks all artifact directories, reads each file (decrypting if needed),
+    then writes it with the target protection level and cleans up old
+    protection artifacts.
+
+    Examples:
+        si-cli protect hash       # add SHA-512 hash sidecars
+        si-cli protect hmac       # add HMAC-SHA-512 sidecars
+        si-cli protect encrypt    # encrypt files (requires FILE_SECRET)
+        si-cli protect none       # remove all protection, decrypt files
+    """
+    validate_settings(dump=False)
+    asyncio.run(_apply_protection(level))
+
+
 if __name__ == "__main__":
     app()

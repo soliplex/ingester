@@ -152,11 +152,13 @@ async def get_info(
         hr_version = "unknown"
 
     # Connect to database
+    db_conn = None
     try:
         db_conn = lancedb.connect(db_path)
         table_names = set(db_conn.list_tables().tables)
-
     except Exception as e:
+        if db_conn is not None:
+            db_conn.close()
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {
             "status": "error",
@@ -170,8 +172,10 @@ async def get_info(
 
         config = get_config()
         store = Store(db_path, config=config, skip_validation=True)
-        table_stats = store.get_stats()
-        store.close()
+        try:
+            table_stats = store.get_stats()
+        finally:
+            store.close()
     except Exception as e:
         logger.warning(f"Could not get table stats via Store: {e}")
         table_stats = {
@@ -185,33 +189,36 @@ async def get_info(
     embed_model = None
     vector_dim = None
 
-    if "settings" in table_names:
-        try:
-            settings_tbl = db_conn.open_table("settings")
-            arrow = settings_tbl.search().where("id = 'settings'").limit(1).to_arrow()
-            rows = arrow.to_pylist() if arrow is not None else []
-            if rows:
-                raw = rows[0].get("settings") or "{}"
-                data = json.loads(raw) if isinstance(raw, str) else (raw or {})
-                stored_version = str(data.get("version", stored_version))
-                embeddings = data.get("embeddings", {})
-                embed_model_obj = embeddings.get("model", {})
-                embed_provider = embed_model_obj.get("provider")
-                embed_model = embed_model_obj.get("name")
-                vector_dim = embed_model_obj.get("vector_dim")
-        except Exception as e:
-            logger.warning(f"Could not read settings table: {e}")
-
-    # Get table version counts
-    doc_versions = 0
-    chunk_versions = 0
     try:
-        if "documents" in table_names:
-            doc_versions = len(list(db_conn.open_table("documents").list_versions()))
-        if "chunks" in table_names:
-            chunk_versions = len(list(db_conn.open_table("chunks").list_versions()))
-    except Exception:
-        pass
+        if "settings" in table_names:
+            try:
+                settings_tbl = db_conn.open_table("settings")
+                arrow = settings_tbl.search().where("id = 'settings'").limit(1).to_arrow()
+                rows = arrow.to_pylist() if arrow is not None else []
+                if rows:
+                    raw = rows[0].get("settings") or "{}"
+                    data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                    stored_version = str(data.get("version", stored_version))
+                    embeddings = data.get("embeddings", {})
+                    embed_model_obj = embeddings.get("model", {})
+                    embed_provider = embed_model_obj.get("provider")
+                    embed_model = embed_model_obj.get("name")
+                    vector_dim = embed_model_obj.get("vector_dim")
+            except Exception as e:
+                logger.warning(f"Could not read settings table: {e}")
+
+        # Get table version counts
+        doc_versions = 0
+        chunk_versions = 0
+        try:
+            if "documents" in table_names:
+                doc_versions = len(list(db_conn.open_table("documents").list_versions()))
+            if "chunks" in table_names:
+                chunk_versions = len(list(db_conn.open_table("chunks").list_versions()))
+        except Exception:
+            pass
+    finally:
+        db_conn.close()
 
     # Extract stats
     num_docs = table_stats["documents"].get("num_rows", 0)

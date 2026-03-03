@@ -321,6 +321,13 @@ async def run_lifecycle_event(
 async def run_wf_step(run_step: RunStep, coro_id: int = None):
     lc = {"coro_id": coro_id, "worker_id": get_worker_id()}
     try:
+        await set_step_status(
+            run_step.id,
+            status=RunStatus.RUNNING,
+            increase_retry=False,
+            message="success",
+            meta={"coro_id": coro_id},
+        )
         workflow_run = await operations.get_workflow_run(run_step.workflow_run_id)
         run_group = await operations.get_run_group(workflow_run.run_group_id)
         workflow_def = await operations.get_workflow_definition(workflow_run.workflow_definition_id)

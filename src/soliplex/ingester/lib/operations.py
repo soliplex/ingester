@@ -263,7 +263,6 @@ async def create_document_from_uri(
             uri=source_uri,
             source=source,
             mime_type=mime_type,
-            file_bytes=file_bytes,
             doc_meta=doc_meta,
             file_size=file_size,
         )

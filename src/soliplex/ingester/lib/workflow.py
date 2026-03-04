@@ -223,7 +223,7 @@ async def split_parse_document(
         file_size = len(file_bytes)
         logger.info(f"starting  split_to_files file_Size={file_size}", extra=_lc)
         del file_bytes
-        split_result = smart_split_to_files(outfile, output_dir=tf)
+        split_result = smart_split_to_files(outfile, output_dir=tf, parallel=False)
 
         if len(split_result) == 2:
             split_files = split_result[0]

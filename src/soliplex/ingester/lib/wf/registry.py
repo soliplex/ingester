@@ -160,13 +160,27 @@ async def load_param_registry(
     settings = get_settings()
     reg = {}
     file_paths = {}
+
+    # Load system param sets from param_dir
     for p in Path(settings.param_dir).glob("*.yaml"):
-        logger.debug(f"loading param set {p}")
+        logger.debug(f"loading system param set {p}")
         wf = await load_param_set(p)
         if wf.id in reg:
             raise ValueError(f"duplicate param set id {wf.id}")
         reg[wf.id] = wf
         file_paths[wf.id] = p
+
+    # Load user param sets from user_param_dir
+    user_dir = Path(settings.user_param_dir)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    for p in user_dir.glob("*.yaml"):
+        logger.debug(f"loading user param set {p}")
+        wf = await load_param_set(p)
+        if wf.id in reg:
+            raise ValueError(f"duplicate param set id '{wf.id}': conflicts between '{file_paths[wf.id]}' and '{p}'")
+        reg[wf.id] = wf
+        file_paths[wf.id] = p
+
     _param_registry = reg
     _param_file_paths = file_paths
     return reg
@@ -194,7 +208,8 @@ async def save_param_set(yaml_content: str, overwrite: bool = False) -> Path:
         If file exists and overwrite=False
     """
     settings = get_settings()
-    param_dir = Path(settings.param_dir)
+    user_dir = Path(settings.user_param_dir)
+    user_dir.mkdir(parents=True, exist_ok=True)
     param_set = yaml.safe_load(yaml_content)
     if "source" not in param_set:
         yaml_content = "source: user\n" + yaml_content
@@ -202,13 +217,11 @@ async def save_param_set(yaml_content: str, overwrite: bool = False) -> Path:
     # all uploaded files are marked as user
     filename = f"user_{param_set['id']}.yaml"
 
-    file_path = param_dir / filename
+    file_path = user_dir / filename
 
     # Check for duplicates
     if file_path.exists() and not overwrite:
         raise ValueError(f"Parameter set '{param_set['id']}' already exists")
-
-    # Convert to dict and save as YAML
 
     async with aiofiles.open(file_path, "w") as f:
         await f.write(yaml_content)
@@ -240,9 +253,6 @@ async def delete_param_set(param_id: str) -> bool:
         If trying to delete built-in (source='app') parameter set,
         or if parameter is currently in use by any run groups
     """
-    settings = get_settings()
-    param_dir = Path(settings.param_dir)
-
     # Load registry to check source
     registry = await load_param_registry()
     if param_id not in registry:
@@ -263,9 +273,9 @@ async def delete_param_set(param_id: str) -> bool:
                 f"Cannot delete parameter set '{param_id}': it is currently used by {len(run_groups)} run group(s)"
             )
 
-    # Delete file
-    file_path = param_dir / f"user_{param_id}.yaml"
-    if file_path.exists():
+    # Delete file using tracked path from registry
+    file_path = _param_file_paths.get(param_id)
+    if file_path is not None and file_path.exists():
         await aos.unlink(file_path)
 
         # Clear registry cache

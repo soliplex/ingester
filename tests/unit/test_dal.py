@@ -1,12 +1,15 @@
+import base64
 import logging
 from unittest.mock import AsyncMock
 from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
+from cryptography.fernet import InvalidToken
 
 from soliplex.ingester.lib import dal
 from soliplex.ingester.lib import models
+from soliplex.ingester.lib.config import ProtectionLevel
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +333,7 @@ def test_get_storage_operator_fs_target(tmp_path):
         mock_settings_obj.file_store_target = "fs"
         mock_settings_obj.file_store_dir = str(tmp_path)
         mock_settings_obj.document_store_dir = "docs"
+        mock_settings_obj.file_protection_level = ProtectionLevel.NONE
         mock_settings.return_value = mock_settings_obj
 
         op = dal.get_storage_operator(models.ArtifactType.DOC)
@@ -651,3 +655,407 @@ def test_opendal_adapter_get_uri_without_root():
     uri = adapter.get_uri("test/path")
 
     assert uri == "s3://test/path"
+
+
+# --- ProtectedStorageOperator tests ---
+
+TEST_SECRET = "test-secret-key-for-unit-tests"
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_none(tmp_path):
+    """NONE mode passes through unchanged"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.NONE)
+
+    await op.write("test_hash_ab", b"hello world")
+    result = await op.read("test_hash_ab")
+    assert result == b"hello world"
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_hash_write_read(tmp_path):
+    """HASH mode writes data + .hash sidecar, read verifies"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HASH)
+
+    await op.write("test_hash_ab", b"hello world")
+
+    # Sidecar should exist
+    assert await inner.exists("test_hash_ab.hash")
+
+    # Read should succeed and return original data
+    result = await op.read("test_hash_ab")
+    assert result == b"hello world"
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_hash_integrity_error(tmp_path):
+    """Corrupted data raises IntegrityError in HASH mode"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HASH)
+
+    await op.write("test_hash_ab", b"hello world")
+
+    # Corrupt the data file directly
+    await inner.write("test_hash_ab", b"corrupted data")
+
+    with pytest.raises(dal.IntegrityError, match="SHA-512 hash mismatch"):
+        await op.read("test_hash_ab")
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_hmac_write_read(tmp_path):
+    """HMAC mode writes data + .hmac sidecar, read verifies"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HMAC, secret=TEST_SECRET)
+
+    await op.write("test_hash_ab", b"hello world")
+
+    # Sidecar should exist
+    assert await inner.exists("test_hash_ab.hmac")
+
+    # Read should succeed
+    result = await op.read("test_hash_ab")
+    assert result == b"hello world"
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_hmac_integrity_error(tmp_path):
+    """Tampered data raises IntegrityError in HMAC mode"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HMAC, secret=TEST_SECRET)
+
+    await op.write("test_hash_ab", b"hello world")
+
+    # Tamper with the data
+    await inner.write("test_hash_ab", b"tampered data")
+
+    with pytest.raises(dal.IntegrityError, match="HMAC-SHA-512 verification failed"):
+        await op.read("test_hash_ab")
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_hmac_wrong_key(tmp_path):
+    """Different HMAC key fails verification"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op1 = dal.ProtectedStorageOperator(inner, ProtectionLevel.HMAC, secret="key-one")
+    op2 = dal.ProtectedStorageOperator(inner, ProtectionLevel.HMAC, secret="key-two")
+
+    await op1.write("test_hash_ab", b"hello world")
+
+    with pytest.raises(dal.IntegrityError, match="HMAC-SHA-512 verification failed"):
+        await op2.read("test_hash_ab")
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_encrypt_write_read(tmp_path):
+    """ENCRYPT mode round-trips correctly"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret=TEST_SECRET)
+
+    await op.write("test_hash_ab", b"hello world")
+
+    result = await op.read("test_hash_ab")
+    assert result == b"hello world"
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_encrypt_stores_as_enc(tmp_path):
+    """ENCRYPT mode stores ciphertext with .enc extension"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret=TEST_SECRET)
+
+    plaintext = b"hello world"
+    await op.write("test_hash_ab", plaintext)
+
+    # .enc file should exist, plain file should not
+    assert await inner.exists("test_hash_ab.enc")
+    assert not await inner.exists("test_hash_ab")
+
+    # Raw ciphertext differs from plaintext
+    raw = await inner.read("test_hash_ab.enc")
+    assert raw != plaintext
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_encrypt_wrong_key(tmp_path):
+    """Different encryption key fails to decrypt"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op1 = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret="key-one")
+    op2 = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret="key-two")
+
+    await op1.write("test_hash_ab", b"hello world")
+
+    with pytest.raises(InvalidToken):
+        await op2.read("test_hash_ab")
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_delete_removes_hash_sidecar(tmp_path):
+    """Delete cleans up .hash sidecar file"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HASH)
+
+    await op.write("test_hash_ab", b"hello world")
+    assert await inner.exists("test_hash_ab.hash")
+
+    await op.delete("test_hash_ab")
+    assert not await inner.exists("test_hash_ab")
+    assert not await inner.exists("test_hash_ab.hash")
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_delete_removes_hmac_sidecar(tmp_path):
+    """Delete cleans up .hmac sidecar file"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HMAC, secret=TEST_SECRET)
+
+    await op.write("test_hash_ab", b"hello world")
+    assert await inner.exists("test_hash_ab.hmac")
+
+    await op.delete("test_hash_ab")
+    assert not await inner.exists("test_hash_ab")
+    assert not await inner.exists("test_hash_ab.hmac")
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_list_filters_sidecars(tmp_path):
+    """List excludes .hash and .hmac entries"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HASH)
+
+    await op.write("test_hash_ab", b"hello world")
+
+    entries = await op.list("")
+    assert "test_hash_ab" in entries
+    assert all(not e.endswith(".hash") and not e.endswith(".hmac") for e in entries)
+
+
+def test_protected_operator_requires_secret():
+    """HMAC and ENCRYPT without secret raises ValueError"""
+    inner = Mock()
+    with pytest.raises(ValueError, match="secret required"):
+        dal.ProtectedStorageOperator(inner, ProtectionLevel.HMAC)
+    with pytest.raises(ValueError, match="secret required"):
+        dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT)
+
+
+def test_get_storage_operator_fs_with_protection(tmp_path):
+    """get_storage_operator wraps FileStorageOperator with protection"""
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings_obj = Mock()
+        mock_settings_obj.file_store_target = "fs"
+        mock_settings_obj.file_store_dir = str(tmp_path)
+        mock_settings_obj.document_store_dir = "docs"
+        mock_settings_obj.file_protection_level = ProtectionLevel.HASH
+        mock_settings_obj.file_secret = None
+        mock_settings.return_value = mock_settings_obj
+
+        op = dal.get_storage_operator(models.ArtifactType.DOC)
+        assert isinstance(op, dal.ProtectedStorageOperator)
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_exists_delegates(tmp_path):
+    """exists delegates to inner operator"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret=TEST_SECRET)
+
+    assert not await op.exists("test_hash_ab")
+    await op.write("test_hash_ab", b"hello")
+    assert await op.exists("test_hash_ab")
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_encrypt_delete(tmp_path):
+    """Delete removes .enc file in ENCRYPT mode"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret=TEST_SECRET)
+
+    await op.write("test_hash_ab", b"hello world")
+    assert await inner.exists("test_hash_ab.enc")
+
+    await op.delete("test_hash_ab")
+    assert not await inner.exists("test_hash_ab.enc")
+
+
+@pytest.mark.asyncio
+async def test_protected_operator_encrypt_list_strips_enc(tmp_path):
+    """List returns logical names without .enc extension in ENCRYPT mode"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret=TEST_SECRET)
+
+    await op.write("test_hash_ab", b"hello world")
+    entries = await op.list("")
+    assert "test_hash_ab" in entries
+    assert not any(e.endswith(".enc") for e in entries)
+
+
+def test_protected_operator_get_uri_delegates(tmp_path):
+    """get_uri delegates to inner operator"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HASH)
+
+    uri = op.get_uri("test_hash_ab")
+    assert uri == inner.get_uri("test_hash_ab")
+
+
+def test_protected_operator_get_uri_encrypt(tmp_path):
+    """get_uri returns .enc path in ENCRYPT mode"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret=TEST_SECRET)
+
+    uri = op.get_uri("test_hash_ab")
+    assert uri == inner.get_uri("test_hash_ab.enc")
+
+
+# --- apply_file_protection tests ---
+
+
+def _make_file_store(tmp_path, store_dir="raw"):
+    """Create a minimal file store structure for testing."""
+    store = tmp_path / "file_store" / store_dir
+    store.mkdir(parents=True)
+    return store
+
+
+def _write_sharded(store, name, data):
+    """Write a file into the correct shard directory."""
+    stem = name.split(".")[0] if "." in name else name
+    shard = stem[-2:]
+    shard_dir = store / shard
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    (shard_dir / name).write_bytes(data)
+
+
+def _exists_sharded(store, name):
+    stem = name.split(".")[0] if "." in name else name
+    shard = stem[-2:]
+    return (store / shard / name).exists()
+
+
+def _read_sharded(store, name):
+    stem = name.split(".")[0] if "." in name else name
+    shard = stem[-2:]
+    return (store / shard / name).read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_apply_protection_none_to_hash(tmp_path):
+    """Migrate from NONE to HASH adds sidecar files"""
+    store = _make_file_store(tmp_path)
+    _write_sharded(store, "sha256-aabb", b"hello")
+
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings.return_value = Mock(
+            file_store_target="fs",
+            file_store_dir=str(tmp_path / "file_store"),
+            document_store_dir="raw",
+            parsed_markdown_store_dir="markdown",
+            parsed_json_store_dir="json",
+            chunks_store_dir="chunks",
+            embeddings_store_dir="embeddings",
+        )
+        stats = await dal.apply_file_protection(ProtectionLevel.HASH)
+
+    assert stats["processed"] == 1
+    assert stats["errors"] == 0
+    assert _exists_sharded(store, "sha256-aabb")
+    assert _exists_sharded(store, "sha256-aabb.hash")
+
+
+@pytest.mark.asyncio
+async def test_apply_protection_none_to_encrypt(tmp_path):
+    """Migrate from NONE to ENCRYPT encrypts and removes plain file"""
+    store = _make_file_store(tmp_path)
+    _write_sharded(store, "sha256-aabb", b"hello")
+
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings.return_value = Mock(
+            file_store_target="fs",
+            file_store_dir=str(tmp_path / "file_store"),
+            document_store_dir="raw",
+            parsed_markdown_store_dir="markdown",
+            parsed_json_store_dir="json",
+            chunks_store_dir="chunks",
+            embeddings_store_dir="embeddings",
+        )
+        stats = await dal.apply_file_protection(ProtectionLevel.ENCRYPT, secret=TEST_SECRET)
+
+    assert stats["processed"] == 1
+    assert _exists_sharded(store, "sha256-aabb.enc")
+    assert not _exists_sharded(store, "sha256-aabb")
+
+
+@pytest.mark.asyncio
+async def test_apply_protection_encrypt_to_none(tmp_path):
+    """Migrate from ENCRYPT to NONE decrypts and removes .enc file"""
+    store = _make_file_store(tmp_path)
+
+    # Encrypt the file first
+    from cryptography.fernet import Fernet
+
+    master = TEST_SECRET.encode("utf-8")
+    fernet_raw = dal._derive_key(master, b"fernet-v1", 32)
+    fernet = Fernet(base64.urlsafe_b64encode(fernet_raw))
+    _write_sharded(store, "sha256-aabb.enc", fernet.encrypt(b"hello"))
+
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings.return_value = Mock(
+            file_store_target="fs",
+            file_store_dir=str(tmp_path / "file_store"),
+            document_store_dir="raw",
+            parsed_markdown_store_dir="markdown",
+            parsed_json_store_dir="json",
+            chunks_store_dir="chunks",
+            embeddings_store_dir="embeddings",
+        )
+        stats = await dal.apply_file_protection(ProtectionLevel.NONE, secret=TEST_SECRET)
+
+    assert stats["processed"] == 1
+    assert _exists_sharded(store, "sha256-aabb")
+    assert not _exists_sharded(store, "sha256-aabb.enc")
+    assert _read_sharded(store, "sha256-aabb") == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_apply_protection_hash_to_none(tmp_path):
+    """Migrate from HASH to NONE removes hash sidecars"""
+    store = _make_file_store(tmp_path)
+    _write_sharded(store, "sha256-aabb", b"hello")
+    _write_sharded(store, "sha256-aabb.hash", b"fakehash")
+
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings.return_value = Mock(
+            file_store_target="fs",
+            file_store_dir=str(tmp_path / "file_store"),
+            document_store_dir="raw",
+            parsed_markdown_store_dir="markdown",
+            parsed_json_store_dir="json",
+            chunks_store_dir="chunks",
+            embeddings_store_dir="embeddings",
+        )
+        stats = await dal.apply_file_protection(ProtectionLevel.NONE)
+
+    assert stats["processed"] == 1
+    assert _exists_sharded(store, "sha256-aabb")
+    assert not _exists_sharded(store, "sha256-aabb.hash")
+
+
+@pytest.mark.asyncio
+async def test_apply_protection_requires_fs_target():
+    """apply_file_protection rejects non-fs targets"""
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings.return_value = Mock(file_store_target="db")
+        with pytest.raises(ValueError, match="filesystem storage"):
+            await dal.apply_file_protection(ProtectionLevel.HASH)
+
+
+@pytest.mark.asyncio
+async def test_apply_protection_requires_secret_for_encrypt():
+    """apply_file_protection requires secret for ENCRYPT"""
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings.return_value = Mock(file_store_target="fs")
+        with pytest.raises(ValueError, match="secret required"):
+            await dal.apply_file_protection(ProtectionLevel.ENCRYPT)

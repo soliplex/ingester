@@ -485,3 +485,195 @@ def test_retry_workflow_error(test_client):
         mock_reset.side_effect = Exception("test error")
         response = test_client.post("/api/v1/workflow/retry?run_group_id=1")
         assert response.status_code == 500
+
+
+# validate_storage endpoint tests
+
+
+def test_validate_storage_success(test_client):
+    """Test validate_storage endpoint with all documents present"""
+    with patch("soliplex.ingester.server.routes.document.operations.get_batch") as mock_get_batch:
+        with patch("soliplex.ingester.server.routes.document.operations.get_documents_in_batch") as mock_get_docs:
+            with patch("soliplex.ingester.server.routes.document.get_storage_operator") as mock_get_op:
+                mock_get_batch.return_value = Mock()
+
+                mock_doc1 = Mock()
+                mock_doc1.hash = "hash1"
+                mock_doc2 = Mock()
+                mock_doc2.hash = "hash2"
+                mock_get_docs.return_value = [mock_doc1, mock_doc2]
+
+                mock_operator = AsyncMock()
+                mock_operator.exists.return_value = True
+                mock_get_op.return_value = mock_operator
+
+                response = test_client.get("/api/v1/document/validate_storage?batch_id=1")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["batch_id"] == 1
+                assert data["total"] == 2
+                assert data["valid"] == 2
+                assert data["missing"] == 0
+                assert data["missing_hashes"] == []
+
+
+def test_validate_storage_with_missing_documents(test_client):
+    """Test validate_storage endpoint with some documents missing from storage"""
+    with patch("soliplex.ingester.server.routes.document.operations.get_batch") as mock_get_batch:
+        with patch("soliplex.ingester.server.routes.document.operations.get_documents_in_batch") as mock_get_docs:
+            with patch("soliplex.ingester.server.routes.document.get_storage_operator") as mock_get_op:
+                mock_get_batch.return_value = Mock()
+
+                mock_doc1 = Mock()
+                mock_doc1.hash = "hash1"
+                mock_doc2 = Mock()
+                mock_doc2.hash = "hash2"
+                mock_doc3 = Mock()
+                mock_doc3.hash = "hash3"
+                mock_get_docs.return_value = [mock_doc1, mock_doc2, mock_doc3]
+
+                mock_operator = AsyncMock()
+                # hash1 and hash3 exist, hash2 is missing
+                mock_operator.exists.side_effect = [True, False, True]
+                mock_get_op.return_value = mock_operator
+
+                response = test_client.get("/api/v1/document/validate_storage?batch_id=1")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["batch_id"] == 1
+                assert data["total"] == 3
+                assert data["valid"] == 2
+                assert data["missing"] == 1
+                assert data["missing_hashes"] == ["hash2"]
+
+
+def test_validate_storage_batch_not_found(test_client):
+    """Test validate_storage endpoint with non-existent batch"""
+    with patch("soliplex.ingester.server.routes.document.operations.get_batch") as mock_get_batch:
+        mock_get_batch.return_value = None
+        response = test_client.get("/api/v1/document/validate_storage?batch_id=999")
+        assert response.status_code == 404
+        assert "Batch 999 not found" in response.json()["error"]
+
+
+def test_validate_storage_empty_batch(test_client):
+    """Test validate_storage endpoint with empty batch"""
+    with patch("soliplex.ingester.server.routes.document.operations.get_batch") as mock_get_batch:
+        with patch("soliplex.ingester.server.routes.document.operations.get_documents_in_batch") as mock_get_docs:
+            with patch("soliplex.ingester.server.routes.document.get_storage_operator") as mock_get_op:
+                mock_get_batch.return_value = Mock()
+                mock_get_docs.return_value = []
+                mock_get_op.return_value = AsyncMock()
+
+                response = test_client.get("/api/v1/document/validate_storage?batch_id=1")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["total"] == 0
+                assert data["valid"] == 0
+                assert data["missing"] == 0
+
+
+def test_validate_storage_with_cleanup(test_client):
+    """Test validate_storage endpoint with clean_up=true"""
+    with patch("soliplex.ingester.server.routes.document.operations.get_batch") as mock_get_batch:
+        with patch("soliplex.ingester.server.routes.document.operations.get_documents_in_batch") as mock_get_docs:
+            with patch("soliplex.ingester.server.routes.document.get_storage_operator") as mock_get_op:
+                with patch("soliplex.ingester.server.routes.document.operations.delete_documents_by_hashes") as mock_delete:
+                    mock_get_batch.return_value = Mock()
+
+                    mock_doc1 = Mock()
+                    mock_doc1.hash = "hash1"
+                    mock_doc2 = Mock()
+                    mock_doc2.hash = "hash2"
+                    mock_get_docs.return_value = [mock_doc1, mock_doc2]
+
+                    mock_operator = AsyncMock()
+                    # hash1 exists, hash2 is missing
+                    mock_operator.exists.side_effect = [True, False]
+                    mock_get_op.return_value = mock_operator
+
+                    mock_delete.return_value = {
+                        "deleted_document_uris": 1,
+                        "deleted_uri_history": 2,
+                        "deleted_documents": 1,
+                        "deleted_workflow_runs": 1,
+                        "deleted_run_steps": 5,
+                        "deleted_lifecycle_history": 3,
+                        "total_deleted": 13,
+                    }
+
+                    response = test_client.get("/api/v1/document/validate_storage?batch_id=1&clean_up=true")
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["missing"] == 1
+                    assert data["missing_hashes"] == ["hash2"]
+                    assert "cleanup_stats" in data
+                    assert data["cleanup_stats"]["deleted_documents"] == 1
+                    assert data["cleanup_stats"]["total_deleted"] == 13
+
+                    # Verify delete was called with correct hashes
+                    mock_delete.assert_called_once_with(["hash2"])
+
+
+def test_validate_storage_cleanup_not_called_when_no_missing(test_client):
+    """Test validate_storage doesn't call cleanup when no documents are missing"""
+    with patch("soliplex.ingester.server.routes.document.operations.get_batch") as mock_get_batch:
+        with patch("soliplex.ingester.server.routes.document.operations.get_documents_in_batch") as mock_get_docs:
+            with patch("soliplex.ingester.server.routes.document.get_storage_operator") as mock_get_op:
+                with patch("soliplex.ingester.server.routes.document.operations.delete_documents_by_hashes") as mock_delete:
+                    mock_get_batch.return_value = Mock()
+
+                    mock_doc1 = Mock()
+                    mock_doc1.hash = "hash1"
+                    mock_get_docs.return_value = [mock_doc1]
+
+                    mock_operator = AsyncMock()
+                    mock_operator.exists.return_value = True
+                    mock_get_op.return_value = mock_operator
+
+                    response = test_client.get("/api/v1/document/validate_storage?batch_id=1&clean_up=true")
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["missing"] == 0
+                    assert "cleanup_stats" not in data
+
+                    # Verify delete was NOT called
+                    mock_delete.assert_not_called()
+
+
+def test_validate_storage_cleanup_false_does_not_delete(test_client):
+    """Test validate_storage with clean_up=false doesn't delete missing documents"""
+    with patch("soliplex.ingester.server.routes.document.operations.get_batch") as mock_get_batch:
+        with patch("soliplex.ingester.server.routes.document.operations.get_documents_in_batch") as mock_get_docs:
+            with patch("soliplex.ingester.server.routes.document.get_storage_operator") as mock_get_op:
+                with patch("soliplex.ingester.server.routes.document.operations.delete_documents_by_hashes") as mock_delete:
+                    mock_get_batch.return_value = Mock()
+
+                    mock_doc1 = Mock()
+                    mock_doc1.hash = "hash1"
+                    mock_get_docs.return_value = [mock_doc1]
+
+                    mock_operator = AsyncMock()
+                    mock_operator.exists.return_value = False
+                    mock_get_op.return_value = mock_operator
+
+                    response = test_client.get("/api/v1/document/validate_storage?batch_id=1&clean_up=false")
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["missing"] == 1
+                    assert "cleanup_stats" not in data
+
+                    # Verify delete was NOT called
+                    mock_delete.assert_not_called()
+
+
+def test_validate_storage_error(test_client):
+    """Test validate_storage endpoint with error"""
+    with patch("soliplex.ingester.server.routes.document.operations.get_batch") as mock_get_batch:
+        with patch("soliplex.ingester.server.routes.document.operations.get_documents_in_batch") as mock_get_docs:
+            mock_get_batch.return_value = Mock()
+            mock_get_docs.side_effect = Exception("Database error")
+
+            response = test_client.get("/api/v1/document/validate_storage?batch_id=1")
+            assert response.status_code == 500
+            assert "Database error" in response.json()["error"]

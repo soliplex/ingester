@@ -2,6 +2,7 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -235,12 +236,13 @@ def test_get_default_param_id():
 @pytest.mark.asyncio
 async def test_load_param_registry(reset_registries, param_yaml_content):
     """Test loading param registry from directory."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         param_path = Path(tmp_dir) / "test_params.yaml"
         param_path.write_text(param_yaml_content)
 
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
             reg = await registry.load_param_registry()
@@ -251,12 +253,13 @@ async def test_load_param_registry(reset_registries, param_yaml_content):
 @pytest.mark.asyncio
 async def test_load_param_registry_caching(reset_registries, param_yaml_content):
     """Test that param registry is cached."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         param_path = Path(tmp_dir) / "test_params.yaml"
         param_path.write_text(param_yaml_content)
 
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
             reg1 = await registry.load_param_registry()
@@ -267,12 +270,13 @@ async def test_load_param_registry_caching(reset_registries, param_yaml_content)
 @pytest.mark.asyncio
 async def test_load_param_registry_force_reload(reset_registries, param_yaml_content):
     """Test force reload of param registry."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         param_path = Path(tmp_dir) / "test_params.yaml"
         param_path.write_text(param_yaml_content)
 
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
             reg1 = await registry.load_param_registry()
@@ -289,7 +293,7 @@ config:
   parse:
     do_ocr: false
 """
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         param_path1 = Path(tmp_dir) / "params1.yaml"
         param_path1.write_text(param_yaml)
         param_path2 = Path(tmp_dir) / "params2.yaml"
@@ -297,6 +301,7 @@ config:
 
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
             with pytest.raises(ValueError, match="duplicate param set id"):
@@ -306,12 +311,13 @@ config:
 @pytest.mark.asyncio
 async def test_get_param_set_found(reset_registries, param_yaml_content):
     """Test getting a param set that exists."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         param_path = Path(tmp_dir) / "test_params.yaml"
         param_path.write_text(param_yaml_content)
 
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
             params = await registry.get_param_set("test_params")
@@ -321,12 +327,13 @@ async def test_get_param_set_found(reset_registries, param_yaml_content):
 @pytest.mark.asyncio
 async def test_get_param_set_not_found(reset_registries, param_yaml_content):
     """Test getting a param set that doesn't exist."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         param_path = Path(tmp_dir) / "test_params.yaml"
         param_path.write_text(param_yaml_content)
 
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
             with pytest.raises(KeyError, match="param set nonexistent not found"):
@@ -336,12 +343,13 @@ async def test_get_param_set_not_found(reset_registries, param_yaml_content):
 @pytest.mark.asyncio
 async def test_get_param_set_default(reset_registries, param_yaml_content):
     """Test getting param set with default ID from settings."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         param_path = Path(tmp_dir) / "test_params.yaml"
         param_path.write_text(param_yaml_content)
 
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
         mock_settings.default_param_id = "test_params"
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
@@ -413,13 +421,14 @@ config:
   parse:
     do_ocr: true
 """
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         # Start with one param file
         param_path1 = Path(tmp_dir) / "params1.yaml"
         param_path1.write_text(param_yaml1)
 
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
             # Load initial registry
@@ -449,10 +458,192 @@ async def test_load_workflow_registry_empty_dir(reset_registries):
 @pytest.mark.asyncio
 async def test_load_param_registry_empty_dir(reset_registries):
     """Test loading param registry from empty directory."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as user_dir:
         mock_settings = MagicMock()
         mock_settings.param_dir = tmp_dir
+        mock_settings.user_param_dir = user_dir
 
         with patch.object(registry, "get_settings", return_value=mock_settings):
             reg = await registry.load_param_registry()
             assert reg == {}
+
+
+# --- Dual-directory (user_param_dir) tests ---
+
+
+@pytest.mark.asyncio
+async def test_load_param_registry_dual_dirs(reset_registries):
+    """Test that params from both system and user dirs are merged."""
+    system_yaml = """
+id: system_params
+config:
+  parse:
+    do_ocr: false
+"""
+    user_yaml = """
+id: user_params
+source: user
+config:
+  parse:
+    do_ocr: true
+"""
+    with tempfile.TemporaryDirectory() as sys_dir, tempfile.TemporaryDirectory() as user_dir:
+        (Path(sys_dir) / "system.yaml").write_text(system_yaml)
+        (Path(user_dir) / "user_custom.yaml").write_text(user_yaml)
+
+        mock_settings = MagicMock()
+        mock_settings.param_dir = sys_dir
+        mock_settings.user_param_dir = user_dir
+
+        with patch.object(registry, "get_settings", return_value=mock_settings):
+            reg = await registry.load_param_registry()
+            assert "system_params" in reg
+            assert "user_params" in reg
+            assert reg["system_params"].source == "app"
+            assert reg["user_params"].source == "user"
+
+
+@pytest.mark.asyncio
+async def test_load_param_registry_cross_dir_duplicate(reset_registries):
+    """Test that duplicate IDs across system and user dirs raise ValueError."""
+    param_yaml = """
+id: shared_id
+config:
+  parse:
+    do_ocr: false
+"""
+    with tempfile.TemporaryDirectory() as sys_dir, tempfile.TemporaryDirectory() as user_dir:
+        (Path(sys_dir) / "system.yaml").write_text(param_yaml)
+        (Path(user_dir) / "user.yaml").write_text(param_yaml)
+
+        mock_settings = MagicMock()
+        mock_settings.param_dir = sys_dir
+        mock_settings.user_param_dir = user_dir
+
+        with patch.object(registry, "get_settings", return_value=mock_settings):
+            with pytest.raises(ValueError, match="duplicate param set id 'shared_id'"):
+                await registry.load_param_registry()
+
+
+@pytest.mark.asyncio
+async def test_save_param_set_to_user_dir(reset_registries):
+    """Test that save_param_set writes to user_param_dir, not param_dir."""
+    yaml_content = """id: new_user_set
+config:
+  parse:
+    do_ocr: true
+"""
+    with tempfile.TemporaryDirectory() as sys_dir, tempfile.TemporaryDirectory() as user_dir:
+        mock_settings = MagicMock()
+        mock_settings.param_dir = sys_dir
+        mock_settings.user_param_dir = user_dir
+
+        with patch.object(registry, "get_settings", return_value=mock_settings):
+            saved_path = await registry.save_param_set(yaml_content)
+
+            # File should be in user dir, not system dir
+            assert Path(user_dir) in saved_path.parents
+            assert saved_path.name == "user_new_user_set.yaml"
+            assert not (Path(sys_dir) / "user_new_user_set.yaml").exists()
+            assert saved_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_param_set_from_user_dir(reset_registries):
+    """Test that delete_param_set removes from user_param_dir."""
+    user_yaml = """id: deletable
+source: user
+config:
+  parse:
+    do_ocr: false
+"""
+    with tempfile.TemporaryDirectory() as sys_dir, tempfile.TemporaryDirectory() as user_dir:
+        user_file = Path(user_dir) / "user_deletable.yaml"
+        user_file.write_text(user_yaml)
+
+        mock_settings = MagicMock()
+        mock_settings.param_dir = sys_dir
+        mock_settings.user_param_dir = user_dir
+
+        # Create async context manager mock for get_session
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        mock_session.exec = AsyncMock(return_value=mock_result)
+
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(registry, "get_settings", return_value=mock_settings),
+            patch.object(registry, "get_session", return_value=mock_ctx),
+        ):
+            # Load registry first
+            await registry.load_param_registry()
+
+            deleted = await registry.delete_param_set("deletable")
+            assert deleted is True
+            assert not user_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_user_param_dir_auto_created(reset_registries):
+    """Test that user_param_dir is auto-created if it doesn't exist."""
+    with tempfile.TemporaryDirectory() as sys_dir, tempfile.TemporaryDirectory() as base_dir:
+        user_dir = str(Path(base_dir) / "nonexistent_subdir")
+
+        mock_settings = MagicMock()
+        mock_settings.param_dir = sys_dir
+        mock_settings.user_param_dir = user_dir
+
+        with patch.object(registry, "get_settings", return_value=mock_settings):
+            reg = await registry.load_param_registry()
+            assert reg == {}
+            assert Path(user_dir).exists()
+
+
+@pytest.mark.asyncio
+async def test_merged_registry_transparent_to_get(reset_registries):
+    """Test that get_param_set finds params from either directory."""
+    system_yaml = """
+id: sys_set
+config:
+  parse:
+    do_ocr: false
+"""
+    user_yaml = """
+id: usr_set
+source: user
+config:
+  parse:
+    do_ocr: true
+"""
+    with tempfile.TemporaryDirectory() as sys_dir, tempfile.TemporaryDirectory() as user_dir:
+        (Path(sys_dir) / "sys.yaml").write_text(system_yaml)
+        (Path(user_dir) / "usr.yaml").write_text(user_yaml)
+
+        mock_settings = MagicMock()
+        mock_settings.param_dir = sys_dir
+        mock_settings.user_param_dir = user_dir
+
+        with patch.object(registry, "get_settings", return_value=mock_settings):
+            sys_params = await registry.get_param_set("sys_set")
+            usr_params = await registry.get_param_set("usr_set")
+            assert sys_params.id == "sys_set"
+            assert usr_params.id == "usr_set"
+
+
+def test_user_param_dir_equals_param_dir_rejected():
+    """Test that Settings rejects user_param_dir == param_dir."""
+    import os
+
+    from soliplex.ingester.lib.config import Settings
+
+    with pytest.raises(ValueError, match="user_param_dir must be different from param_dir"):
+        Settings(
+            doc_db_url="sqlite:///test.db",
+            param_dir="config/params",
+            user_param_dir="config/params",
+            _env_file=os.devnull,
+        )

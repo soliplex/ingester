@@ -17,20 +17,23 @@ This guide will help you get Soliplex Ingester up and running in minutes.
 For production deployment using Docker Compose, see the comprehensive **[Docker Deployment Guide](DOCKER.md)**.
 
 The docker-compose configuration provides all necessary services:
+
 - PostgreSQL database with initialization scripts
 - Docling document parsing services with GPU support and load balancing
 - SeaweedFS for S3-compatible object storage
 - HAProxy load balancer for high availability
 
 **Quick Start with Docker:**
+
 ```bash
 cd docker
 docker-compose up -d
 ```
 
-Access the application at http://localhost:8002
+Access the application at <http://localhost:8002>
 
 **For detailed instructions including:**
+
 - Service configuration and scaling
 - GPU setup and optimization
 - Authentication with OAuth2 Proxy
@@ -39,33 +42,32 @@ Access the application at http://localhost:8002
 
 See **[DOCKER.md](DOCKER.md)**
 
-
-
-
 ### 1. Install Package
 
-
 #### Installation from source
+
 **Using pip:**
+
 ```bash
 cd soliplex-ingester
 pip install -e .
 ```
 
 **Using uv:**
+
 ```bash
 cd soliplex-ingester
 uv pip install -e .
 ```
 
 #### Running your own Install
-You can integrate soliplex ingester into another python project by installing it like any other package.  This will allow you to use custom methods for any part of the workflow if desired.
 
-```
+You can integrate soliplex ingester into another python project by installing it like any other package. This will allow you to use custom methods for any part of the workflow if desired.
+
+```bash
 uv init --lib <my project name>
 uv add https://github.com/soliplex/ingester.git
 uv run si-cli bootstrap
-
 ```
 
 This installs the package and makes the `si-cli` command available.
@@ -81,8 +83,10 @@ You should see the CLI help menu.
 ## Configuration
 
 ### 3. Set Environment Variables
+
 Automatically configure:
-```
+
+```bash
 uv run init-env
 ```
 
@@ -100,16 +104,20 @@ LOG_LEVEL=INFO
 ```
 
 Load the environment:
+
 ```bash
 export $(cat .env | xargs)
 ```
 
 Or on Windows:
+
 ```powershell
 Get-Content .env | ForEach-Object { $var = $_.Split('='); [Environment]::SetEnvironmentVariable($var[0], $var[1]) }
 ```
+
 Alternatively, si-cli can be run via uv to initialize the environment file
-```
+
+```bash
 uv run --env-file=.env si-cli
 ```
 
@@ -130,6 +138,7 @@ si-cli db-init
 ```
 
 This creates:
+
 - SQLite database file at `db/documents.db`
 - All necessary tables
 - Runs migrations
@@ -142,7 +151,8 @@ This creates:
 si-cli serve --reload
 ```
 
-The server starts on `http://127.0.0.1:8000` with:
+The server starts on <http://127.0.0.1:8000> with:
+
 - Auto-reload on code changes
 - Integrated worker for processing
 - Web UI at `/`
@@ -153,11 +163,13 @@ The server starts on `http://127.0.0.1:8000` with:
 **Web UI (Main Application):**
 
 Open your browser and navigate to:
-```
+
+```text
 http://localhost:8000/
 ```
 
 The web UI provides:
+
 - **Dashboard** - Monitor workflow status and batch processing
 - **Batches** - View and manage document batches
 - **Workflows** - Inspect workflow definitions and runs
@@ -168,16 +180,19 @@ The web UI provides:
 **API Documentation (Swagger UI):**
 
 For API testing and documentation:
-```
+
+```text
 http://localhost:8000/docs
 ```
 
 **Alternative API Documentation (ReDoc):**
-```
+
+```text
 http://localhost:8000/redoc
 ```
 
 **Test the server:**
+
 ```bash
 curl http://localhost:8000/docs
 ```
@@ -195,6 +210,7 @@ curl -X POST "http://localhost:8000/api/v1/batch/" \
 ```
 
 **Response:**
+
 ```json
 {
   "batch_id": 1
@@ -204,6 +220,7 @@ curl -X POST "http://localhost:8000/api/v1/batch/" \
 ### 9. Ingest a Document
 
 **Option A: Upload a file**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/document/ingest-document" \
   -F "file=@sample.pdf" \
@@ -213,6 +230,7 @@ curl -X POST "http://localhost:8000/api/v1/document/ingest-document" \
 ```
 
 **Option B: Provide a URI** (requires Docling server)
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/document/ingest-document" \
   -F "input_uri=https://example.com/document.pdf" \
@@ -222,6 +240,7 @@ curl -X POST "http://localhost:8000/api/v1/document/ingest-document" \
 ```
 
 **Response:**
+
 ```json
 {
   "batch_id": 1,
@@ -241,6 +260,7 @@ curl -X POST "http://localhost:8000/api/v1/batch/start-workflows" \
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Workflows started",
@@ -252,11 +272,13 @@ curl -X POST "http://localhost:8000/api/v1/batch/start-workflows" \
 ### 11. Monitor Progress
 
 **Check batch status:**
+
 ```bash
 curl "http://localhost:8000/api/v1/batch/status?batch_id=1"
 ```
 
 **Response:**
+
 ```json
 {
   "batch": { ... },
@@ -273,6 +295,7 @@ curl "http://localhost:8000/api/v1/batch/status?batch_id=1"
 ```
 
 **Watch workflow runs:**
+
 ```bash
 watch -n 5 'curl -s "http://localhost:8000/api/v1/workflow/?batch_id=1"'
 ```
@@ -285,23 +308,24 @@ Once processing completes, check the document:
 curl "http://localhost:8000/api/v1/document/?batch_id=1"
 ```
 
-
-
 ## Next Steps
 
 ### Explore Workflows
 
 **List available workflows:**
+
 ```bash
 si-cli list-workflows
 ```
 
 **Inspect a workflow:**
+
 ```bash
 si-cli dump-workflow batch
 ```
 
 **View workflow runs:**
+
 ```bash
 curl "http://localhost:8000/api/v1/workflow/?batch_id=1"
 ```
@@ -309,16 +333,19 @@ curl "http://localhost:8000/api/v1/workflow/?batch_id=1"
 ### Configure Parameters
 
 **List parameter sets:**
+
 ```bash
 si-cli list-param-sets
 ```
 
 **View parameters:**
+
 ```bash
 si-cli dump-param-set default
 ```
 
 **Create custom parameters:**
+
 1. Copy `config/params/default.yaml` to `config/params/custom.yaml`
 2. Modify settings as needed
 3. Use in API: `-d "param_id=custom"`
@@ -326,6 +353,7 @@ si-cli dump-param-set default
 ### Scale Workers
 
 **Run additional workers:**
+
 ```bash
 # Terminal 1
 si-cli worker
@@ -342,9 +370,10 @@ Each worker processes steps independently, increasing throughput.
 ### Monitor System
 
 **API Documentation:**
-Browse to `http://localhost:8000/docs` for interactive API docs.
+Browse to <http://localhost:8000/docs> for interactive API docs.
 
 **Database Inspection:**
+
 ```bash
 sqlite3 db/documents.db
 sqlite> .tables
@@ -359,6 +388,7 @@ sqlite> SELECT * FROM workflowrun WHERE batch_id = 1;
 **Problem:** Configuration validation fails
 
 **Solution:**
+
 ```bash
 si-cli validate-settings
 ```
@@ -370,6 +400,7 @@ Fix any reported errors in your `.env` file.
 **Problem:** Port already in use
 
 **Solution:**
+
 ```bash
 si-cli serve --port 8001
 ```
@@ -382,6 +413,7 @@ si-cli serve --port 8001
 
 **Solution:**
 Ensure a worker is running:
+
 ```bash
 si-cli worker
 ```
@@ -395,9 +427,11 @@ Check worker logs for errors.
 **Problem:** Parse step fails with connection error
 
 **Solution:**
+
 1. Verify Docling server is running
 2. Check `DOCLING_SERVER_URL` is correct
 3. Test connectivity:
+
    ```bash
    curl http://localhost:5001/v1/health
    ```
@@ -409,6 +443,7 @@ Check worker logs for errors.
 **Problem:** Database connection fails
 
 **Solution:**
+
 1. Check `DOC_DB_URL` format
 2. Ensure directory exists: `mkdir -p db`
 3. Check permissions: `chmod 755 db`
@@ -421,22 +456,26 @@ Check worker logs for errors.
 For active development:
 
 **1. Enable auto-reload:**
+
 ```bash
 si-cli serve --reload
 ```
 
 **2. Set debug logging:**
+
 ```bash
 export LOG_LEVEL=DEBUG
 si-cli serve --reload
 ```
 
 **3. Watch logs:**
+
 ```bash
 si-cli serve --reload 2>&1 | tee server.log
 ```
 
 **4. Monitor database:**
+
 ```bash
 watch -n 2 'sqlite3 db/documents.db "SELECT status, COUNT(*) FROM workflowrun GROUP BY status"'
 ```
@@ -470,11 +509,13 @@ LANCEDB_DIR=/var/lib/soliplex/lancedb
 ### Run Services
 
 **Server:**
+
 ```bash
 si-cli serve --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 **Workers:** (in separate processes)
+
 ```bash
 si-cli worker  # Worker 1
 si-cli worker  # Worker 2
@@ -482,6 +523,7 @@ si-cli worker  # Worker 3
 ```
 
 **Behind Nginx:**
+
 ```nginx
 upstream soliplex {
     server 127.0.0.1:8000;
@@ -502,6 +544,7 @@ server {
 ## Docker Deployment
 
 **Dockerfile:**
+
 ```dockerfile
 FROM python:3.12-slim
 
@@ -513,6 +556,7 @@ CMD ["si-cli", "serve", "--host", "0.0.0.0"]
 ```
 
 **docker-compose.yml:**
+
 ```yaml
 version: '3.8'
 
@@ -552,6 +596,7 @@ volumes:
 ```
 
 **Run:**
+
 ```bash
 docker-compose up -d
 ```
@@ -570,6 +615,7 @@ docker-compose up -d
 ### Examples
 
 Check the `examples/` directory (if available) for:
+
 - Sample workflows
 - Integration scripts
 - Custom step handlers

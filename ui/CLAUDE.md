@@ -23,7 +23,7 @@ npm run lint         # ESLint
 
 ## Project Structure
 
-```
+```text
 src/
 ├── lib/
 │   ├── components/     # Reusable UI components

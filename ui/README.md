@@ -31,7 +31,7 @@ Start the development server:
 npm run dev
 ```
 
-The application will be available at http://localhost:5173
+The application will be available at <http://localhost:5173>
 
 ### Building
 
@@ -113,7 +113,7 @@ The application connects to the Soliplex Ingester API at `http://127.0.0.1:8000/
 
 ## Project Structure
 
-```
+```text
 src/
 ├── lib/
 │   ├── components/     # Reusable Svelte components

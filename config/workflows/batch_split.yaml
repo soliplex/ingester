@@ -1,7 +1,7 @@
 id: batch_split
 meta: {}
 name: Batch workflow with splitting
-lifecycle_events:    
+lifecycle_events:
 item_steps:
   validate:
     name: validate document

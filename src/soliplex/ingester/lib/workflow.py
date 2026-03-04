@@ -115,7 +115,9 @@ async def validate_document(
             try:
                 file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
                 fp = BytesIO(file_bytes)
+                del file_bytes
                 pdfdoc = pypdf.PdfReader(fp)
+                fp.close()
                 meta["is_valid"] = True
                 meta["invalid_reason"] = None
                 meta["page_count"] = len(pdfdoc.pages)
@@ -124,7 +126,7 @@ async def validate_document(
                     if v is not None:
                         cleaned_key = "pdf_" + k.lower().replace("/", "")
                         meta[cleaned_key] = v
-
+                del pdfdoc
             except Exception as e:
                 meta["is_valid"] = False
                 meta["invalid_reason"] = str(e)
@@ -153,6 +155,7 @@ async def split_parse_document(
     step_config: StepConfig = None,
     workflow_run: models.WorkflowRun = None,
     force: bool = False,
+    file_bytes_override: bytes = None,
 ):
     """
     splits document into pieces using pdf_splitter , parses each piece then combines the results
@@ -195,6 +198,7 @@ async def split_parse_document(
             force=force,
             step_config=step_config,
             workflow_run=workflow_run,
+            file_bytes_override=file_bytes_override,
         )
         return
 
@@ -207,42 +211,41 @@ async def split_parse_document(
     if exists and not force:
         logger.info(f"skipping parse for {doc_hash} already exists", extra=_lc)
         return
-
-    file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
+    if file_bytes_override is not None:
+        file_bytes = file_bytes_override
+    else:
+        file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
     async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
         tf = Path(temp_dir)
         outfile = tf / "input.pdf"
         async with aiofiles.open(outfile, "wb") as f:
             await f.write(file_bytes)
-        logger.info(f"starting  split_to_files file_Size={len(file_bytes)}", extra=_lc)
+        file_size = len(file_bytes)
+        logger.info(f"starting  split_to_files file_Size={file_size}", extra=_lc)
+        del file_bytes
         split_result = smart_split_to_files(outfile, output_dir=tf)
 
         if len(split_result) == 2:
             split_files = split_result[0]
-            logger.info(f"document {doc_hash} size={len(file_bytes)} split into {len(split_files)} ")
+            logger.info(f"document {doc_hash} size={file_size} split into {len(split_files)} ")
             if use_serve:
                 logger.info(f"parse_document {doc_hash} using serve")
-                byte_list = await asyncio.gather(*[read_file(x) for x in split_files])
 
-                # parts=asyncio.gather([docling_convert(sub_bytes,"application/pdf", )])
-                parts = await asyncio.gather(
-                    *[
-                        docling_convert(
-                            fb,
-                            doc.mime_type,
-                            source_uri=source_uri,
-                            config_dict=step_config.config_json,
-                        )
-                        for fb in byte_list
-                    ]
-                )
-                proc_results = [
-                    {
+                async def _read_and_convert(split_path):
+                    fb = await read_file(split_path)
+                    result = await docling_convert(
+                        fb,
+                        doc.mime_type,
+                        source_uri=source_uri,
+                        config_dict=step_config.config_json,
+                    )
+                    del fb
+                    return {
                         "success": True,
-                        "document_dict": json.loads(p["json"].decode("utf-8 ")),
+                        "document_dict": json.loads(result["json"].decode("utf-8 ")),
                     }
-                    for p in parts
-                ]
+
+                proc_results = await asyncio.gather(*[_read_and_convert(sp) for sp in split_files])
 
             else:
                 start = time.time()
@@ -282,9 +285,11 @@ async def parse_document(
     force: bool = False,
     step_config: StepConfig = None,
     workflow_run: models.WorkflowRun = None,
+    file_bytes_override: bytes = None,
 ):
     """
     parses document using docling  as one piece.  stores markdown and docling json documents to storage
+    if file_bytes_override is provided, it will be used instead of reading from storage
 
     """
     logger.info(f"parse_document started  {source} {batch_id} {doc_hash}")
@@ -305,7 +310,11 @@ async def parse_document(
             )
             return
         source_uri = doc_uris[0].uri
-        file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
+        if file_bytes_override is None:
+            file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
+        else:
+            file_bytes = file_bytes_override
+
         parsed = await docling_convert(
             file_bytes,
             doc.mime_type,
@@ -355,11 +364,18 @@ async def chunk_document(
             ArtifactType.PARSED_JSON,
         )
         json_text = json_bytes.decode("utf-8")
+        del json_bytes
         docling_document = DoclingDocument.model_validate_json(json_text)
+        del json_text
+
         chunk_objs = await rag.get_chunk_objs(docling_document, step_config.config_json)
+        del docling_document
         chunk_dicts = [x.model_dump() for x in chunk_objs]
+        del chunk_objs
         chunk_json = json.dumps(chunk_dicts)
+        del chunk_dicts
         chunk_bytes = chunk_json.encode("utf-8")
+        del chunk_json
         if force:
             try:
                 await op.delete(doc_hash)
@@ -384,16 +400,22 @@ async def embed_document(
     chunk_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
     chunk_bytes = await chunk_op.read(doc_hash)
     chunk_json = chunk_bytes.decode("utf-8")
+    del chunk_bytes
     chunk_dicts = json.loads(chunk_json)
+    del chunk_json
     chunk_objs = [Chunk.model_validate(x) for x in chunk_dicts]
+    del chunk_dicts
     logger.info(
         f"got {len(chunk_objs)} chunks {source} {batch_id} {doc_hash}",
         extra=_lc,
     )
     embed_chunks = await rag.embed(chunk_objs, step_config.config_json, doc_hash=doc_hash)
+    del chunk_objs
     embed_op = await _get_op(workflow_run.id, WorkflowStepType.EMBED, ArtifactType.EMBEDDINGS)
     embed_json = json.dumps([x.model_dump() for x in embed_chunks])
+    del embed_chunks
     embed_bytes = embed_json.encode("utf-8")
+    del embed_json
     await embed_op.write(doc_hash, embed_bytes)
 
     await doc_ops.add_history_for_hash(doc_hash, "embedded", batch_id=batch_id)

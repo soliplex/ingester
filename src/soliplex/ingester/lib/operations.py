@@ -264,7 +264,6 @@ async def create_document_from_uri(
             uri=source_uri,
             source=source,
             mime_type=mime_type,
-            file_bytes=file_bytes,
             doc_meta=doc_meta,
             file_size=file_size,
         )
@@ -643,6 +642,107 @@ async def validate_storage() -> dict[tuple[models.ArtifactType, models.ArtifactT
             diffs[(s1, s2)] = diff
 
     return diffs
+
+
+# ----------------------- Sync State Operations -----------------------
+
+
+class SyncStateNotFoundError(ValueError):
+    def __init__(self, source_id):
+        super().__init__(f"Sync state for {source_id} not found")
+
+
+async def get_sync_state(source_id: str) -> models.SyncState | None:
+    """
+    Get sync state for a source.
+
+    Args:
+        source_id: Source identifier (e.g., "gitea:admin:myrepo")
+
+    Returns:
+        SyncState object or None if not found
+    """
+    async with models.get_session() as session:
+        statement = select(models.SyncState).where(models.SyncState.source_id == source_id)
+        result = await session.exec(statement)
+        state = result.first()
+        if state:
+            session.expunge(state)
+        return state
+
+
+async def update_sync_state(
+    source_id: str,
+    commit_sha: str,
+    branch: str = "main",
+    metadata: dict[str, int | str] | None = None,
+) -> models.SyncState:
+    """
+    Update or create sync state after successful sync.
+
+    Args:
+        source_id: Source identifier
+        commit_sha: Latest processed commit SHA
+        branch: Branch name
+        metadata: Optional sync metadata
+
+    Returns:
+        Updated SyncState object
+    """
+    async with models.get_session() as session:
+        # Get existing state or create new
+        statement = select(models.SyncState).where(models.SyncState.source_id == source_id)
+        result = await session.exec(statement)
+        state = result.first()
+
+        if state:
+            # Update existing
+            state.last_commit_sha = commit_sha
+            state.last_sync_date = datetime.datetime.now(datetime.UTC)
+            state.branch = branch
+            if metadata:
+                # Merge metadata - must reassign entire dict for SQLAlchemy to track changes
+                merged_metadata = state.sync_metadata.copy()
+                merged_metadata.update(metadata)
+                state.sync_metadata = merged_metadata
+            session.add(state)
+        else:
+            # Create new
+            state = models.SyncState(
+                source_id=source_id,
+                last_commit_sha=commit_sha,
+                last_sync_date=datetime.datetime.now(datetime.UTC),
+                branch=branch,
+                sync_metadata=metadata or {},
+            )
+            session.add(state)
+
+        await session.flush()
+        await session.refresh(state)
+        session.expunge(state)
+        return state
+
+
+async def delete_sync_state(source_id: str) -> None:
+    """
+    Delete sync state for a source (forces full sync on next run).
+
+    Args:
+        source_id: Source identifier
+
+    Raises:
+        SyncStateNotFoundError: If sync state not found
+    """
+    async with models.get_session() as session:
+        statement = select(models.SyncState).where(models.SyncState.source_id == source_id)
+        result = await session.exec(statement)
+        state = result.first()
+
+        if not state:
+            raise SyncStateNotFoundError(source_id)
+
+        await session.delete(state)
+        await session.flush()
 
 
 class DocumentURINotFoundError(ValueError):
@@ -1046,3 +1146,120 @@ async def check_rag_db_consistency(
         "documentdb_count": len(documentdb_docs),
         "lancedb_count": len(lancedb_docs),
     }
+
+
+async def delete_documents_by_hashes(doc_hashes: list[str]) -> dict[str, int]:
+    """
+    Delete documents by their hashes with cascading deletion.
+
+    Deletes all associated records including DocumentURIs, DocumentURIHistory,
+    WorkflowRuns, RunSteps, LifecycleHistory, artifacts, and the documents themselves.
+
+    Parameters
+    ----------
+    doc_hashes : list[str]
+        List of document hashes to delete
+
+    Returns
+    -------
+    dict[str, int]
+        A dictionary containing deletion statistics:
+        - deleted_document_uris: Number of DocumentURI records deleted
+        - deleted_uri_history: Number of DocumentURIHistory records deleted
+        - deleted_documents: Number of Document records deleted
+        - deleted_workflow_runs: Number of WorkflowRun records deleted
+        - deleted_run_steps: Number of RunStep records deleted
+        - deleted_lifecycle_history: Number of LifecycleHistory records deleted
+        - total_deleted: Total number of records deleted
+    """
+    if not doc_hashes:
+        return {
+            "deleted_document_uris": 0,
+            "deleted_uri_history": 0,
+            "deleted_documents": 0,
+            "deleted_workflow_runs": 0,
+            "deleted_run_steps": 0,
+            "deleted_lifecycle_history": 0,
+            "total_deleted": 0,
+        }
+
+    async with models.get_session() as session:
+        # Step 1: Get all DocumentURI IDs for these hashes
+        uri_q = select(models.DocumentURI.id).where(models.DocumentURI.doc_hash.in_(doc_hashes))
+        uri_result = await session.exec(uri_q)
+        doc_uri_ids = list(uri_result.all())
+
+        # Step 2: Get all WorkflowRun IDs for these hashes
+        workflow_run_q = select(models.WorkflowRun.id).where(models.WorkflowRun.doc_id.in_(doc_hashes))
+        workflow_run_ids_result = await session.exec(workflow_run_q)
+        workflow_run_ids = list(workflow_run_ids_result.all())
+
+        # Step 3: Delete RunSteps for all WorkflowRuns
+        deleted_run_steps = 0
+        deleted_lifecycle_history = 0
+        if workflow_run_ids:
+            runstep_delete_q = delete(models.RunStep).where(models.RunStep.workflow_run_id.in_(workflow_run_ids))
+            runstep_result = await session.exec(runstep_delete_q)
+            deleted_run_steps = runstep_result.rowcount  # type: ignore
+
+            # Step 4: Delete LifecycleHistory for all WorkflowRuns
+            lifecycle_delete_q = delete(models.LifecycleHistory).where(
+                models.LifecycleHistory.workflow_run_id.in_(workflow_run_ids)
+            )
+            lifecycle_result = await session.exec(lifecycle_delete_q)
+            deleted_lifecycle_history = lifecycle_result.rowcount  # type: ignore
+
+        # Step 5: Delete WorkflowRuns
+        workflowrun_delete_q = delete(models.WorkflowRun).where(models.WorkflowRun.doc_id.in_(doc_hashes))
+        workflowrun_result = await session.exec(workflowrun_delete_q)
+        deleted_workflow_runs = workflowrun_result.rowcount  # type: ignore
+
+        # Step 6: Delete file artifacts for each hash
+        for doc_hash in doc_hashes:
+            for artifact_type in models.ArtifactType:
+                try:
+                    op = dal.get_storage_operator(artifact_type)
+                    await op.delete(doc_hash)
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    logger.debug(
+                        f"Could not delete artifact {artifact_type} for {doc_hash}: {e}",
+                        extra=log_context(doc_hash=doc_hash, action="delete_documents_by_hashes"),
+                    )
+
+        # Step 7: Delete DocumentURIHistory for all URIs
+        deleted_uri_history = 0
+        if doc_uri_ids:
+            history_delete_q = delete(models.DocumentURIHistory).where(models.DocumentURIHistory.doc_uri_id.in_(doc_uri_ids))
+            history_result = await session.exec(history_delete_q)
+            deleted_uri_history = history_result.rowcount  # type: ignore
+
+        # Step 8: Delete DocumentURIs
+        uri_delete_q = delete(models.DocumentURI).where(models.DocumentURI.doc_hash.in_(doc_hashes))
+        uri_delete_result = await session.exec(uri_delete_q)
+        deleted_document_uris = uri_delete_result.rowcount  # type: ignore
+
+        # Step 9: Delete Documents
+        doc_delete_q = delete(models.Document).where(models.Document.hash.in_(doc_hashes))
+        doc_result = await session.exec(doc_delete_q)
+        deleted_documents = doc_result.rowcount  # type: ignore
+
+        await session.commit()
+
+        return {
+            "deleted_document_uris": deleted_document_uris,
+            "deleted_uri_history": deleted_uri_history,
+            "deleted_documents": deleted_documents,
+            "deleted_workflow_runs": deleted_workflow_runs,
+            "deleted_run_steps": deleted_run_steps,
+            "deleted_lifecycle_history": deleted_lifecycle_history,
+            "total_deleted": (
+                deleted_document_uris
+                + deleted_uri_history
+                + deleted_documents
+                + deleted_workflow_runs
+                + deleted_run_steps
+                + deleted_lifecycle_history
+            ),
+        }

@@ -1,13 +1,22 @@
-id: interactive
+id: batch_split_vacuum
 meta: {}
-name: Interactive Workflow
+name: Batch workflow with splitting, vacuum and hash checking
 lifecycle_events:
-
+  group_end:
+    - name: start span
+      method: soliplex.ingester.example.run_end
+      retries: 1
+      parameters: {}
 item_steps:
+  validate:
+    name: validate document
+    retries: 3
+    method: soliplex.ingester.lib.workflow.validate_document
+    parameters: {}
   parse:
     name: docling parse
     retries: 3
-    method: soliplex.ingester.lib.workflow.parse_document
+    method: soliplex.ingester.lib.workflow.split_parse_document
     parameters: {}
   chunk:
     name: docling chunk

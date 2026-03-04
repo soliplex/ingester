@@ -2,7 +2,6 @@ import asyncio
 import http.cookiejar as cj
 import json
 import logging
-import os
 from io import BytesIO
 
 import aiohttp
@@ -15,8 +14,7 @@ from soliplex.ingester.lib.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-DOCLING_PATH = os.getenv("DOCLING_PATH", ".venv/scripts/docling")
-DOCLING_PARAMS = os.getenv("DOCLING_PARAMS", " --no-ocr --no-tables ")
+
 SMALLEST_PNG = (
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 )
@@ -42,6 +40,10 @@ def do_repl(data):
     return data
 
 
+def is_html(file_bytes: bytes) -> bool:
+    return (file_bytes.startswith(b"<!DOCTYPE html>") or b"<html" in file_bytes[:100]) and b"<body" in file_bytes
+
+
 @retry(stop=stop_after_attempt(4), wait=wait_exponential_jitter(), reraise=True)
 async def docling_convert(
     file_bytes: bytes,
@@ -57,7 +59,6 @@ async def docling_convert(
 
     async with _http_sem:
         local_jar = cj.CookieJar()
-        _async_client = httpx.AsyncClient(timeout=env.docling_http_timeout, cookies=local_jar)
         async_url = f"{env.docling_server_url}/convert/file/async"
         parameters = {
             "from_formats": [
@@ -79,7 +80,7 @@ async def docling_convert(
             config_dict["ocr_lang"] = [config_dict["ocr_lang"]]
         parameters.update(config_dict)
         # remove picture description
-        for k in parameters.keys():
+        for k in list(parameters.keys()):
             if k.startswith("picture_description_"):
                 del parameters[k]
         if "do_picture_description" in config_dict and config_dict["do_picture_description"] is True:
@@ -102,40 +103,50 @@ async def docling_convert(
             parameters["do_picture_description"] = False
 
         file_name = source_uri.split("/")[-1]
+
         if mime_type and "markdown" in mime_type and not file_name.endswith(".md"):
             file_name = file_name + ".md"
+        # docling requires some special handling for html
+        if is_html(file_bytes):
+            parameters["from_formats"] = ["html"]
+            file_name = file_name + ".html"
+
         f = BytesIO(file_bytes)
-        files = {
-            "files": (file_name, f, mime_type),
-        }
-        logger.info(f"using {parameters} on {file_name}")
-        response = await _async_client.post(async_url, files=files, data=parameters)
-        async_res = response.json()
-        logger.info(async_res)
-        if "task_id" not in async_res:
-            raise ValueError(f"no task_id in response: {async_res}")
-        task_id = async_res["task_id"]
-        async with aiohttp.ClientSession(cookies=response.cookies) as session:
-            ws_url = f"{env.docling_server_url.replace('http', 'ws')}/status/ws/{task_id}"
-            async with session.ws_connect(ws_url) as ws:
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        payload = msg.json()
-                        if payload["message"] == "error":
-                            break
-                        if payload["message"] == "update" and payload["task"]["task_status"] in (
-                            "success",
-                            "failure",
-                        ):
-                            break
-        if "task" in payload and "task_status" in payload["task"] and payload["task"]["task_status"] == "failure":
-            if "errors" in payload["task"]:
-                logger.error(f"errors: {payload['task']['errors']}")
-            else:
-                logger.error(f"no errors in response: {payload}")
-        result_url = f"{env.docling_server_url}/result/{task_id}"
-        response = await _async_client.get(result_url)
-        res = response.json()
+        try:
+            files = {
+                "files": (file_name, f, mime_type),
+            }
+            logger.debug(f"using {parameters} on {file_name}")
+            async with httpx.AsyncClient(timeout=env.docling_http_timeout, cookies=local_jar) as _async_client:
+                response = await _async_client.post(async_url, files=files, data=parameters)
+                async_res = response.json()
+                logger.debug(async_res)
+                if "task_id" not in async_res:
+                    raise ValueError(f"no task_id in response: {async_res}")
+                task_id = async_res["task_id"]
+                async with aiohttp.ClientSession(cookies=response.cookies) as session:
+                    ws_url = f"{env.docling_server_url.replace('http', 'ws')}/status/ws/{task_id}"
+                    async with session.ws_connect(ws_url) as ws:
+                        async for msg in ws:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                payload = msg.json()
+                                if payload["message"] == "error":
+                                    break
+                                if payload["message"] == "update" and payload["task"]["task_status"] in (
+                                    "success",
+                                    "failure",
+                                ):
+                                    break
+                if "task" in payload and "task_status" in payload["task"] and payload["task"]["task_status"] == "failure":
+                    if "errors" in payload["task"]:
+                        logger.error(f"errors: {payload['task']['errors']}")
+                    else:
+                        logger.error(f"no errors in response: {payload}")
+                result_url = f"{env.docling_server_url}/result/{task_id}"
+                response = await _async_client.get(result_url)
+                res = response.json()
+        finally:
+            f.close()
         if "status" not in res:
             raise ValueError(f"no status in response: {res}")
         logger.info(f"{task_id} result={res['status']} processing time={res['processing_time']}")

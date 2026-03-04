@@ -9,11 +9,13 @@ This directory contains scripts for building the Svelte UI and deploying it to t
 Windows batch script for building the UI.
 
 **Usage:**
+
 ```cmd
 scripts\build-ui.bat
 ```
 
 **Requirements:**
+
 - Node.js and npm installed on Windows
 
 ---
@@ -23,6 +25,7 @@ scripts\build-ui.bat
 Unix shell script for building the UI.
 
 **Usage:**
+
 ```bash
 ./scripts/build-ui.sh
 # or
@@ -40,6 +43,7 @@ bash scripts/build-ui.sh
 Docker-based build script for environments without local Node.js/npm installation.
 
 **Usage:**
+
 ```bash
 ./scripts/build_ui-docker.sh
 # or
@@ -84,7 +88,7 @@ See `ui/README_BUILD.md` for detailed build configuration.
 
 After running any of these scripts, you'll find:
 
-```
+```text
 src/soliplex/ingester/server/static/
 ├── index.html                          # Updated with version query strings
 ├── _app/
@@ -107,25 +111,30 @@ src/soliplex/ingester/server/static/
 ## Troubleshooting
 
 ### "Failed to navigate to ui directory"
+
 - Ensure you're running the script from the project root directory
 - Check that the `ui/` directory exists
 
 ### "Failed to install dependencies"
+
 - Check your internet connection
 - Verify Node.js/npm is installed: `node --version && npm --version`
 - For Docker script: ensure Docker is running
 
 ### "Failed to build UI"
+
 - Check build output for specific errors
 - Verify `ui/package.json` has the build script defined
 - Ensure `ui/scripts/static-filenames.js` exists
 
 ### Missing files in verification
+
 - Check if the build completed successfully
 - Look for error messages in the npm build output
 - Verify the post-build script ran (should see "Renamed:" messages)
 
 ### Docker script hangs
+
 - Ensure you're not using `-it` flags in a non-interactive environment
 - Check Docker has sufficient resources allocated
 - Try pulling the image first: `docker pull node:lts-alpine`
@@ -135,6 +144,7 @@ src/soliplex/ingester/server/static/
 These scripts can be integrated into CI/CD pipelines:
 
 **GitHub Actions Example:**
+
 ```yaml
 - name: Build UI
   run: ./scripts/build-ui.sh
@@ -145,6 +155,7 @@ These scripts can be integrated into CI/CD pipelines:
 ```
 
 **Docker Build Example:**
+
 ```dockerfile
 # In your Dockerfile
 COPY ui/package*.json ui/

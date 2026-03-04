@@ -31,6 +31,7 @@ def build_docling_config(start_config: AppConfig, config_dict: dict[str, str | i
     env = get_settings()
     # may cause issues if they go to v2
     config.providers.docling_serve.base_url = env.docling_chunk_server_url.replace("/v1", "")
+
     return config
 
 
@@ -53,7 +54,15 @@ def build_embed_config(start_config: AppConfig, config_dict: dict[str, str | int
 
 def build_chunk_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
     config = copy.deepcopy(start_config)
-    config = build_docling_config(config, config_dict)
+    # config = build_docling_config(config, config_dict)
+    env = get_settings()
+    # may cause issues if they go to v2
+    config.providers.docling_serve.base_url = env.docling_chunk_server_url.replace("/v1", "")
+
+    # turn off ocr for chunking as it's already been done and can cause problems in FIPS environments
+    config.processing.conversion_options.ocr_engine = "rapidocr"
+    config.processing.conversion_options.do_ocr = False
+    config.processing.conversion_options.force_ocr = False
     # some
     if "text_context_radius" in config_dict:
         del config_dict["text_context_radius"]
@@ -124,6 +133,8 @@ async def get_chunk_objs(
     config = build_chunk_config(HRConfig, config_dict)
     chunker = get_chunker(config)
     chunks = await chunker.chunk(docling_document)
+    if len(chunks) == 0:
+        raise ValueError("No chunks found ")
     return chunks
 
 

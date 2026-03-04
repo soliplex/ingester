@@ -3,7 +3,7 @@ import hashlib
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from enum import Enum
+from enum import StrEnum
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import Field
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
+
+from soliplex.ingester.lib.config import get_settings
 
 
 class Database:
@@ -57,9 +59,7 @@ class Database:
             return
 
         if url is None:
-            from soliplex.ingester.lib.config import get_settings
-
-            url = get_settings().doc_db_url
+            url = get_settings().doc_db_url.get_secret_value()
 
         connect_args = {}
         if "sqlite" in url:
@@ -68,8 +68,9 @@ class Database:
         cls._engine = create_async_engine(url, connect_args=connect_args)
 
         # Create all tables
-        async with cls._engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
+        if get_settings().auto_create_database:
+            async with cls._engine.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.create_all)
 
         cls._initialized = True
 
@@ -218,7 +219,7 @@ class Document(SQLModel, table=True):
         super().__init__(**kwargs)
 
 
-class ArtifactType(Enum):
+class ArtifactType(StrEnum):
     DOC = "document"
     PARSED_MD = "parsed_markdown"
     PARSED_JSON = "parsed_json"
@@ -227,7 +228,7 @@ class ArtifactType(Enum):
     RAG = "rag"
 
 
-class WorkflowStepType(str, Enum):
+class WorkflowStepType(StrEnum):
     INGEST: str = "ingest"
     VALIDATE: str = "validate"
     PARSE: str = "parse"
@@ -256,7 +257,7 @@ ARTIFACTS_TO_STEPS = {
 }
 
 
-class LifeCycleEvent(str, Enum):
+class LifeCycleEvent(StrEnum):
     GROUP_START: str = "group_start"
     GROUP_END: str = "group_end"
     ITEM_START: str = "item_start"
@@ -295,10 +296,38 @@ class DocumentURIHistory(SQLModel, table=True):
     histmeta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
+class SyncState(SQLModel, table=True):
+    """Track last sync state for incremental syncing."""
+
+    __tablename__ = "sync_state"
+
+    source_id: str = Field(
+        primary_key=True,
+        description="Source identifier (e.g., 'gitea:admin:myrepo')",
+    )
+    last_commit_sha: str | None = Field(
+        default=None,
+        description="Last processed commit SHA",
+    )
+    last_sync_date: datetime.datetime | None = Field(
+        default=None,
+        description="When last sync occurred",
+    )
+    branch: str = Field(
+        default="main",
+        description="Tracked branch",
+    )
+    sync_metadata: dict[str, int | str] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="Additional sync metadata",
+    )
+
+
 # ----------------- workflow related models ----------------------
 
 
-class RunStatus(str, Enum):
+class RunStatus(StrEnum):
     PENDING = "PENDING"  # hasn't started
     RUNNING = "RUNNING"  # currently running
     COMPLETED = "COMPLETED"  # success

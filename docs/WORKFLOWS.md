@@ -9,6 +9,7 @@ The Soliplex Ingester workflow system orchestrates multi-step document processin
 ### Workflow Definition
 
 A **WorkflowDefinition** specifies the processing pipeline for documents. It defines:
+
 - Unique ID and name
 - Item steps (processing stages)
 - Lifecycle event handlers
@@ -44,18 +45,21 @@ A **RunStep** is one stage of execution within a workflow run. Each step:
 The system supports these predefined step types:
 
 ### INGEST
+
 - **Purpose:** Load raw document into the system
 - **Input:** File bytes or URI
 - **Output:** Document stored in file system
 - **Artifact:** `ArtifactType.DOC`
 
 ### VALIDATE
+
 - **Purpose:** Check document format and readability
 - **Input:** Raw document
 - **Output:** Validation result
 - **Handler:** `soliplex_ingester.lib.workflow.validate_document`
 
 ### PARSE
+
 - **Purpose:** Extract text, structure, and metadata
 - **Input:** Raw document
 - **Output:** Markdown and JSON representations
@@ -64,6 +68,7 @@ The system supports these predefined step types:
 - **Service:** Docling server
 
 ### CHUNK
+
 - **Purpose:** Split document into semantic chunks
 - **Input:** Parsed markdown
 - **Output:** Array of text chunks
@@ -71,6 +76,7 @@ The system supports these predefined step types:
 - **Handler:** `soliplex_ingester.lib.workflow.chunk_document`
 
 ### EMBED
+
 - **Purpose:** Generate vector embeddings for chunks
 - **Input:** Text chunks
 - **Output:** Embedding vectors
@@ -78,6 +84,7 @@ The system supports these predefined step types:
 - **Handler:** `soliplex_ingester.lib.workflow.embed_document`
 
 ### STORE
+
 - **Purpose:** Save embeddings to RAG system
 - **Input:** Embeddings
 - **Output:** RAG document ID
@@ -86,12 +93,14 @@ The system supports these predefined step types:
 - **Backend:** LanceDB + HaikuRAG
 
 ### ENRICH
+
 - **Purpose:** Add metadata or perform additional processing
 - **Input:** Document and existing artifacts
 - **Output:** Enhanced metadata
 - **Handler:** Custom (user-defined)
 
 ### ROUTE
+
 - **Purpose:** Conditional logic for workflow branching
 - **Input:** Document state
 - **Output:** Routing decision
@@ -184,6 +193,7 @@ config:
 ### Creating Workflows
 
 **For a Batch:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/batch/start-workflows" \
   -d "batch_id=1" \
@@ -192,6 +202,7 @@ curl -X POST "http://localhost:8000/api/v1/batch/start-workflows" \
 ```
 
 **For a Single Document:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/workflow/" \
   -d "doc_id=sha256-abc123..." \
@@ -212,11 +223,13 @@ Workers continuously poll for pending steps:
 8. Repeat
 
 Start a worker:
+
 ```bash
 si-cli worker
 ```
 
 Or via server (starts worker automatically):
+
 ```bash
 si-cli serve
 ```
@@ -262,6 +275,63 @@ lifecycle_events:
         message: "Document processing failed"
 ```
 
+### Example: Vacuum Workflow
+
+The `batch_split_vacuum` workflow (`config/workflows/batch_split_vacuum.yaml`) demonstrates a practical use of lifecycle events. It extends the standard `batch_split` workflow by adding a `group_end` handler that vacuums and checksums the LanceDB database after all documents in a group have been processed.
+
+```yaml
+id: batch_split_vacuum
+meta: {}
+name: Batch workflow with splitting, vacuum and hash checking
+lifecycle_events:
+  group_end:
+    - name: start span
+      method: soliplex.ingester.example.run_end
+      retries: 1
+      parameters: {}
+item_steps:
+  validate:
+    name: validate document
+    retries: 3
+    method: soliplex.ingester.lib.workflow.validate_document
+    parameters: {}
+  parse:
+    name: docling parse
+    retries: 3
+    method: soliplex.ingester.lib.workflow.split_parse_document
+    parameters: {}
+  chunk:
+    name: docling chunk
+    retries: 3
+    method: soliplex.ingester.lib.workflow.chunk_document
+    parameters: {}
+  embed:
+    name: embeddings
+    retries: 3
+    method: soliplex.ingester.lib.workflow.embed_document
+    parameters: {}
+  store:
+    name: save to rag
+    retries: 3
+    method: soliplex.ingester.lib.workflow.save_to_rag
+    parameters: {}
+```
+
+The `run_end` handler (in `src/soliplex/ingester/example/__init__.py`) performs two operations:
+
+1. **Vacuum** - Calls `HaikuRAGApp.vacuum()` to compact the LanceDB database, reclaiming disk space from deleted or updated records
+2. **Hash** - Computes a SHA-256 hash of all database files and writes it to `{db_name}.sha256`, providing a way to detect if the database was modified outside the workflow (e.g., by CLI operations)
+
+You can also vacuum a database on demand via the REST API:
+
+```bash
+curl "http://localhost:8000/api/v1/lancedb/vacuum?db=my_database"
+```
+
+**Note:** LanceDB `auto_vacuum` is explicitly disabled in the HaikuRAG storage configuration because it caused reliability issues. Use the vacuum lifecycle event or the API endpoint instead for controlled compaction.
+
+---
+
 ## Retry Logic
 
 ### Automatic Retries
@@ -274,6 +344,7 @@ Steps automatically retry on error:
 ### Manual Retry
 
 Reset failed steps for a run group:
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/workflow/retry" \
   -d "run_group_id=5"
@@ -290,6 +361,7 @@ curl "http://localhost:8000/api/v1/workflow/run-groups/5/stats"
 ```
 
 Returns:
+
 ```json
 {
   "total_runs": 100,
@@ -361,6 +433,7 @@ async def custom_handler(
 
 1. **Define the handler** in your Python module
 2. **Add to workflow YAML:**
+
    ```yaml
    item_steps:
      custom_step:
@@ -370,6 +443,7 @@ async def custom_handler(
        parameters:
          param1: value1
    ```
+
 3. **Ensure module is importable** by the worker process
 
 ## Worker Configuration
@@ -415,12 +489,14 @@ Artifacts are stored under `FILE_STORE_DIR` with subdirectories:
 ### File Naming
 
 Files are named by document hash:
-```
+
+```text
 {storage_dir}/{hash}
 ```
 
 Example:
-```
+
+```text
 file_store/markdown/sha256-abc123def456...
 ```
 

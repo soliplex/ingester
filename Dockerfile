@@ -34,11 +34,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Stage 3: Final image
 FROM base
-COPY --from=builder /app /app
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser
+
+COPY --from=builder --chown=appuser:appuser /app /app
 
 # Copy UI build artifacts
-COPY --from=ui-builder /ui/build /app/src/soliplex/ingester/server/static
+COPY --from=ui-builder --chown=appuser:appuser /ui/build /app/src/soliplex/ingester/server/static
 
 ENV PATH="/app/.venv/bin:$PATH"
+
+# Switch to non-root user
+USER appuser
 
 CMD ["si-cli", "serve", "--host=0.0.0.0"]

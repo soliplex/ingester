@@ -1,18 +1,32 @@
+import asyncio
 import json
 import logging
 
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import Form
+from fastapi import Request
 from fastapi import Response
 from fastapi import UploadFile
 from fastapi import status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib import workflow as workflow
 from soliplex.ingester.lib.auth import get_current_user
+from soliplex.ingester.lib.auth import require_auth_in_production
+from soliplex.ingester.lib.config import get_settings
+from soliplex.ingester.lib.dal import get_storage_operator
+from soliplex.ingester.lib.models import ArtifactType
 
 logger = logging.getLogger(__name__)
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
+# Get settings for rate limiting configuration
+settings = get_settings()
 
 doc_router = APIRouter(prefix="/api/v1/document", tags=["document"], dependencies=[Depends(get_current_user)])
 
@@ -33,8 +47,10 @@ async def get_docs(response: Response, source: str = None, batch_id: int = None)
         }
 
 
-@doc_router.post("/ingest-document", status_code=status.HTTP_201_CREATED)
+@doc_router.post("/ingest-document", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_auth_in_production)])
+@limiter.limit(settings.rate_limit_ingest)
 async def ingest_document(
+    request: Request,
     response: Response,
     file: UploadFile = None,
     input_uri: str = Form(None),
@@ -89,11 +105,17 @@ async def ingest_document(
     except KeyError as e:
         logger.exception("Error ingesting document")
         response.status_code = status.HTTP_400_BAD_REQUEST
-        return {"error": str(e)}
+        settings = get_settings()
+        if settings.debug:
+            return {"error": str(e)}
+        return {"error": "Invalid request. Please check your input and try again."}
     except Exception as ex:
         logger.exception("Error ingesting document")
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return {"error": str(ex)}
+        settings = get_settings()
+        if settings.debug:
+            return {"error": str(ex)}
+        return {"error": "An internal error occurred. Please contact support."}
     else:
         return res
 
@@ -170,3 +192,69 @@ async def delete_document_by_uri(response: Response, uri: str, source: str) -> d
             "source": source,
             "statistics": result,
         }
+
+
+@doc_router.get(
+    "/validate_storage",
+    status_code=status.HTTP_200_OK,
+    summary="Validate that all documents in a batch exist in storage",
+)
+async def validate_storage(batch_id: int, response: Response, clean_up: bool = False):
+    """
+    Check that all documents in a batch exist in storage for ArtifactType.DOC.
+
+    Parameters
+    ----------
+    batch_id : int
+        The batch ID to validate
+    clean_up : bool
+        If True, delete all records for documents missing from storage.
+        This includes Document, DocumentURI, DocumentURIHistory, WorkflowRun,
+        RunStep, and LifecycleHistory records.
+
+    Returns
+    -------
+    dict
+        Validation results including:
+        - batch_id: The batch ID validated
+        - total: Total documents in batch
+        - valid: Count of documents that exist in storage
+        - missing: Count of documents missing from storage
+        - missing_hashes: List of document hashes not found in storage
+        - cleanup_stats: (if clean_up=True) Statistics about deleted records
+    """
+    batch = await operations.get_batch(batch_id)
+    if not batch:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"error": f"Batch {batch_id} not found"}
+
+    try:
+        docs = await operations.get_documents_in_batch(batch_id)
+        operator = get_storage_operator(ArtifactType.DOC)
+
+        async def check_exists(doc_hash: str) -> tuple[str, bool]:
+            exists = await operator.exists(doc_hash)
+            return (doc_hash, exists)
+
+        results = await asyncio.gather(*[check_exists(doc.hash) for doc in docs])
+
+        missing_hashes = [doc_hash for doc_hash, exists in results if not exists]
+        valid_count = len(results) - len(missing_hashes)
+
+        result = {
+            "batch_id": batch_id,
+            "total": len(docs),
+            "valid": valid_count,
+            "missing": len(missing_hashes),
+            "missing_hashes": missing_hashes,
+        }
+
+        if clean_up and missing_hashes:
+            cleanup_stats = await operations.delete_documents_by_hashes(missing_hashes)
+            result["cleanup_stats"] = cleanup_stats
+    except Exception as e:
+        logger.exception("Error validating storage for batch", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}
+    else:
+        return result

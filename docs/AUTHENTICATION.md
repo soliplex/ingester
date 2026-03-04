@@ -1,10 +1,59 @@
 # Authentication Guide
 
-This guide covers setting up authentication for Soliplex Ingester using OAuth2 Proxy.
+This guide covers authentication for Soliplex Ingester, including API key authentication and OAuth2 Proxy setup.
 
 ## Overview
 
-Soliplex Ingester uses [OAuth2 Proxy](https://oauth2-proxy.github.io/oauth2-proxy/) as a reverse proxy to handle OIDC authentication. This approach:
+Soliplex Ingester supports two authentication methods:
+
+1. **API Key Authentication** - For programmatic access (scripts, CI/CD, agents)
+2. **OAuth2 Proxy** - For web UI access with SSO (Google, GitHub, Azure AD, etc.)
+
+### Production Mode (NEW!)
+
+**Production mode enforces authentication on sensitive endpoints**, preventing accidental deployment without security.
+
+- **Development**: Authentication optional (easy local development)
+- **Production**: Authentication mandatory (secure deployments)
+
+See [Production Mode](#production-mode-mandatory-authentication) section below.
+
+---
+
+## Authentication Methods
+
+### 1. API Key Authentication
+
+Simple Bearer token authentication for programmatic access.
+
+**Configuration:**
+
+```bash
+PRODUCTION_MODE=true
+API_KEY_ENABLED=true
+API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+```
+
+**Usage:**
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" \
+  http://localhost:8002/api/v1/batch/
+```
+
+**Features:**
+- Constant-time comparison (prevents timing attacks)
+- Works with OpenAPI/Swagger UI
+- Simple to configure
+- Ideal for automation and scripts
+
+---
+
+### 2. OAuth2 Proxy (OIDC)
+
+Soliplex Ingester uses
+[OAuth2 Proxy](https://oauth2-proxy.github.io/oauth2-proxy/)
+as a reverse proxy to handle OIDC authentication. This approach:
 
 - Requires **zero code changes** to the application
 - Supports any OIDC-compliant identity provider
@@ -62,13 +111,96 @@ OAUTH2_PROXY_REDIRECT_URL=http://localhost:4180/oauth2/callback
 ### 3. Start with Authentication
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.auth up
+docker compose -f docker-compose.yml \
+  -f docker-compose.auth.yml \
+  --env-file .env.auth up
 ```
 
 ### 4. Access the Application
 
-- **With auth:** http://localhost:4180 (redirects to OIDC login)
-- **Direct API (no auth):** http://localhost:8002 (if port still exposed)
+- **With auth:** <http://localhost:4180> (redirects to OIDC login)
+- **Direct API (no auth):** <http://localhost:8002> (if port still exposed)
+
+---
+
+## Production Mode (Mandatory Authentication)
+
+**⚠️ NEW SECURITY FEATURE**
+
+Production mode enforces authentication on sensitive endpoints, ensuring you cannot accidentally deploy without proper security.
+
+### Quick Setup
+
+#### Development (Default)
+
+```bash
+# Optional authentication for easy local development
+PRODUCTION_MODE=false  # Default
+```
+
+#### Production
+
+```bash
+# Mandatory authentication - Choose one or both:
+
+# Option 1: API Key
+PRODUCTION_MODE=true
+API_KEY_ENABLED=true
+API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+
+# Option 2: OAuth2 Proxy
+PRODUCTION_MODE=true
+AUTH_TRUST_PROXY_HEADERS=true
+# Then use docker-compose.auth.yml
+
+# Option 3: Both (recommended for hybrid deployments)
+PRODUCTION_MODE=true
+API_KEY_ENABLED=true
+API_KEY=your_secure_key
+AUTH_TRUST_PROXY_HEADERS=true
+```
+
+### How It Works
+
+**When `PRODUCTION_MODE=true`:**
+
+1. **Application validates configuration at startup**
+   - Requires at least one authentication method enabled
+   - Fails fast if auth is not configured
+
+2. **Protected endpoints require authentication:**
+   - `/api/v1/document/ingest-document` - Document ingestion
+   - `/api/v1/batch/` (POST) - Batch creation
+   - `/api/v1/batch/start-workflows` - Workflow initiation
+
+3. **Read-only endpoints remain accessible** (optional):
+   - `/api/v1/document/` (GET) - List documents
+   - `/api/v1/batch/` (GET) - List batches
+   - Health checks and status
+
+### Benefits
+
+✅ **Fail-Safe**: Cannot deploy to production without authentication
+✅ **Developer-Friendly**: No authentication burden during development
+✅ **Explicit**: Clear separation between dev and prod security
+✅ **Flexible**: Apply to specific endpoints as needed
+
+### Testing Production Mode
+
+```bash
+# This will FAIL (production mode without auth)
+export PRODUCTION_MODE=true
+export API_KEY_ENABLED=false
+si-cli serve
+# Error: "Production mode requires authentication to be enabled"
+
+# This will SUCCEED
+export PRODUCTION_MODE=true
+export API_KEY_ENABLED=true
+export API_KEY=test-key
+si-cli serve
+# Server starts successfully
+```
 
 ---
 
@@ -93,6 +225,7 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.
    - Token Claim Name: `groups`
 
 4. Environment settings:
+
    ```bash
    OAUTH2_PROXY_OIDC_ISSUER_URL=https://keycloak.example.com/realms/your-realm
    # Or use keycloak-oidc provider for role support:
@@ -106,6 +239,7 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.
 3. Enable the following connections as needed
 
 4. Environment settings:
+
    ```bash
    OAUTH2_PROXY_OIDC_ISSUER_URL=https://your-tenant.auth0.com/
    ```
@@ -117,6 +251,7 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.
 3. Create a client secret
 
 4. Environment settings:
+
    ```bash
    OAUTH2_PROXY_OIDC_ISSUER_URL=https://login.microsoftonline.com/{tenant-id}/v2.0
    # Or use azure provider:
@@ -129,6 +264,7 @@ docker compose -f docker-compose.yml -f docker-compose.auth.yml --env-file .env.
 2. Set Sign-in redirect URI: `http://localhost:4180/oauth2/callback`
 
 3. Environment settings:
+
    ```bash
    OAUTH2_PROXY_OIDC_ISSUER_URL=https://your-org.okta.com
    ```
@@ -205,7 +341,8 @@ async def protected_endpoint(user: dict = Depends(get_current_user)):
 
 ## API Key Fallback
 
-For programmatic access (scripts, CI/CD), you can enable API key authentication alongside OIDC:
+For programmatic access (scripts, CI/CD), you can enable
+API key authentication alongside OIDC:
 
 ### Enable API Key Support
 
@@ -227,7 +364,11 @@ curl -H "Authorization: Bearer your-api-key" http://localhost:4180/api/v1/batch/
 curl -H "Authorization: Bearer your-api-key" http://localhost:8002/api/v1/batch/
 ```
 
-**How it works:** OAuth2 Proxy is configured with `skip_jwt_bearer_tokens = true`, which allows requests with an `Authorization: Bearer` header to pass through without OIDC authentication. The backend then validates the token.
+**How it works:** OAuth2 Proxy is configured with
+`skip_jwt_bearer_tokens = true`, which allows requests
+with an `Authorization: Bearer` header to pass through
+without OIDC authentication.
+The backend then validates the token.
 
 ---
 
@@ -238,6 +379,7 @@ curl -H "Authorization: Bearer your-api-key" http://localhost:8002/api/v1/batch/
 1. Update redirect URL in OIDC provider
 2. Configure SSL certificates
 3. Update environment:
+
    ```bash
    OAUTH2_PROXY_COOKIE_SECURE=true
    OAUTH2_PROXY_REDIRECT_URL=https://your-domain.com/oauth2/callback
@@ -263,7 +405,8 @@ Update the application's CORS settings to only allow your domain.
 
 ### "Invalid redirect" Error
 
-Ensure the redirect URL in `.env.auth` exactly matches what's configured in your OIDC provider.
+Ensure the redirect URL in `.env.auth` exactly matches
+what's configured in your OIDC provider.
 
 ### "Token audience doesn't match"
 
@@ -271,11 +414,13 @@ For Keycloak, add an Audience mapper to your client (see Keycloak section above)
 
 ### Headers Not Reaching Backend
 
-Ensure `set_xauthrequest = true` is in `oauth2-proxy.cfg` and the backend trusts proxy headers.
+Ensure `set_xauthrequest = true` is in `oauth2-proxy.cfg`
+and the backend trusts proxy headers.
 
 ### Session Expires Frequently
 
 Increase cookie lifetime:
+
 ```ini
 # oauth2-proxy.cfg
 cookie_expire = "168h"
@@ -285,6 +430,7 @@ cookie_refresh = "1h"
 ### Debug Logging
 
 Enable verbose logging:
+
 ```ini
 # oauth2-proxy.cfg
 standard_logging = true

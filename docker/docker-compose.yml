@@ -66,12 +66,12 @@ services:
     image: postgres:18-trixie
 
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres  # ⚠️ CHANGE FOR PRODUCTION
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}  # Required override for security
       POSTGRES_INITDB_ARGS: "-A scram-sha-256"  # Use SCRAM-SHA-256 authentication
 
     ports:
-      - "5432:5432"  # Expose for external tools (optional, can remove for security)
+      - "127.0.0.1:5432:5432"  # Bind to localhost only for security
 
     volumes:
       # Persistent database storage
@@ -147,7 +147,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['3']  # ⚠️ CHANGE TO YOUR GPU ID (see: nvidia-smi -L)
+              device_ids: ['${GPU_DEVICE_ID:-3}']  # Configure via GPU_DEVICE_ID env var (default: 3)
               capabilities: [gpu]
 
     networks:
@@ -188,7 +188,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['3']  # ⚠️ Same GPU as docling_1 (or distribute across GPUs)
+              device_ids: ['${GPU_DEVICE_ID_2:-${GPU_DEVICE_ID:-3}}']  # Configure via GPU_DEVICE_ID_2 or GPU_DEVICE_ID
               capabilities: [gpu]
 
     networks:
@@ -226,7 +226,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['3']  # ⚠️ Same GPU (or distribute across GPUs)
+              device_ids: ['${GPU_DEVICE_ID_3:-${GPU_DEVICE_ID:-3}}']  # Configure via GPU_DEVICE_ID_3 or GPU_DEVICE_ID
               capabilities: [gpu]
 
     networks:
@@ -255,7 +255,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['3']  # ⚠️ Same GPU as Docling (or use separate GPU)
+              device_ids: ['${OLLAMA_GPU_DEVICE_ID:-${GPU_DEVICE_ID:-3}}']  # Configure via OLLAMA_GPU_DEVICE_ID or GPU_DEVICE_ID
               capabilities: [gpu]
 
     networks:

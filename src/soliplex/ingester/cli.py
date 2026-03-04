@@ -33,10 +33,18 @@ def init():
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
-        logging.basicConfig(level=get_settings().log_level)
+        settings = get_settings()
+        logging.basicConfig(
+            level=settings.log_level,
+            format=settings.log_format,
+            datefmt="%Y-%m-%dT%H:%M:%S",
+            style="{",
+        )
     except ValidationError:
         print("invalid settings. environment variables might not be set.  Run `si-cli validate-settings`")
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(
+            level=logging.INFO, format="{name}|{asctime}|{levelname}|{message}", datefmt="%Y-%m-%dT%H:%M:%S", style="{"
+        )
 
 
 app = typer.Typer(callback=init)
@@ -81,7 +89,7 @@ def db_init():
     from sqlmodel import SQLModel
 
     settings = get_settings()
-    engine = create_engine(settings.doc_db_url)
+    engine = create_engine(settings.doc_db_url.get_secret_value())
     SQLModel.metadata.create_all(engine)
     # run_migrations()
 
@@ -159,8 +167,10 @@ def init_config():
     print("initializing  default config files...")
     wf_path = Path(".") / "config" / "workflows"
     param_path = Path(".") / "config" / "params"
+    user_param_path = Path(".") / "config" / "user_params"
     wf_path.mkdir(parents=True, exist_ok=True)
     param_path.mkdir(parents=True, exist_ok=True)
+    user_param_path.mkdir(parents=True, exist_ok=True)
 
     import soliplex.ingester.example as ex
 
@@ -267,15 +277,19 @@ async def _list_params():
 
     settings = get_settings()
     set_ids = []
-    for p in Path(settings.param_dir).glob("*.yaml"):
-        try:
-            pset = await load_param_set(p)
-            set_ids.append(pset.id)
-        except ValidationError as ve:
-            print(f"invalid param set {p}: ")
-            for e in ve.errors():
-                print(f"loc: {e['loc']}\t msg: {e['msg']}")
-            return
+    param_dirs = [Path(settings.param_dir), Path(settings.user_param_dir)]
+    for param_dir in param_dirs:
+        if not param_dir.exists():
+            continue
+        for p in param_dir.glob("*.yaml"):
+            try:
+                pset = await load_param_set(p)
+                set_ids.append(pset.id)
+            except ValidationError as ve:
+                print(f"invalid param set {p}: ")
+                for e in ve.errors():
+                    print(f"loc: {e['loc']}\t msg: {e['msg']}")
+                return
 
     for wf in set_ids:
         print(wf)
@@ -473,6 +487,62 @@ def serve(
     else:
         app = server.app
         uvicorn.run(app, **uvicorn_kw)
+
+
+async def _apply_protection(level: str):
+    from .lib.config import ProtectionLevel
+    from .lib.dal import apply_file_protection
+
+    try:
+        target = ProtectionLevel(level)
+    except ValueError:
+        print(f"[red]Invalid protection level: {level}[/red]")
+        print(f"Valid options: {', '.join(p.value for p in ProtectionLevel)}")
+        raise typer.Exit(code=1) from None
+
+    settings = get_settings()
+    secret = settings.file_secret.get_secret_value() if settings.file_secret else None
+
+    if target in (ProtectionLevel.HMAC, ProtectionLevel.ENCRYPT) and not secret:
+        print(f"[red]FILE_SECRET is required for protection level '{level}'[/red]")
+        raise typer.Exit(code=1)
+
+    # Secret is also needed to decrypt existing .enc files
+    if target != ProtectionLevel.ENCRYPT and not secret:
+        # Check if any .enc files exist that would need decryption
+        base = Path(settings.file_store_dir)
+        if base.exists():
+            for _p in base.rglob("*.enc"):
+                print("[red]FILE_SECRET is required to decrypt existing encrypted files[/red]")
+                raise typer.Exit(code=1)
+
+    print(f"Applying protection level: [bold]{target.value}[/bold]")
+    stats = await apply_file_protection(target, secret)
+    print(f"Done. processed={stats['processed']} skipped={stats['skipped']} errors={stats['errors']}")
+    if stats["errors"] > 0:
+        raise typer.Exit(code=1)
+
+
+@app.command("protect")
+def protect(
+    level: str = typer.Argument(
+        help="Protection level to apply: none, hash, hmac, encrypt",
+    ),
+):
+    """Apply file protection to all artifacts in the file store.
+
+    Walks all artifact directories, reads each file (decrypting if needed),
+    then writes it with the target protection level and cleans up old
+    protection artifacts.
+
+    Examples:
+        si-cli protect hash       # add SHA-512 hash sidecars
+        si-cli protect hmac       # add HMAC-SHA-512 sidecars
+        si-cli protect encrypt    # encrypt files (requires FILE_SECRET)
+        si-cli protect none       # remove all protection, decrypt files
+    """
+    validate_settings(dump=False)
+    asyncio.run(_apply_protection(level))
 
 
 if __name__ == "__main__":

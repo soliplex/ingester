@@ -1,26 +1,44 @@
+from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import SecretStr
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+
+
+class ProtectionLevel(StrEnum):
+    """Controls integrity/confidentiality protection for file-stored artifacts."""
+
+    NONE = "none"
+    HASH = "hash"
+    HMAC = "hmac"
+    ENCRYPT = "encrypt"
 
 
 class S3Settings(BaseSettings):
     bucket: str = "default"
     endpoint_url: str = "default"
     access_key_id: str = "default"
-    access_secret: str = "default"
+    access_secret: SecretStr = "default"
     region: str = "default"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_nested_delimiter="__", env_nested_max_split=1)
-    doc_db_url: str
+    model_config = SettingsConfigDict(env_nested_delimiter="__", env_nested_max_split=1, secrets_dir="/run/secrets")
+    doc_db_url: SecretStr
+    doc_db_password: SecretStr | None = None
     docling_server_url: str = "http://localhost:5001/v1"
     docling_chunk_server_url: str = "http://localhost:5001/v1"
+    auto_create_database: bool = True
     docling_http_timeout: int = 600
     log_level: str = "INFO"
+    log_format: str = "{name}|{asctime}|{levelname}|{message}"
     file_store_target: str = "fs"
     file_store_dir: str = "file_store"
+    file_protection_level: ProtectionLevel = ProtectionLevel.NONE
+    file_secret: SecretStr | None = None
     lancedb_dir: str = "lancedb"
     document_store_dir: str = "raw"
     parsed_markdown_store_dir: str = "markdown"
@@ -37,7 +55,52 @@ class Settings(BaseSettings):
     workflow_dir: str = "config/workflows"
     default_workflow_id: str = "batch_split"
     param_dir: str = "config/params"
+    user_param_dir: str = "config/user_params"
     default_param_id: str = "default"
+
+    @model_validator(mode="after")
+    def validate_param_dirs(self) -> "Settings":
+        if Path(self.param_dir).resolve() == Path(self.user_param_dir).resolve():
+            raise ValueError(
+                f"user_param_dir must be different from param_dir, both resolve to '{Path(self.param_dir).resolve()}'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def substitute_db_password(self) -> "Settings":
+        """Substitute XXXX placeholder in doc_db_url with doc_db_password if specified."""
+        # Only substitute if password is provided
+        if self.doc_db_password is None:
+            return self
+
+        doc_db_url_str = self.doc_db_url.get_secret_value()
+        doc_db_password_str = self.doc_db_password.get_secret_value()
+
+        # Only substitute if password is non-empty and XXXX placeholder exists in URL
+        if doc_db_password_str and "XXXX" in doc_db_url_str:
+            updated_url = doc_db_url_str.replace("XXXX", doc_db_password_str)
+            self.doc_db_url = SecretStr(updated_url)
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_production_auth(self) -> "Settings":
+        """Ensure authentication is enabled when in production mode."""
+        if self.production_mode and not (self.api_key_enabled or self.auth_trust_proxy_headers):
+            raise ValueError(
+                "Production mode requires authentication to be enabled. "
+                "Set API_KEY_ENABLED=true or AUTH_TRUST_PROXY_HEADERS=true"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_file_protection(self) -> "Settings":
+        """Ensure FILE_SECRET is set when protection level requires it."""
+        if self.file_protection_level in (ProtectionLevel.HMAC, ProtectionLevel.ENCRYPT):
+            if not self.file_secret or not self.file_secret.get_secret_value():
+                raise ValueError(f"FILE_SECRET is required when FILE_PROTECTION_LEVEL={self.file_protection_level.value}")
+        return self
+
     worker_checkin_interval: int = 120
     worker_checkin_timeout: int = 600
     worker_task_count: int = 5
@@ -46,10 +109,24 @@ class Settings(BaseSettings):
 
     do_rag: bool = True  # used for testing to turn off haiku rag
 
+    # Debug settings
+    debug: bool = False  # Enable verbose error messages (disable for production)
+
+    # Production settings
+    production_mode: bool = False  # Enable production security requirements (mandatory authentication)
+
     # Authentication settings
-    api_key: str | None = None  # Static API key for programmatic access
+    api_key: SecretStr | None = None  # Static API key for programmatic access
     api_key_enabled: bool = False  # Enable API key authentication
     auth_trust_proxy_headers: bool = False  # Trust X-Auth-Request-* headers from OAuth2 Proxy
+
+    # Rate limiting settings
+    rate_limit_ingest: str = "200/minute"  # Rate limit for document ingestion endpoint
+
+    # Security middleware settings
+    allowed_origins: str = "*"  # CORS allowed origins (comma-separated or "*")
+    trusted_hosts: str = "*"  # Trusted hosts for TrustedHostMiddleware (comma-separated or "*")
+    enable_hsts: bool = False  # Enable HTTP Strict Transport Security (only use with HTTPS)
 
 
 @lru_cache(maxsize=1)

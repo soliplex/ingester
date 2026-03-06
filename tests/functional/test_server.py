@@ -35,6 +35,25 @@ def test_source_status(test_client):
         mock_status.assert_called_once()
 
 
+def test_source_status_delete_stale(test_client):
+    """Test source_status endpoint with delete_stale=True"""
+    with patch("soliplex.ingester.server.operations.update_doc_status") as mock_update:
+        mock_update.return_value = ({"hash1": {"status": "matched"}}, 2)
+        response = test_client.post(
+            "/api/v1/source-status",
+            data={
+                "source": "test_source",
+                "hashes": json.dumps({"hash1": "v1"}),
+                "delete_stale": "true",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["deleted_count"] == 2
+        assert "status" in data
+        mock_update.assert_called_once()
+
+
 def test_source_status_invalid_hashes(test_client):
     """Test source_status endpoint with invalid hashes"""
     with patch("soliplex.ingester.server.operations.get_doc_status") as mock_status:

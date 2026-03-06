@@ -169,8 +169,9 @@ async def test_status(db):
     assert len(status3) == 1
     assert len(to_delete3) == 1
 
-    status4 = await operations.update_doc_status(test_source, hashes3)
-    logger.info(f"status4={status4}")
+    status4, deleted_count = await operations.update_doc_status(test_source, hashes3)
+    logger.info(f"status4={status4} deleted_count={deleted_count}")
+    assert deleted_count == 1
 
 
 @pytest.mark.asyncio
@@ -882,5 +883,5 @@ async def test_update_doc_status_uri_not_found(db):
     with patch("soliplex.ingester.lib.operations.find_document_uri", side_effect=mock_find):
         # This path is hard to test because find_document_uri is also called internally
         # Let's just verify update_doc_status runs without error
-        status = await operations.update_doc_status(test_source, hashes)
+        status, deleted_count = await operations.update_doc_status(test_source, hashes)
         assert status is not None

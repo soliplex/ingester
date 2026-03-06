@@ -358,6 +358,7 @@ async def get_document_uri_history(
 
 async def update_doc_status(source: str, uri_hashes: dict[str, str]):
     status, to_delete = await get_doc_status(source, uri_hashes)
+    deleted_count = 0
     logger.info(
         f" found {len(to_delete)} to delete for {source}",
         extra=log_context(action="update_doc_status", source=source),
@@ -371,7 +372,8 @@ async def update_doc_status(source: str, uri_hashes: dict[str, str]):
             uri = await find_document_uri(row["uri"], source)
             if uri:
                 await delete_document_uri(uri.id, session)
-    return status
+                deleted_count += 1
+    return status, deleted_count
 
 
 async def get_uris_for_source(source: str) -> list[models.DocumentURI]:

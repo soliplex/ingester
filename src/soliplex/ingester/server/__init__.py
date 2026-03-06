@@ -104,11 +104,18 @@ v1_router = APIRouter(prefix="/api/v1", dependencies=[Depends(get_current_user)]
 
 
 @v1_router.post("/source-status")
-async def source_status(source: str = Form(...), hashes: str = Form(...)):
+async def source_status(
+    source: str = Form(...),
+    hashes: str = Form(...),
+    delete_stale: bool = Form(False),
+):
     hashes = json.loads(hashes)
     if not isinstance(hashes, dict):
         msg = "hashes must be a dictionary"
         raise TypeError(msg)
+    if delete_stale:
+        status, deleted_count = await operations.update_doc_status(source, hashes)
+        return {"status": status, "deleted_count": deleted_count}
     status, to_delete = await operations.get_doc_status(source, hashes)
     return status
 

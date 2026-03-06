@@ -12,6 +12,7 @@ from fastapi import status
 from haiku.rag.app import HaikuRAGApp
 from haiku.rag.config import get_config
 
+from soliplex.ingester.lib import operations
 from soliplex.ingester.lib.auth import get_current_user
 from soliplex.ingester.lib.config import get_settings
 
@@ -112,6 +113,98 @@ async def list_databases():
         "database_count": len(databases),
         "databases": databases,
     }
+
+
+@lancedb_router.get("/list-dbs", status_code=status.HTTP_200_OK, summary="List tracked LanceDB databases")
+async def list_tracked_databases(response: Response):
+    """
+    List all LanceDB databases tracked in the DocumentDB table.
+
+    Returns distinct lancedb_dir/db_name combinations with document counts.
+    This shows databases that have had documents ingested via the workflow,
+    as tracked by DocumentDB records.
+    """
+    try:
+        databases = await operations.list_documentdb_databases()
+        return {
+            "status": "ok",
+            "database_count": len(databases),
+            "databases": databases,
+        }
+    except Exception as e:
+        logger.exception("Error listing tracked databases", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {
+            "status": "error",
+            "error": str(e),
+        }
+
+
+@lancedb_router.get("/list-docs", status_code=status.HTTP_200_OK, summary="List documents in a tracked database")
+async def list_tracked_documents(
+    response: Response,
+    db_name: str = Query(..., description="Database name (data_dir) to list documents from"),
+    lancedb_dir: str | None = Query(None, description="LanceDB directory. If not specified, uses default from settings."),
+):
+    """
+    List all documents tracked in a specific RAG database.
+
+    Returns documents from the DocumentDB table joined with DocumentURI and Document
+    information for a given db_name (data_dir) and optional lancedb_dir.
+    """
+    try:
+        documents = await operations.list_documents_in_rag_db(db_name, lancedb_dir)
+        settings = get_settings()
+        effective_lancedb_dir = lancedb_dir if lancedb_dir else settings.lancedb_dir
+        return {
+            "status": "ok",
+            "db_name": db_name,
+            "lancedb_dir": effective_lancedb_dir,
+            "document_count": len(documents),
+            "documents": documents,
+        }
+    except Exception as e:
+        logger.exception("Error listing tracked documents", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {
+            "status": "error",
+            "error": str(e),
+        }
+
+
+@lancedb_router.get("/check-db", status_code=status.HTTP_200_OK, summary="Check database consistency")
+async def check_database_consistency(
+    response: Response,
+    db_name: str = Query(..., description="Database name (data_dir) to check"),
+    lancedb_dir: str | None = Query(None, description="LanceDB directory. If not specified, uses default from settings."),
+):
+    """
+    Check consistency between a LanceDB database and DocumentDB records.
+
+    Compares documents in the actual LanceDB database files with records tracked
+    in DocumentDB to find discrepancies:
+    - Documents tracked in DocumentDB but missing from LanceDB
+    - Documents in LanceDB but not tracked in DocumentDB
+    """
+    try:
+        result = await operations.check_rag_db_consistency(db_name, lancedb_dir)
+    except Exception as e:
+        logger.exception("Error checking database consistency", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {
+            "status": "error",
+            "error": str(e),
+        }
+    else:
+        # Determine overall status
+        has_issues = (
+            len(result.get("in_documentdb_only", [])) > 0 or len(result.get("in_lancedb_only", [])) > 0 or "error" in result
+        )
+
+        return {
+            "status": "warning" if has_issues else "ok",
+            **result,
+        }
 
 
 @lancedb_router.get("/info", status_code=status.HTTP_200_OK, summary="Get LanceDB database info")

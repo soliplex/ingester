@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 
+import docling_core.types.doc.document as docling_docs
 import opendal
 import yaml
 from sqlalchemy import Integer
@@ -159,6 +160,8 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
                     step_config = param_set.config[st]
                 else:
                     step_config = {}
+                if st == WorkflowStepType.PARSE:
+                    step_config["docling_version"] = docling_docs.CURRENT_VERSION
                 cuml_cfg = cuml_cfg.copy()
                 cuml_cfg.update({st.value: step_config})
                 cuml_str = json.dumps(cuml_cfg, indent=4)

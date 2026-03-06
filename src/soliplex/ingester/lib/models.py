@@ -147,10 +147,7 @@ class DocumentDB(SQLModel, table=True):
         primary_key=True,
         sa_column_kwargs={"autoincrement": True},
     )
-    doc_hash: str = Field(
-        default=None,
-        foreign_key="document.hash",
-    )
+    doc_hash: str = Field(default=None)  # leave off foreign key due to possible missing documents
     source: str = Field(default=None)
     db_name: str = Field(default=None)
     lancedb_dir: str = Field(default=None)

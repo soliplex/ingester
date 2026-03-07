@@ -1175,3 +1175,231 @@ async def reset_failed_steps(run_group_id: int) -> None:
         await session.commit()
 
         logger.info(f"Reset {reset_steps} steps and {reset_runs} runs for run group {run_group_id}")
+
+
+async def get_running_steps_enriched() -> list[dict]:
+    """
+    Get all run steps in RUNNING status with enriched context.
+
+    Joins RunStep with WorkflowRun, DocumentURI, and RunGroup to provide
+    full context for each running step.
+
+    Returns
+    -------
+    list[dict]
+        List of dicts with keys: workflow_run_id, doc_hash, doc_uri,
+        run_group_id, param_definition_id, step_type, start_date,
+        elapsed_seconds
+    """
+    async with get_session() as session:
+        q = (
+            select(
+                RunStep.workflow_run_id,
+                WorkflowRun.doc_id.label("doc_hash"),
+                DocumentURI.uri.label("doc_uri"),
+                WorkflowRun.run_group_id,
+                RunGroup.param_definition_id,
+                RunStep.step_type,
+                RunStep.start_date,
+            )
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .join(RunGroup, RunGroup.id == WorkflowRun.run_group_id)
+            .outerjoin(
+                DocumentURI,
+                (DocumentURI.doc_hash == WorkflowRun.doc_id) & (DocumentURI.batch_id == WorkflowRun.batch_id),
+            )
+            .where(RunStep.status == RunStatus.RUNNING)
+        )
+        result = await session.exec(q)
+        rows = result.all()
+
+        now_aware = datetime.datetime.now(datetime.UTC)
+        now_naive = now_aware.replace(tzinfo=None)
+        enriched = []
+        for row in rows:
+            elapsed = None
+            if row.start_date:
+                sd = row.start_date
+                now = now_aware if sd.tzinfo else now_naive
+                elapsed = (now - sd).total_seconds()
+            enriched.append(
+                {
+                    "workflow_run_id": row.workflow_run_id,
+                    "doc_hash": row.doc_hash,
+                    "doc_uri": row.doc_uri,
+                    "run_group_id": row.run_group_id,
+                    "param_definition_id": row.param_definition_id,
+                    "step_type": row.step_type,
+                    "start_date": row.start_date,
+                    "elapsed_seconds": elapsed,
+                }
+            )
+        return enriched
+
+
+INTERVAL_MAP = {
+    "minute": datetime.timedelta(minutes=1),
+    "hour": datetime.timedelta(hours=1),
+    "day": datetime.timedelta(days=1),
+    "week": datetime.timedelta(weeks=1),
+}
+
+
+async def get_recent_steps(
+    interval: str = "minute",
+    status: RunStatus | None = None,
+) -> list[dict]:
+    """
+    Get run steps with a status_date within a specified interval.
+
+    Joins RunStep with WorkflowRun, DocumentURI, and RunGroup.
+
+    Parameters
+    ----------
+    interval : str
+        One of "minute", "hour", "day", "week"
+    status : RunStatus | None
+        Optional status filter
+
+    Returns
+    -------
+    list[dict]
+        Enriched step data
+
+    Raises
+    ------
+    ValueError
+        If interval is not a recognized value
+    """
+    if interval not in INTERVAL_MAP:
+        raise ValueError(f"Invalid interval '{interval}'. Must be one of: {', '.join(INTERVAL_MAP)}")
+
+    # Use naive datetime for cross-database compatibility (SQLite stores naive)
+    cutoff = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - INTERVAL_MAP[interval]
+
+    async with get_session() as session:
+        q = (
+            select(
+                RunStep.step_type,
+                RunStep.workflow_run_id,
+                WorkflowRun.doc_id.label("doc_hash"),
+                DocumentURI.uri.label("doc_uri"),
+                WorkflowRun.run_group_id,
+                RunGroup.param_definition_id,
+                RunStep.start_date,
+                RunStep.status_date,
+                RunStep.status,
+                RunStep.retry,
+                RunStep.status_message,
+            )
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .join(RunGroup, RunGroup.id == WorkflowRun.run_group_id)
+            .outerjoin(
+                DocumentURI,
+                (DocumentURI.doc_hash == WorkflowRun.doc_id) & (DocumentURI.batch_id == WorkflowRun.batch_id),
+            )
+            .where(RunStep.status_date >= cutoff)
+        )
+        if status is not None:
+            q = q.where(RunStep.status == status)
+
+        q = q.order_by(RunStep.status_date.desc())
+        result = await session.exec(q)
+        rows = result.all()
+
+        now_aware = datetime.datetime.now(datetime.UTC)
+        now_naive = now_aware.replace(tzinfo=None)
+        enriched = []
+        for row in rows:
+            elapsed = None
+            if row.start_date:
+                sd = row.start_date
+                now = now_aware if sd.tzinfo else now_naive
+                elapsed = (now - sd).total_seconds()
+            enriched.append(
+                {
+                    "step_type": row.step_type,
+                    "workflow_run_id": row.workflow_run_id,
+                    "doc_hash": row.doc_hash,
+                    "doc_uri": row.doc_uri,
+                    "run_group_id": row.run_group_id,
+                    "param_definition_id": row.param_definition_id,
+                    "start_date": row.start_date,
+                    "elapsed_seconds": elapsed,
+                    "retry": row.retry,
+                    "status": row.status,
+                    "status_message": row.status_message,
+                }
+            )
+        return enriched
+
+
+async def get_run_group_details(run_group_id: int) -> list[tuple]:
+    """
+    Get aggregated step details for a run group.
+
+    **PostgreSQL only** - Uses PostgreSQL-specific JSONB functions
+    via SQLAlchemy for type safety and ORM benefits.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID
+
+    Returns
+    -------
+    list[tuple]
+        Rows of (batch_name, param_definition_id, step_type, status,
+        count, pages)
+
+    Raises
+    ------
+    RuntimeError
+        If database is not PostgreSQL
+    """
+    from soliplex.ingester.lib.config import get_settings
+
+    settings = get_settings()
+    doc_db_url = (
+        settings.doc_db_url.get_secret_value() if hasattr(settings.doc_db_url, "get_secret_value") else settings.doc_db_url
+    )
+    if "postgresql" not in doc_db_url:
+        raise RuntimeError("get_run_group_details requires PostgreSQL (uses PostgreSQL-specific functions)")
+
+    async with get_session() as session:
+        q = (
+            select(
+                DocumentBatch.name,
+                RunGroup.param_definition_id,
+                RunStep.step_type,
+                RunStep.status,
+                func.count(literal_column("1")).label("count"),
+                func.sum(
+                    cast(
+                        func.jsonb_extract_path_text(cast(Document.doc_meta, JSONB), "page_count"),
+                        Integer,
+                    )
+                ).label("pages"),
+            )
+            .select_from(RunStep)
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .join(DocumentBatch, DocumentBatch.id == WorkflowRun.batch_id)
+            .join(Document, Document.hash == WorkflowRun.doc_id)
+            .join(RunGroup, RunGroup.id == WorkflowRun.run_group_id)
+            .where(RunGroup.id == run_group_id)
+            .where(RunStep.status != RunStatus.PENDING)
+            .group_by(
+                DocumentBatch.name,
+                RunGroup.param_definition_id,
+                RunStep.step_type,
+                RunStep.status,
+            )
+            .order_by(
+                DocumentBatch.name,
+                RunStep.step_type,
+                RunStep.status,
+            )
+        )
+
+        result = await session.exec(q)
+        return result.all()

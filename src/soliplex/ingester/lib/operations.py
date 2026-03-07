@@ -114,6 +114,35 @@ async def find_document_uri(uri: str, source: str) -> models.DocumentURI:
         return res
 
 
+async def find_document_uris_by_pattern(pattern: str) -> list[models.DocumentURI]:
+    """Find DocumentURI records whose uri matches a pattern (case-insensitive).
+
+    Uses SQL ILIKE for case-insensitive pattern matching with
+    '%pattern%' wildcards.
+
+    Parameters
+    ----------
+    pattern : str
+        Substring to search for in DocumentURI.uri
+
+    Returns
+    -------
+    list[models.DocumentURI]
+        Matching DocumentURI records
+    """
+    logger.debug(
+        f"find document uris by pattern {pattern}",
+        extra=log_context(action="find_document_uris_by_pattern"),
+    )
+    async with models.get_session() as session:
+        q = select(models.DocumentURI).where(models.DocumentURI.uri.ilike(f"%{pattern}%"))
+        rs = await session.exec(q)
+        res = rs.all()
+        for item in res:
+            session.expunge(item)
+        return res
+
+
 async def get_document_uris_by_hash(doc_hash: str) -> list[models.DocumentURI]:
     logger.debug(
         f"get document {doc_hash}",

@@ -60,6 +60,7 @@ dev = [
 
 [project.scripts]
 si-cli = "soliplex.ingester.cli:app"
+si-diag = "soliplex.ingester.diag_cli:app"
 
 
 [build-system]

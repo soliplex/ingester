@@ -56,7 +56,8 @@ Soliplex ingester has been designed alongside [agents](https://github.com/solipl
   - Troubleshooting
 
 - **[CLI Reference](docs/CLI.md)** - Command-line interface guide
-  - All CLI commands
+  - `si-cli` management commands
+  - `si-diag` read-only diagnostic commands
   - Usage examples
   - Deployment patterns
   - Systemd integration
@@ -205,7 +206,9 @@ Comprehensive configuration guide:
 ### CLI.md
 
 Command-line tool reference:
-- All CLI commands with options
+
+- `si-cli` - Server management, workers, database operations
+- `si-diag` - Read-only diagnostic CLI (batch, document, config, run-group, workflow, status)
 - Usage examples
 - Deployment patterns
 - Systemd service files
@@ -373,6 +376,18 @@ si-cli list-workflows                    # List workflows
 si-cli dump-workflow batch               # View workflow
 si-cli list-param-sets                   # List parameters
 si-cli validate-haiku 1                  # Validate batch
+
+# Diagnostics (si-diag)
+si-diag batch list                       # List batches
+si-diag document find "quarterly"        # Search documents by URI
+si-diag document info sha256-abc...      # Document details
+si-diag config workflows                 # List workflow definitions
+si-diag config params                    # List parameter sets
+si-diag run-group list --batch-id 1      # List run groups
+si-diag workflow list 1                  # Workflow runs for a run group
+si-diag status running                   # Currently running steps
+si-diag status recent hour               # Recent activity
+si-diag status details 1                 # Aggregated details (PostgreSQL)
 
 # API
 curl http://localhost:8000/docs          # Swagger UI

@@ -877,6 +877,15 @@ docker stats
 docker-compose exec soliplex_ingester curl http://localhost:8000/api/v1/stats/durations
 ```
 
+**Use si-diag for diagnostics:**
+
+```bash
+docker-compose exec soliplex_ingester si-diag batch list
+docker-compose exec soliplex_ingester si-diag status running
+docker-compose exec soliplex_ingester si-diag status recent hour --status FAILED
+docker-compose exec soliplex_ingester si-diag status details 1
+```
+
 ### Log Management
 
 **View logs:**
@@ -1140,7 +1149,11 @@ docker stats docling
 **Diagnose:**
 
 ```bash
-# Check worker activity
+# Check worker activity with si-diag
+docker-compose exec soliplex_ingester si-diag status running
+docker-compose exec soliplex_ingester si-diag status recent hour
+
+# Or via API
 curl http://localhost:8002/api/v1/workflow/steps?status=RUNNING
 
 # Check CPU/memory

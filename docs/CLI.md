@@ -2,18 +2,25 @@
 
 ## Overview
 
-Soliplex Ingester provides a command-line interface (CLI) built with Typer. The CLI binary is named `si-cli`.
+Soliplex Ingester provides two command-line interfaces built with Typer:
+
+- **`si-cli`** - Main CLI for server management, worker processes, and database operations
+- **`si-diag`** - Read-only diagnostic CLI for inspecting batches, documents, workflows, and system status
 
 **Installation:**
 
-After installing the package, the `si-cli` command is available:
+After installing the package, both commands are available:
 
 ```bash
 pip install -e .
 si-cli --help
+si-diag --help
 ```
 
-**Entry Point:** `src/soliplex_ingester/cli.py:35`
+**Entry Points:**
+
+- `si-cli` → `src/soliplex/ingester/cli.py`
+- `si-diag` → `src/soliplex/ingester/diag_cli.py`
 
 ---
 
@@ -860,6 +867,275 @@ sudo systemctl start soliplex-worker@{1..3}
 
 ---
 
+## si-diag: Diagnostic CLI
+
+The `si-diag` CLI provides read-only access to system state for debugging and monitoring. It uses the same database connection and configuration as `si-cli`.
+
+**Entry Point:** `src/soliplex/ingester/diag_cli.py`
+
+### Command Groups
+
+| Group | Description |
+|-------|-------------|
+| `batch` | List batches |
+| `document` | List, find, inspect, and view history of documents |
+| `config` | List and inspect workflow definitions and parameter sets |
+| `run-group` | List and inspect run groups |
+| `workflow` | List and inspect workflow runs and steps |
+| `status` | View running steps, recent activity, and aggregated details |
+
+---
+
+### batch list
+
+List all batches in the database.
+
+```bash
+si-diag batch list
+```
+
+**Output columns:** id, name, source, start_date, completed_date, duration
+
+---
+
+### document list
+
+List document URIs filtered by source or batch ID.
+
+```bash
+si-diag document list --source filesystem
+si-diag document list --batch-id 1
+```
+
+**Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--source` | str | Filter by source |
+| `--batch-id` | int | Filter by batch ID |
+
+One of `--source` or `--batch-id` is required.
+
+---
+
+### document find
+
+Search for document URIs by pattern (case-insensitive substring match).
+
+```bash
+si-diag document find "quarterly"
+si-diag document find ".pdf"
+```
+
+**Arguments:**
+
+- `PATTERN` (str, required) - Search pattern for URI
+
+---
+
+### document info
+
+Display detailed information about a document by its hash.
+
+```bash
+si-diag document info sha256-abc123...
+```
+
+**Arguments:**
+
+- `DOC_HASH` (str, required) - Document hash
+
+**Shows:** mime_type, file_size, doc_meta (as JSON), and associated URIs.
+
+---
+
+### document history
+
+Show DocumentURIHistory records for a document hash.
+
+```bash
+si-diag document history sha256-abc123...
+```
+
+**Arguments:**
+
+- `DOC_HASH` (str, required) - Document hash
+
+---
+
+### config workflows
+
+List all available workflow definitions from the workflow registry.
+
+```bash
+si-diag config workflows
+```
+
+---
+
+### config params
+
+List all available parameter sets from the parameter registry.
+
+```bash
+si-diag config params
+```
+
+---
+
+### config workflow-def
+
+Display a workflow definition as YAML.
+
+```bash
+si-diag config workflow-def batch
+```
+
+**Arguments:**
+
+- `WF_ID` (str, required) - Workflow definition ID
+
+---
+
+### config param-def
+
+Display a parameter set definition as YAML.
+
+```bash
+si-diag config param-def default
+```
+
+**Arguments:**
+
+- `PARAM_ID` (str, required) - Parameter set ID
+
+---
+
+### run-group list
+
+List run groups, optionally filtered by batch ID.
+
+```bash
+si-diag run-group list
+si-diag run-group list --batch-id 1
+```
+
+**Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--batch-id` | int | Filter by batch ID |
+
+---
+
+### run-group info
+
+Display run group details including a status breakdown of workflow runs.
+
+```bash
+si-diag run-group info 1
+```
+
+**Arguments:**
+
+- `RUN_GROUP_ID` (int, required) - Run group ID
+
+---
+
+### workflow list
+
+List workflow runs for a run group.
+
+```bash
+si-diag workflow list 1
+si-diag workflow list 1 --status FAILED
+```
+
+**Arguments:**
+
+- `RUN_GROUP_ID` (int, required) - Run group ID
+
+**Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--status` | str | Filter by status (PENDING, RUNNING, COMPLETED, FAILED) |
+
+---
+
+### workflow info
+
+Display workflow run info and its steps.
+
+```bash
+si-diag workflow info 42
+si-diag workflow info 42 --status FAILED
+```
+
+**Arguments:**
+
+- `WORKFLOW_RUN_ID` (int, required) - Workflow run ID
+
+**Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--status` | str | Filter steps by status |
+
+---
+
+### status running
+
+List all run steps currently in RUNNING status with enriched context.
+
+```bash
+si-diag status running
+```
+
+**Output columns:** workflow_id, doc_hash, doc_uri, run_group, param_def_id, step_type, started, elapsed
+
+---
+
+### status recent
+
+List steps with status updates within a time interval.
+
+```bash
+si-diag status recent minute
+si-diag status recent hour --status COMPLETED
+si-diag status recent day --status FAILED
+```
+
+**Arguments:**
+
+- `INTERVAL` (str, default: "minute") - Time interval: minute, hour, day, week
+
+**Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--status` | str | Filter by status |
+
+---
+
+### status details
+
+Display aggregated step details for a run group. **PostgreSQL only.**
+
+```bash
+si-diag status details 1
+```
+
+**Arguments:**
+
+- `RUN_GROUP_ID` (int, required) - Run group ID
+
+**Output columns:** batch_name, param_def_id, step_type, status, count, pages
+
+**Note:** This command uses PostgreSQL-specific JSONB functions and will return an error on SQLite.
+
+---
+
 ## Future Commands
 
 Commands planned for future releases:
@@ -881,6 +1157,8 @@ Commands planned for future releases:
 si-cli --help
 si-cli serve --help
 si-cli worker --help
+si-diag --help
+si-diag status --help
 ```
 
 **Report issues:**

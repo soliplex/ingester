@@ -18,7 +18,8 @@ uv run ruff format . && uv run ruff check .    # Format & lint
 uv run mypy src/                               # Type checking
 si-cli bootstrap                               # Initialize config files
 si-cli db-init                                 # Initialize database
-
+si-diag status running                         # Show running workflow steps
+si-diag status recent hour                     # Recent activity
 ```
 
 ## Project Structure
@@ -26,6 +27,7 @@ si-cli db-init                                 # Initialize database
 ```text
 src/soliplex/ingester/
 ├── cli.py              # CLI entry point (si-cli)
+├── diag_cli.py         # Diagnostic CLI entry point (si-diag)
 ├── server/             # FastAPI app and routes
 │   └── routes/         # API endpoint modules
 └── lib/
@@ -185,7 +187,7 @@ Detailed docs in `docs/` folder:
 - WORKFLOWS.md - Workflow configuration
 - DATABASE.md - Schema reference
 - CONFIGURATION.md - Environment variables
-- CLI.md - Command reference
+- CLI.md - Command reference (si-cli and si-diag)
 
 ## Documentation Standards
 

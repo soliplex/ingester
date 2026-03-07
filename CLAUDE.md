@@ -22,7 +22,7 @@ Comprehensive docs in `docs/` folder - **always check these first**:
 | Database | [DATABASE.md](docs/DATABASE.md) |
 | Configuration | [CONFIGURATION.md](docs/CONFIGURATION.md) |
 | Parameter Sets | [PARAMETER_SETS.md](docs/PARAMETER_SETS.md) |
-| CLI | [CLI.md](docs/CLI.md) |
+| CLI (si-cli & si-diag) | [CLI.md](docs/CLI.md) |
 
 ---
 
@@ -34,6 +34,12 @@ uv run --env-file .env si-cli serve --reload  # Run dev server
 uv run pytest                              # Run tests
 uv run ruff format . && uv run ruff check .   # Format & lint
 si-cli bootstrap                           # Setup all configs
+
+# Diagnostics (si-diag)
+si-diag batch list                         # List batches
+si-diag document find "pattern"            # Search documents by URI
+si-diag status running                     # Currently running steps
+si-diag status recent hour                 # Recent activity
 ```
 
 ## Key Technologies

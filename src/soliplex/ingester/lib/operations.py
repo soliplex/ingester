@@ -997,3 +997,59 @@ async def delete_documents_by_hashes(doc_hashes: list[str]) -> dict[str, int]:
                 + deleted_lifecycle_history
             ),
         }
+
+
+async def get_document_with_uris(doc_hash: str) -> dict | None:
+    """Return document metadata and all associated DocumentURI records.
+
+    Combines get_document() and get_document_uris_by_hash() into a single
+    call. Returns None if the document does not exist.
+
+    Used by: si-diag document info <hash> and GET /api/v1/document/{doc_hash}.
+
+    Parameters
+    ----------
+    doc_hash : str
+        SHA256 document hash (e.g. "sha256-abc123...")
+
+    Returns
+    -------
+    dict | None
+        {"document": {...}, "uris": [...]} or None if not found
+    """
+    try:
+        doc = await get_document(doc_hash)
+    except DocumentNotFoundError:
+        return None
+    uris = await get_document_uris_by_hash(doc_hash)
+    return {"document": doc.model_dump(), "uris": [u.model_dump() for u in uris]}
+
+
+async def get_document_uri_history_by_hash(doc_hash: str) -> list[dict] | None:
+    """Return the full URI change history for all URIs associated with a document.
+
+    Combines get_document_uris_by_hash() and get_document_uri_history() for
+    all URI records belonging to the document. Returns None if the document
+    has no URI records.
+
+    Used by: si-diag document history <hash> and
+    GET /api/v1/document/{doc_hash}/history.
+
+    Parameters
+    ----------
+    doc_hash : str
+        SHA256 document hash (e.g. "sha256-abc123...")
+
+    Returns
+    -------
+    list[dict] | None
+        Flat list of DocumentURIHistory records as dicts, or None if no URIs found
+    """
+    uris = await get_document_uris_by_hash(doc_hash)
+    if not uris:
+        return None
+    history: list[dict] = []
+    for uri in uris:
+        uri_history = await get_document_uri_history(uri.id)
+        history.extend([h.model_dump() for h in uri_history])
+    return history

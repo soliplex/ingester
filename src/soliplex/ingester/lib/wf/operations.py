@@ -1403,3 +1403,26 @@ async def get_run_group_details(run_group_id: int) -> list[tuple]:
 
         result = await session.exec(q)
         return result.all()
+
+
+async def get_workflow_runs_for_group_with_doc_info(
+    run_group_id: int,
+    status_filter: str | None = None,
+) -> dict:
+    """
+    Get workflow runs for a run group enriched with document info.
+
+    Combines get_workflow_runs_for_group() and get_document_info_for_workflow_runs(),
+    with an optional status filter applied before enrichment.
+
+    Args:
+        run_group_id: The run group ID to query
+        status_filter: Optional status string to filter runs (e.g. "FAILED", "COMPLETED")
+
+    Returns:
+        Dict mapping doc_id -> DocumentInfo for filtered workflow runs
+    """
+    runs = await get_workflow_runs_for_group(run_group_id)
+    if status_filter:
+        runs = [r for r in runs if r.status.value == status_filter.upper()]
+    return await get_document_info_for_workflow_runs(runs)

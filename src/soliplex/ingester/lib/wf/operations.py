@@ -1405,6 +1405,7 @@ async def get_run_group_details(run_group_id: int) -> list[tuple]:
         return result.all()
 
 
+
 async def get_workflow_runs_for_group_with_doc_info(
     run_group_id: int,
     status_filter: str | None = None,
@@ -1426,3 +1427,4 @@ async def get_workflow_runs_for_group_with_doc_info(
     if status_filter:
         runs = [r for r in runs if r.status.value == status_filter.upper()]
     return await get_document_info_for_workflow_runs(runs)
+

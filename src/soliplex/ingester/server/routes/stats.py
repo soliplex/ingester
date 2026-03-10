@@ -39,3 +39,25 @@ async def get_run_group_step_stats(run_group_id: int, response: Response):
         logger.exception("error getting run group step stats", exc_info=e)
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {"error": str(e)}
+
+
+@stats_router.get(
+    "/run-group-details/{run_group_id}",
+    status_code=status.HTTP_200_OK,
+    summary="get aggregated run group step details (PostgreSQL only)",
+)
+async def get_run_group_details(run_group_id: int, response: Response):
+    """
+    Returns aggregated step statistics for a run group grouped by
+    batch_name, param_definition_id, step_type, and status.
+    Includes document page counts (PostgreSQL only).
+    """
+    try:
+        return await wf_ops.get_run_group_details(run_group_id)
+    except RuntimeError as e:
+        response.status_code = status.HTTP_501_NOT_IMPLEMENTED
+        return {"error": str(e)}
+    except Exception as e:
+        logger.exception("error getting run group details", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}

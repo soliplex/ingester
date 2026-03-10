@@ -31,6 +31,46 @@ settings = get_settings()
 doc_router = APIRouter(prefix="/api/v1/document", tags=["document"], dependencies=[Depends(get_current_user)])
 
 
+@doc_router.get("/find", status_code=status.HTTP_200_OK, summary="find documents by URI pattern")
+async def find_documents(pattern: str, response: Response):
+    """
+    Find DocumentURI records whose URI contains the given pattern (case-insensitive).
+    Returns a list of matching DocumentURI records.
+    """
+    try:
+        return await operations.find_document_uris_by_pattern(pattern)
+    except Exception as e:
+        logger.exception("error finding documents", exc_info=e)
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": str(e)}
+
+
+@doc_router.get("/{doc_hash}/history", status_code=status.HTTP_200_OK, summary="get document URI history")
+async def get_document_history(doc_hash: str, response: Response):
+    """
+    Returns the DocumentURIHistory records for all URIs associated with this document hash.
+    Each entry shows version, action, hash, process_date, batch_id.
+    """
+    history = await operations.get_document_uri_history_by_hash(doc_hash)
+    if history is None:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"error": f"No URIs found for document {doc_hash}"}
+    return history
+
+
+@doc_router.get("/{doc_hash}", status_code=status.HTTP_200_OK, summary="get document info by hash")
+async def get_document_info(doc_hash: str, response: Response):
+    """
+    Returns document metadata (hash, mime_type, file_size, doc_meta) and
+    all associated DocumentURI records.
+    """
+    result = await operations.get_document_with_uris(doc_hash)
+    if result is None:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"error": f"Document {doc_hash} not found"}
+    return result
+
+
 @doc_router.get("/", status_code=status.HTTP_200_OK)
 async def get_docs(response: Response, source: str = None, batch_id: int = None):
     if source:

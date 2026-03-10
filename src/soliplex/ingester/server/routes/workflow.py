@@ -491,3 +491,66 @@ async def get_workflow_lifecycle_history(workflow_id: int, response: Response):
         logger.exception("error getting lifecycle history", exc_info=e)
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {"error": str(e)}
+
+
+@wf_router.get(
+    "/run-groups/{run_group_id}/runs",
+    status_code=status.HTTP_200_OK,
+    summary="get workflow runs for a run group with document URI info",
+)
+async def get_run_group_workflow_runs(run_group_id: int, response: Response, workflow_status: str | None = None):
+    """
+    Returns all workflow runs for a run group, each enriched with doc_hash
+    and document_uri. Optionally filter by workflow_status.
+    """
+    try:
+        return await wf_ops.get_workflow_runs_for_group_with_doc_info(run_group_id, workflow_status)
+    except Exception as e:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        logger.exception("error getting run group workflow runs", exc_info=e)
+        return {"error": str(e)}
+
+
+@wf_router.get(
+    "/status/running",
+    status_code=status.HTTP_200_OK,
+    summary="get currently running workflow steps (enriched)",
+)
+async def get_running_steps(response: Response):
+    """
+    Returns all RunStep records with status RUNNING, joined with WorkflowRun,
+    DocumentURI, and RunGroup to include: workflow_id, doc_hash, doc_uri,
+    run_group_id, param_definition_id, step_type, start_date, elapsed_time.
+    """
+    try:
+        return await wf_ops.get_running_steps_enriched()
+    except Exception as e:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        logger.exception("error getting running steps", exc_info=e)
+        return {"error": str(e)}
+
+
+@wf_router.get(
+    "/status/recent",
+    status_code=status.HTTP_200_OK,
+    summary="get recent workflow steps within a time interval",
+)
+async def get_recent_steps(
+    response: Response,
+    interval: str = "hour",
+    workflow_status: str | None = None,
+):
+    """
+    Returns RunStep records whose status_date falls within the given interval
+    from now. interval values: "minute", "hour", "day", "week".
+    Optionally filter by workflow_status (e.g., FAILED, COMPLETED).
+    """
+    try:
+        return await wf_ops.get_recent_steps(interval, workflow_status)
+    except ValueError as e:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"error": str(e)}
+    except Exception as e:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        logger.exception("error getting recent steps", exc_info=e)
+        return {"error": str(e)}

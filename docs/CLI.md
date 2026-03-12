@@ -494,6 +494,119 @@ si-cli dump-param-set default
 
 ---
 
+### vacuum
+
+Vacuum a LanceDB database to reclaim space from deleted rows.
+
+**Usage:**
+
+```bash
+si-cli vacuum DB_NAME [OPTIONS]
+```
+
+**Arguments:**
+
+- `DB_NAME` (str, required) - Name of the database directory under `LANCEDB_DIR`
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--sign` | bool | False | Write an HMAC-SHA512 signature after vacuuming (requires `LANCEDB_HMAC_KEY`) |
+
+**Description:**
+
+- Resolves the database path under the configured `LANCEDB_DIR`
+- If the directory contains a `haiku.rag.lancedb` subfolder, vacuums that instead
+- Automatically runs pending migrations before vacuuming if required
+- Sets `vacuum_retention_seconds` to 0 to ensure all deleted data is reclaimed
+- Will not create a new database — errors if the path does not exist
+
+**Examples:**
+
+```bash
+si-cli vacuum my_database
+si-cli vacuum my_database --sign
+```
+
+**Exit Codes:**
+
+- `0` - Vacuum completed successfully
+- `1` - Database not found or error during vacuum
+
+**Implementation:** `src/soliplex/ingester/cli.py` → `src/soliplex/ingester/lib/rag.py:vacuum_db`
+
+---
+
+### vacuum-all
+
+Vacuum every LanceDB database under the configured `LANCEDB_DIR`.
+
+**Usage:**
+
+```bash
+si-cli vacuum-all [OPTIONS]
+```
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--sign` | bool | False | Write an HMAC-SHA512 signature after vacuuming each database (requires `LANCEDB_HMAC_KEY`) |
+
+**Description:**
+
+- Scans `LANCEDB_DIR` for all database directories
+- Vacuums each one sequentially
+- Logs and continues on failure so one bad database does not block the rest
+
+**Examples:**
+
+```bash
+si-cli vacuum-all
+si-cli vacuum-all --sign
+```
+
+**Implementation:** `src/soliplex/ingester/cli.py` → `src/soliplex/ingester/lib/rag.py:vacuum_all`
+
+---
+
+### verify-db
+
+Verify the HMAC-SHA512 signature of a LanceDB database.
+
+**Usage:**
+
+```bash
+si-cli verify-db DB_NAME
+```
+
+**Arguments:**
+
+- `DB_NAME` (str, required) - Name of the database directory under `LANCEDB_DIR`
+
+**Description:**
+
+- Reads the `.hmac` sidecar file next to the database directory
+- Recomputes the HMAC-SHA512 over all files in the database
+- Uses constant-time comparison to verify the signature
+- Requires `LANCEDB_HMAC_KEY` environment variable (must be 64 bytes)
+
+**Examples:**
+
+```bash
+si-cli verify-db my_database
+```
+
+**Exit Codes:**
+
+- `0` - HMAC verification passed
+- `1` - Verification failed, HMAC file not found, or key misconfigured
+
+**Implementation:** `src/soliplex/ingester/cli.py` → `src/soliplex/ingester/lib/rag.py:verify_db`
+
+---
+
 ## Usage Patterns
 
 ### Development Workflow
@@ -678,6 +791,8 @@ The CLI respects all configuration environment variables. Key ones for CLI usage
 - `WORKFLOW_DIR` - Workflow definitions directory
 - `PARAM_DIR` - Parameter sets directory
 - `DOCLING_SERVER_URL` - Docling service endpoint
+- `LANCEDB_DIR` - Directory containing LanceDB databases (used by vacuum/verify commands)
+- `LANCEDB_HMAC_KEY` - 64-byte key for HMAC-SHA512 database signing (used by `--sign` and `verify-db`)
 
 See [CONFIGURATION.md](CONFIGURATION.md) for complete list.
 

@@ -345,3 +345,50 @@ async def vacuum_db(db_name: str, sign: bool = False):
         await app.vacuum()
     if sign:
         sign_db(db_name)
+
+
+def list_dbs() -> list[str]:
+    """List database names found under the configured lancedb_dir.
+
+    A directory is considered a database if it is itself a LanceDB
+    directory (contains .lance files/tables) or contains a
+    haiku.rag.lancedb subfolder.
+
+    Returns:
+        Sorted list of database directory names.
+    """
+    env = get_settings()
+    base = pathlib.Path(env.lancedb_dir)
+    if not base.exists():
+        return []
+    db_names = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        # skip .hmac sidecar files that share the name
+        if child.suffix == ".hmac":
+            continue
+        subdir = child / "haiku.rag.lancedb"
+        if subdir.exists() and subdir.is_dir():
+            db_names.append(child.name)
+        elif any(child.iterdir()):
+            # non-empty directory — treat as a db
+            db_names.append(child.name)
+    return db_names
+
+
+async def vacuum_all(sign: bool = False):
+    """Vacuum every database under the configured lancedb_dir.
+
+    Args:
+        sign: If True, write an HMAC signature after vacuuming each db.
+    """
+    db_names = list_dbs()
+    if not db_names:
+        logger.info("no databases found to vacuum")
+        return
+    for name in db_names:
+        try:
+            await vacuum_db(name, sign=sign)
+        except Exception:
+            logger.exception(f"failed to vacuum {name}")

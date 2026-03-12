@@ -518,6 +518,32 @@ async def _vacuum(db_name: str, sign: bool):
     await vacuum_db(db_name, sign=sign)
 
 
+@app.command("vacuum-all")
+def vacuum_all_cmd(
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Write an HMAC-SHA512 signature after vacuuming each database (requires LANCEDB_HMAC_KEY)",
+    ),
+):
+    """Vacuum every LanceDB database under the configured lancedb_dir.
+
+    Iterates over all database directories and vacuums each one.
+
+    Examples:
+        si-cli vacuum-all
+        si-cli vacuum-all --sign
+    """
+    validate_settings(dump=False)
+    asyncio.run(_vacuum_all(sign))
+
+
+async def _vacuum_all(sign: bool):
+    from .lib.rag import vacuum_all
+
+    await vacuum_all(sign=sign)
+
+
 @app.command("verify-db")
 def verify_db_cmd(
     db_name: str = typer.Argument(

@@ -289,18 +289,44 @@ def verify_db(db_name: str) -> bool:
     return True
 
 
+def _resolve_db_path(db_name: str) -> pathlib.Path:
+    """Resolve a LanceDB database path, checking for haiku.rag.lancedb subfolder.
+
+    Args:
+        db_name: Name of the database directory under lancedb_dir.
+
+    Returns:
+        The resolved path to the actual LanceDB database.
+
+    Raises:
+        FileNotFoundError: If no database exists at the resolved path.
+    """
+    env = get_settings()
+    db_path = pathlib.Path(env.lancedb_dir) / db_name
+    subdir = db_path / "haiku.rag.lancedb"
+    if subdir.exists():
+        logger.info(f"found haiku.rag.lancedb subfolder in {db_path}")
+        db_path = subdir
+    if not db_path.exists():
+        raise FileNotFoundError(f"Database does not exist at {db_path}")
+    return db_path
+
+
 async def vacuum_db(db_name: str, sign: bool = False):
     """Vacuum a LanceDB database to reclaim space.
 
     If the database requires a migration, it will be run automatically
-    before vacuuming.
+    before vacuuming. If a haiku.rag.lancedb subfolder exists inside
+    the named directory, that subfolder is vacuumed instead.
 
     Args:
         db_name: Name of the database directory under lancedb_dir.
         sign: If True, write an HMAC signature after vacuuming.
+
+    Raises:
+        FileNotFoundError: If the database does not exist.
     """
-    env = get_settings()
-    db_path = pathlib.Path(env.lancedb_dir) / db_name
+    db_path = _resolve_db_path(db_name)
     logger.info(f"vacuuming db {db_path}")
     config = get_config()
     config.storage.vacuum_retention_seconds = 0

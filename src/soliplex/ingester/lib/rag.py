@@ -1,16 +1,21 @@
 import asyncio
 import copy
+import hashlib
+import hmac
 import itertools
 import logging
 import pathlib
 
 from docling_core.types.doc.document import DoclingDocument
+from haiku.rag.app import HaikuRAGApp
 from haiku.rag.chunkers import get_chunker
 from haiku.rag.client import HaikuRAG
 from haiku.rag.config import Config as HRConfig
+from haiku.rag.config import get_config
 from haiku.rag.config.models import AppConfig
 from haiku.rag.embeddings import embed_chunks
 from haiku.rag.store.engine import DocumentRecord
+from haiku.rag.store.exceptions import MigrationRequiredError
 from haiku.rag.store.models.chunk import Chunk
 
 from . import models
@@ -220,3 +225,97 @@ async def save_to_rag(
                 docling_document=docling_document,
             )
         return new_doc.id
+
+
+def _compute_db_hmac(db_path: pathlib.Path, key: bytes) -> str:
+    """Compute HMAC-SHA512 over all files in a LanceDB database directory.
+
+    Args:
+        db_path: Path to the database directory.
+        key: HMAC key (must be 64 bytes).
+
+    Returns:
+        Hex-encoded HMAC digest.
+    """
+    hm = hmac.new(key, digestmod=hashlib.sha512)
+    for f in sorted(db_path.rglob("*")):
+        if f.is_file():
+            hm.update(f.read_bytes())
+    return hm.hexdigest()
+
+
+def sign_db(db_name: str):
+    """Write an HMAC-SHA512 signature file for a LanceDB database.
+
+    Args:
+        db_name: Name of the database directory under lancedb_dir.
+    """
+    env = get_settings()
+    key = env.lancedb_hmac_key.get_secret_value().encode()
+    if len(key) != 64:
+        raise ValueError("LANCEDB_HMAC_KEY must be 64 bytes")
+    db_path = pathlib.Path(env.lancedb_dir) / db_name
+    hhash = _compute_db_hmac(db_path, key)
+    hashpath = db_path.parent / f"{db_path.name}.hmac"
+    logger.info(f"writing hmac {hhash} to {hashpath}")
+    hashpath.write_text(hhash)
+
+
+def verify_db(db_name: str) -> bool:
+    """Verify the HMAC-SHA512 signature of a LanceDB database.
+
+    Args:
+        db_name: Name of the database directory under lancedb_dir.
+
+    Returns:
+        True if the signature matches.
+
+    Raises:
+        FileNotFoundError: If the .hmac file does not exist.
+        ValueError: If the signature does not match.
+    """
+    env = get_settings()
+    key = env.lancedb_hmac_key.get_secret_value().encode()
+    if len(key) != 64:
+        raise ValueError("LANCEDB_HMAC_KEY must be 64 bytes")
+    db_path = pathlib.Path(env.lancedb_dir) / db_name
+    hashpath = db_path.parent / f"{db_path.name}.hmac"
+    if not hashpath.exists():
+        raise FileNotFoundError(f"No HMAC file found at {hashpath}")
+    expected = hashpath.read_text().strip()
+    actual = _compute_db_hmac(db_path, key)
+    if not hmac.compare_digest(expected, actual):
+        raise ValueError(f"HMAC mismatch for {db_path}: expected {expected}, got {actual}")
+    return True
+
+
+async def vacuum_db(db_name: str, sign: bool = False):
+    """Vacuum a LanceDB database to reclaim space.
+
+    If the database requires a migration, it will be run automatically
+    before vacuuming.
+
+    Args:
+        db_name: Name of the database directory under lancedb_dir.
+        sign: If True, write an HMAC signature after vacuuming.
+    """
+    env = get_settings()
+    db_path = pathlib.Path(env.lancedb_dir) / db_name
+    logger.info(f"vacuuming db {db_path}")
+    config = get_config()
+    config.storage.vacuum_retention_seconds = 0
+    app = HaikuRAGApp(
+        db_path=db_path,
+        config=config,
+        read_only=False,
+    )
+    try:
+        await app.vacuum()
+    except MigrationRequiredError:
+        logger.info(f"migration required for {db_path}, running migrate first")
+        applied = app.migrate()
+        for desc in applied:
+            logger.info(f"applied migration: {desc}")
+        await app.vacuum()
+    if sign:
+        sign_db(db_name)

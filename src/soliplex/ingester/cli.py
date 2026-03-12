@@ -488,5 +488,60 @@ def protect(
     asyncio.run(_apply_protection(level))
 
 
+@app.command("vacuum")
+def vacuum(
+    db_name: str = typer.Argument(
+        help="Name of the LanceDB database to vacuum",
+    ),
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Write an HMAC-SHA512 signature after vacuuming (requires LANCEDB_HMAC_KEY)",
+    ),
+):
+    """Vacuum a LanceDB database to reclaim space.
+
+    Removes deleted rows and compacts data files in the specified
+    database under the configured lancedb_dir.
+
+    Examples:
+        si-cli vacuum my_database
+        si-cli vacuum my_database --sign
+    """
+    validate_settings(dump=False)
+    asyncio.run(_vacuum(db_name, sign))
+
+
+async def _vacuum(db_name: str, sign: bool):
+    from .lib.rag import vacuum_db
+
+    await vacuum_db(db_name, sign=sign)
+
+
+@app.command("verify-db")
+def verify_db_cmd(
+    db_name: str = typer.Argument(
+        help="Name of the LanceDB database to verify",
+    ),
+):
+    """Verify the HMAC-SHA512 signature of a LanceDB database.
+
+    Compares the stored .hmac file against a freshly computed HMAC
+    over all files in the database directory.
+
+    Examples:
+        si-cli verify-db my_database
+    """
+    validate_settings(dump=False)
+    from .lib.rag import verify_db
+
+    try:
+        verify_db(db_name)
+        print("[bold green]HMAC verification passed[/bold green]")
+    except (FileNotFoundError, ValueError) as e:
+        print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+
+
 if __name__ == "__main__":
     app()

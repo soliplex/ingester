@@ -156,6 +156,7 @@ async def split_parse_document(
     workflow_run: models.WorkflowRun = None,
     force: bool = False,
     file_bytes_override: bytes = None,
+    mime_type_override: str = None,
 ):
     """
     splits document into pieces using pdf_splitter , parses each piece then combines the results
@@ -199,6 +200,7 @@ async def split_parse_document(
             step_config=step_config,
             workflow_run=workflow_run,
             file_bytes_override=file_bytes_override,
+            mime_type_override=mime_type_override,
         )
         return
 
@@ -286,6 +288,7 @@ async def parse_document(
     step_config: StepConfig = None,
     workflow_run: models.WorkflowRun = None,
     file_bytes_override: bytes = None,
+    mime_type_override: str = None,
 ):
     """
     parses document using docling  as one piece.  stores markdown and docling json documents to storage
@@ -314,10 +317,11 @@ async def parse_document(
             file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
         else:
             file_bytes = file_bytes_override
-
+        # mime_type_override allows overriding mime type by pre-processors such as asciidoc or plantnuml
+        mime_type = mime_type_override if mime_type_override is not None else doc.mime_type
         parsed = await docling_convert(
             file_bytes,
-            doc.mime_type,
+            mime_type,
             source_uri=source_uri,
             config_dict=step_config.config_json,
         )

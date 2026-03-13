@@ -547,6 +547,8 @@ async def delete_document_uri(doc_uri_id: int, session) -> models.DocumentURI:
     rs = await session.exec(q)
     res = rs.first()
     if res:
+        history_q = delete(models.DocumentURIHistory).where(models.DocumentURIHistory.doc_uri_id == doc_uri_id)
+        await session.exec(history_q)
         await session.delete(res)
         await delete_document(res.doc_hash, session, raise_on_error=False)
         await session.flush()

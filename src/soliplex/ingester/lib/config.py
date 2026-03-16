@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     file_protection_level: ProtectionLevel = ProtectionLevel.NONE
     file_secret: SecretStr | None = None
     lancedb_dir: str = "lancedb"
+    lancedb_hmac_key: SecretStr | None = None
     document_store_dir: str = "raw"
     parsed_markdown_store_dir: str = "markdown"
     parsed_json_store_dir: str = "json"

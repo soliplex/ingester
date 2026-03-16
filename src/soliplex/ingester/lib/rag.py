@@ -1,16 +1,21 @@
 import asyncio
 import copy
+import hashlib
+import hmac
 import itertools
 import logging
 import pathlib
 
 from docling_core.types.doc.document import DoclingDocument
+from haiku.rag.app import HaikuRAGApp
 from haiku.rag.chunkers import get_chunker
 from haiku.rag.client import HaikuRAG
 from haiku.rag.config import Config as HRConfig
+from haiku.rag.config import get_config
 from haiku.rag.config.models import AppConfig
 from haiku.rag.embeddings import embed_chunks
 from haiku.rag.store.engine import DocumentRecord
+from haiku.rag.store.exceptions import MigrationRequiredError
 from haiku.rag.store.models.chunk import Chunk
 
 from . import models
@@ -220,3 +225,170 @@ async def save_to_rag(
                 docling_document=docling_document,
             )
         return new_doc.id
+
+
+def _compute_db_hmac(db_path: pathlib.Path, key: bytes) -> str:
+    """Compute HMAC-SHA512 over all files in a LanceDB database directory.
+
+    Args:
+        db_path: Path to the database directory.
+        key: HMAC key (must be 64 bytes).
+
+    Returns:
+        Hex-encoded HMAC digest.
+    """
+    hm = hmac.new(key, digestmod=hashlib.sha512)
+    for f in sorted(db_path.rglob("*")):
+        if f.is_file():
+            hm.update(f.read_bytes())
+    return hm.hexdigest()
+
+
+def sign_db(db_name: str):
+    """Write an HMAC-SHA512 signature file for a LanceDB database.
+
+    Args:
+        db_name: Name of the database directory under lancedb_dir.
+    """
+    env = get_settings()
+    key = env.lancedb_hmac_key.get_secret_value().encode()
+    if len(key) != 64:
+        raise ValueError("LANCEDB_HMAC_KEY must be 64 bytes")
+    db_path = pathlib.Path(env.lancedb_dir) / db_name
+    hhash = _compute_db_hmac(db_path, key)
+    hashpath = db_path.parent / f"{db_path.name}.hmac"
+    logger.info(f"writing hmac {hhash} to {hashpath}")
+    hashpath.write_text(hhash)
+
+
+def verify_db(db_name: str) -> bool:
+    """Verify the HMAC-SHA512 signature of a LanceDB database.
+
+    Args:
+        db_name: Name of the database directory under lancedb_dir.
+
+    Returns:
+        True if the signature matches.
+
+    Raises:
+        FileNotFoundError: If the .hmac file does not exist.
+        ValueError: If the signature does not match.
+    """
+    env = get_settings()
+    key = env.lancedb_hmac_key.get_secret_value().encode()
+    if len(key) != 64:
+        raise ValueError("LANCEDB_HMAC_KEY must be 64 bytes")
+    db_path = pathlib.Path(env.lancedb_dir) / db_name
+    hashpath = db_path.parent / f"{db_path.name}.hmac"
+    if not hashpath.exists():
+        raise FileNotFoundError(f"No HMAC file found at {hashpath}")
+    expected = hashpath.read_text().strip()
+    actual = _compute_db_hmac(db_path, key)
+    if not hmac.compare_digest(expected, actual):
+        raise ValueError(f"HMAC mismatch for {db_path}: expected {expected}, got {actual}")
+    return True
+
+
+def _resolve_db_path(db_name: str) -> pathlib.Path:
+    """Resolve a LanceDB database path, checking for haiku.rag.lancedb subfolder.
+
+    Args:
+        db_name: Name of the database directory under lancedb_dir.
+
+    Returns:
+        The resolved path to the actual LanceDB database.
+
+    Raises:
+        FileNotFoundError: If no database exists at the resolved path.
+    """
+    env = get_settings()
+    db_path = pathlib.Path(env.lancedb_dir) / db_name
+    subdir = db_path / "haiku.rag.lancedb"
+    if subdir.exists():
+        logger.info(f"found haiku.rag.lancedb subfolder in {db_path}")
+        db_path = subdir
+    if not db_path.exists():
+        raise FileNotFoundError(f"Database does not exist at {db_path}")
+    return db_path
+
+
+async def vacuum_db(db_name: str, sign: bool = False):
+    """Vacuum a LanceDB database to reclaim space.
+
+    If the database requires a migration, it will be run automatically
+    before vacuuming. If a haiku.rag.lancedb subfolder exists inside
+    the named directory, that subfolder is vacuumed instead.
+
+    Args:
+        db_name: Name of the database directory under lancedb_dir.
+        sign: If True, write an HMAC signature after vacuuming.
+
+    Raises:
+        FileNotFoundError: If the database does not exist.
+    """
+    db_path = _resolve_db_path(db_name)
+    logger.info(f"vacuuming db {db_path}")
+    config = get_config()
+    config.storage.vacuum_retention_seconds = 0
+    app = HaikuRAGApp(
+        db_path=db_path,
+        config=config,
+        read_only=False,
+    )
+    try:
+        await app.vacuum()
+    except MigrationRequiredError:
+        logger.info(f"migration required for {db_path}, running migrate first")
+        applied = app.migrate()
+        for desc in applied:
+            logger.info(f"applied migration: {desc}")
+        await app.vacuum()
+    if sign:
+        sign_db(db_name)
+
+
+def list_dbs() -> list[str]:
+    """List database names found under the configured lancedb_dir.
+
+    A directory is considered a database if it is itself a LanceDB
+    directory (contains .lance files/tables) or contains a
+    haiku.rag.lancedb subfolder.
+
+    Returns:
+        Sorted list of database directory names.
+    """
+    env = get_settings()
+    base = pathlib.Path(env.lancedb_dir)
+    if not base.exists():
+        return []
+    db_names = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        # skip .hmac sidecar files that share the name
+        if child.suffix == ".hmac":
+            continue
+        subdir = child / "haiku.rag.lancedb"
+        if subdir.exists() and subdir.is_dir():
+            db_names.append(child.name)
+        elif any(child.iterdir()):
+            # non-empty directory — treat as a db
+            db_names.append(child.name)
+    return db_names
+
+
+async def vacuum_all(sign: bool = False):
+    """Vacuum every database under the configured lancedb_dir.
+
+    Args:
+        sign: If True, write an HMAC signature after vacuuming each db.
+    """
+    db_names = list_dbs()
+    if not db_names:
+        logger.info("no databases found to vacuum")
+        return
+    for name in db_names:
+        try:
+            await vacuum_db(name, sign=sign)
+        except Exception:
+            logger.exception(f"failed to vacuum {name}")

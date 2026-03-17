@@ -120,10 +120,11 @@ async def validate_document(
             meta["invalid_reason"] = None
             meta["page_count"] = len(pdfdoc.pages)
             for k in ["/Author", "/Subject", "/Title", "/Keywords", "/Subject"]:
-                v = pdfdoc.metadata.get(k)
-                if v is not None:
-                    cleaned_key = "pdf_" + k.lower().replace("/", "")
-                    meta[cleaned_key] = v
+                if pdfdoc.metadata:
+                    v = pdfdoc.metadata.get(k)
+                    if v is not None:
+                        cleaned_key = "pdf_" + k.lower().replace("/", "")
+                        meta[cleaned_key] = v
             fp.close()
             del file_bytes
             del pdfdoc

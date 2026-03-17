@@ -117,7 +117,6 @@ async def validate_document(
                 fp = BytesIO(file_bytes)
                 del file_bytes
                 pdfdoc = pypdf.PdfReader(fp)
-                fp.close()
                 meta["is_valid"] = True
                 meta["invalid_reason"] = None
                 meta["page_count"] = len(pdfdoc.pages)
@@ -126,6 +125,7 @@ async def validate_document(
                     if v is not None:
                         cleaned_key = "pdf_" + k.lower().replace("/", "")
                         meta[cleaned_key] = v
+                fp.close()
                 del pdfdoc
             except Exception as e:
                 meta["is_valid"] = False

@@ -109,31 +109,31 @@ async def validate_document(
     else:
         raise doc_ops.DocumentNotFoundError(doc_hash)
     meta = doc.doc_meta
-    if "is_valid" not in meta:
-        # need to do validation
-        if doc.mime_type == "application/pdf":
-            try:
-                file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
-                fp = BytesIO(file_bytes)
-                del file_bytes
-                pdfdoc = pypdf.PdfReader(fp)
-                meta["is_valid"] = True
-                meta["invalid_reason"] = None
-                meta["page_count"] = len(pdfdoc.pages)
-                for k in ["/Author", "/Subject", "/Title", "/Keywords", "/Subject"]:
-                    v = pdfdoc.metadata.get(k)
-                    if v is not None:
-                        cleaned_key = "pdf_" + k.lower().replace("/", "")
-                        meta[cleaned_key] = v
-                fp.close()
-                del pdfdoc
-            except Exception as e:
-                meta["is_valid"] = False
-                meta["invalid_reason"] = str(e)
-            await doc_ops.update_doc_meta(doc_hash, meta)
-        else:
-            # no validation methods for other stuff at this point
+
+    if doc.mime_type == "application/pdf":
+        try:
+            file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
+            fp = BytesIO(file_bytes)
+
+            pdfdoc = pypdf.PdfReader(fp)
             meta["is_valid"] = True
+            meta["invalid_reason"] = None
+            meta["page_count"] = len(pdfdoc.pages)
+            for k in ["/Author", "/Subject", "/Title", "/Keywords", "/Subject"]:
+                v = pdfdoc.metadata.get(k)
+                if v is not None:
+                    cleaned_key = "pdf_" + k.lower().replace("/", "")
+                    meta[cleaned_key] = v
+            fp.close()
+            del file_bytes
+            del pdfdoc
+        except Exception as e:
+            meta["is_valid"] = False
+            meta["invalid_reason"] = str(e)
+        await doc_ops.update_doc_meta(doc_hash, meta)
+    else:
+        # no validation methods for other stuff at this point
+        meta["is_valid"] = True
 
     if not meta["is_valid"]:
         msg = f"{doc_hash} invalid: {meta['invalid_reason']}"

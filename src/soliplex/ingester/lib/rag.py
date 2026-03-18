@@ -227,12 +227,20 @@ async def save_to_rag(
         return new_doc.id
 
 
-def _compute_db_hmac(db_path: pathlib.Path, key: bytes) -> str:
+def _compute_db_hmac(
+    db_path: pathlib.Path,
+    key: bytes,
+    buf_size: int = 8 * 1024 * 1024,
+) -> str:
     """Compute HMAC-SHA512 over all files in a LanceDB database directory.
+
+    Files are read in buffered chunks to avoid loading entire files
+    into memory at once.
 
     Args:
         db_path: Path to the database directory.
         key: HMAC key (must be 64 bytes).
+        buf_size: Read buffer size in bytes (default 8 MiB).
 
     Returns:
         Hex-encoded HMAC digest.
@@ -240,7 +248,12 @@ def _compute_db_hmac(db_path: pathlib.Path, key: bytes) -> str:
     hm = hmac.new(key, digestmod=hashlib.sha512)
     for f in sorted(db_path.rglob("*")):
         if f.is_file():
-            hm.update(f.read_bytes())
+            with open(f, "rb") as fh:
+                while True:
+                    chunk = fh.read(buf_size)
+                    if not chunk:
+                        break
+                    hm.update(chunk)
     return hm.hexdigest()
 
 

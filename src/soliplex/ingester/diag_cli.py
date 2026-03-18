@@ -46,6 +46,7 @@ config_app = typer.Typer(help="Configuration operations")
 run_group_app = typer.Typer(help="Run group operations")
 workflow_app = typer.Typer(help="Workflow operations")
 status_app = typer.Typer(help="Status operations")
+lancedb_app = typer.Typer(help="LanceDB operations")
 
 app.add_typer(batch_app, name="batch")
 app.add_typer(document_app, name="document")
@@ -53,6 +54,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(run_group_app, name="run-group")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(status_app, name="status")
+app.add_typer(lancedb_app, name="lancedb")
 
 
 async def _ensure_db():
@@ -651,6 +653,87 @@ def status_details(
 ):
     """Display aggregated step details for a run group (PostgreSQL only)."""
     asyncio.run(_status_details(run_group_id))
+
+
+# ── lancedb ────────────────────────────────────────────────────────
+
+
+async def _vacuum(db_name: str, sign: bool):
+    from .lib.rag import vacuum_db
+
+    await vacuum_db(db_name, sign=sign)
+
+
+@lancedb_app.command("vacuum")
+def lancedb_vacuum(
+    db_name: str = typer.Argument(
+        help="Name of the LanceDB database to vacuum",
+    ),
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Write an HMAC-SHA512 signature after vacuuming (requires LANCEDB_HMAC_KEY)",
+    ),
+):
+    """Vacuum a LanceDB database to reclaim space.
+
+    Removes deleted rows and compacts data files in the specified
+    database under the configured lancedb_dir.
+
+    Examples:
+        si-diag lancedb vacuum my_database
+        si-diag lancedb vacuum my_database --sign
+    """
+    asyncio.run(_vacuum(db_name, sign))
+
+
+async def _vacuum_all(sign: bool):
+    from .lib.rag import vacuum_all
+
+    await vacuum_all(sign=sign)
+
+
+@lancedb_app.command("vacuum-all")
+def lancedb_vacuum_all(
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Write an HMAC-SHA512 signature after vacuuming each database (requires LANCEDB_HMAC_KEY)",
+    ),
+):
+    """Vacuum every LanceDB database under the configured lancedb_dir.
+
+    Iterates over all database directories and vacuums each one.
+
+    Examples:
+        si-diag lancedb vacuum-all
+        si-diag lancedb vacuum-all --sign
+    """
+    asyncio.run(_vacuum_all(sign))
+
+
+@lancedb_app.command("verify")
+def lancedb_verify(
+    db_name: str = typer.Argument(
+        help="Name of the LanceDB database to verify",
+    ),
+):
+    """Verify the HMAC-SHA512 signature of a LanceDB database.
+
+    Compares the stored .hmac file against a freshly computed HMAC
+    over all files in the database directory.
+
+    Examples:
+        si-diag lancedb verify my_database
+    """
+    from .lib.rag import verify_db
+
+    try:
+        verify_db(db_name)
+        print("[bold green]HMAC verification passed[/bold green]")
+    except (FileNotFoundError, ValueError) as e:
+        print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
 
 
 if __name__ == "__main__":

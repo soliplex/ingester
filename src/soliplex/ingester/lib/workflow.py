@@ -158,12 +158,28 @@ async def split_parse_document(
     force: bool = False,
     file_bytes_override: bytes = None,
     mime_type_override: str = None,
+    markdown_override: str = None,
 ):
     """
     splits document into pieces using pdf_splitter , parses each piece then combines the results
-    into one docling document.stores markdown and docling json documents to storage.  if the document isn't a pdf,
-    it delegates to the single-piece pipeline
+    into one docling document.  stores markdown and docling json documents to storage.
+    if the document isn't a pdf, it delegates to the single-piece pipeline.
+    if file_bytes_override is provided, it will be used instead of reading from storage.
+    If markdown_override is provided, it will be used instead of using the generated markdown.
+    This works around issues with docling
 
+    Args:
+        batch_id (int): batch id
+        doc_hash (str): document hash
+        source (str): source of document
+        step_config (StepConfig): step config
+        workflow_run (models.WorkflowRun): workflow run
+        file_bytes_override (bytes): file bytes to override
+        mime_type_override (str): mime type to override
+        markdown_override (str): markdown override for parsed md
+
+    Returns:
+        None
     """
     from pdf_splitter.processor import BatchProcessor
     from pdf_splitter.reassembly import merge_from_results
@@ -202,6 +218,7 @@ async def split_parse_document(
             workflow_run=workflow_run,
             file_bytes_override=file_bytes_override,
             mime_type_override=mime_type_override,
+            markdown_override=markdown_override,
         )
         return
 
@@ -290,11 +307,27 @@ async def parse_document(
     workflow_run: models.WorkflowRun = None,
     file_bytes_override: bytes = None,
     mime_type_override: str = None,
+    markdown_override: str = None,
 ):
     """
     parses document using docling  as one piece.  stores markdown and docling json documents to storage
-    if file_bytes_override is provided, it will be used instead of reading from storage
+    if file_bytes_override is provided, it will be used instead of reading from storage.
+    If markdown_override is provided, it will be used instead of using the generated markdown.
+    This works around issues with docling
 
+    Args:
+        batch_id (int): batch id
+        doc_hash (str): document hash
+        source (str): source of document
+        force (bool): force the parse even if it already exists
+        step_config (StepConfig): step config
+        workflow_run (models.WorkflowRun): workflow run
+        file_bytes_override (bytes): file bytes to override
+        mime_type_override (str): mime type to override
+        markdown_override (str): markdown override for parsed md
+
+    Returns:
+        None
     """
     logger.info(f"parse_document started  {source} {batch_id} {doc_hash}")
 
@@ -329,6 +362,9 @@ async def parse_document(
         if parsed:
             for fmt, content in parsed.items():
                 st = ArtifactType.PARSED_JSON if fmt == "json" else ArtifactType.PARSED_MD
+                if st == ArtifactType.PARSED_MD and markdown_override is not None:
+                    logger.info(f"using markdown override for {mime_type} /{doc_hash}")
+                    content = markdown_override
                 op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, st)
                 if force:
                     try:

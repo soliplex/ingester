@@ -914,9 +914,12 @@ async def update_run_status(workflow_run_id: int, is_last_step: bool, status: Ru
     logger.info(f"update run status {workflow_run_id} {update_status} {status}")
     if update_status is not None:
         dt = datetime.datetime.now(datetime.UTC)
-        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run_id).with_for_update()
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run_id).with_for_update(nowait=True)
         results = await session.exec(q)
         wf = results.first()
+        if wf is None:
+            logger.error(f"update_run_status: workflow run {workflow_run_id} not found")
+            return status
         wf.status_date = dt
         wf.status = update_status
         if status == RunStatus.COMPLETED or status == RunStatus.FAILED:
@@ -1153,10 +1156,11 @@ async def reset_failed_steps(run_group_id: int) -> None:
             .subquery()
         )
 
-        # Update run steps to PENDING
+        # Update non-completed run steps to PENDING
         q1 = (
             update(RunStep)
             .where(RunStep.workflow_run_id.in_(select(failed_runs_subq.c.id)))
+            .where(RunStep.status != RunStatus.COMPLETED)
             .values(status=RunStatus.PENDING, retry=0)
         )
         result1 = await session.exec(q1)

@@ -276,7 +276,13 @@ async def test_database_initialize_non_sqlite_url():
     with patch("soliplex.ingester.lib.models.create_async_engine", return_value=mock_engine) as mock_create:
         await Database.initialize("postgresql+asyncpg://localhost/test")
         # Verify connect_args is empty for non-sqlite URL
-        mock_create.assert_called_once_with("postgresql+asyncpg://localhost/test", connect_args={})
+        mock_create.assert_called_once_with(
+            "postgresql+asyncpg://localhost/test",
+            connect_args={},
+            pool_size=20,
+            max_overflow=5,
+            pool_timeout=10,
+        )
 
     await Database.close()
 

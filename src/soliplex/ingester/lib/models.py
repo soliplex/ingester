@@ -62,10 +62,23 @@ class Database:
             url = get_settings().doc_db_url.get_secret_value()
 
         connect_args = {}
+        pool_kwargs = {}
         if "sqlite" in url:
             connect_args["check_same_thread"] = False
+        else:
+            settings = get_settings()
+            task_count = settings.worker_task_count
+            pool_kwargs = {
+                "pool_size": task_count * 2 + 10,
+                "max_overflow": 5,
+                "pool_timeout": 10,
+            }
 
-        cls._engine = create_async_engine(url, connect_args=connect_args)
+        cls._engine = create_async_engine(
+            url,
+            connect_args=connect_args,
+            **pool_kwargs,
+        )
 
         # Create all tables
         if get_settings().auto_create_database:

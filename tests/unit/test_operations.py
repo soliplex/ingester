@@ -639,6 +639,16 @@ def test_extract_hash_value_no_separator():
     assert result == "abc123def456"
 
 
+def test_extract_hash_value_none():
+    """Test _extract_hash_value with None returns empty string"""
+    assert operations._extract_hash_value(None) == ""
+
+
+def test_extract_hash_value_empty():
+    """Test _extract_hash_value with empty string returns empty string"""
+    assert operations._extract_hash_value("") == ""
+
+
 @pytest.mark.asyncio
 async def test_add_history_for_hash_with_hist_meta(db):
     """Test add_history_for_hash with hist_meta provided"""

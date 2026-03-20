@@ -74,12 +74,15 @@ def guess_extension(mime_type: str) -> str:
     return guess
 
 
-def _extract_hash_value(prefixed_hash: str) -> str:
+def _extract_hash_value(prefixed_hash: str | None) -> str:
     """Extract hash value from prefixed format.
 
     Handles formats like 'sha256-abc123' or 'md5:abc123', returning just the hash portion.
     Returns the original string if no prefix separator is found.
+    Returns empty string for None input.
     """
+    if not prefixed_hash:
+        return ""
     if "-" in prefixed_hash:
         return prefixed_hash.split("-", 1)[1]
     if ":" in prefixed_hash:

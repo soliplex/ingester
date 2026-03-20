@@ -79,9 +79,9 @@ def _extract_hash_value(prefixed_hash: str | None) -> str:
 
     Handles formats like 'sha256-abc123' or 'md5:abc123', returning just the hash portion.
     Returns the original string if no prefix separator is found.
-    Returns empty string for None input.
+    Returns empty string for None or non-string input.
     """
-    if not prefixed_hash:
+    if not prefixed_hash or not isinstance(prefixed_hash, str):
         return ""
     if "-" in prefixed_hash:
         return prefixed_hash.split("-", 1)[1]

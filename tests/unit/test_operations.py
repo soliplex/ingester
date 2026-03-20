@@ -649,6 +649,11 @@ def test_extract_hash_value_empty():
     assert operations._extract_hash_value("") == ""
 
 
+def test_extract_hash_value_dict():
+    """Test _extract_hash_value with dict returns empty string"""
+    assert operations._extract_hash_value({"sha256": "abc", "etag": "def"}) == ""
+
+
 # --- get_doc_status ---
 
 

@@ -649,6 +649,124 @@ def test_extract_hash_value_empty():
     assert operations._extract_hash_value("") == ""
 
 
+# --- get_doc_status ---
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_sha256_match(db):
+    """Test get_doc_status matches on SHA256 hash."""
+    uri, doc = await operations.create_document_from_uri(
+        "/docs/a.md",
+        "src",
+        "text/markdown",
+        b"hello",
+    )
+    hashes = {"/docs/a.md": {"sha256": doc.hash, "etag": ""}}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/a.md"]["status"] == "matched"
+    assert to_remove == []
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_etag_fallback(db):
+    """Test get_doc_status matches on ETag when SHA256 is empty."""
+    uri, doc = await operations.create_document_from_uri(
+        "/docs/b.md",
+        "src",
+        "text/markdown",
+        b"world",
+        doc_meta={"_etag": '"etag123"'},
+    )
+    # Send empty SHA256 but matching ETag
+    hashes = {"/docs/b.md": {"sha256": "", "etag": '"etag123"'}}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/b.md"]["status"] == "matched"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_etag_mismatch(db):
+    """Test get_doc_status returns mismatch when both SHA256 and ETag differ."""
+    uri, doc = await operations.create_document_from_uri(
+        "/docs/c.md",
+        "src",
+        "text/markdown",
+        b"content",
+        doc_meta={"_etag": '"old_etag"'},
+    )
+    hashes = {"/docs/c.md": {"sha256": "", "etag": '"new_etag"'}}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/c.md"]["status"] == "mismatch"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_new_file(db):
+    """Test get_doc_status returns new for unknown URIs."""
+    hashes = {"/docs/new.md": {"sha256": "abc", "etag": ""}}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/new.md"]["status"] == "new"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_backward_compat_string(db):
+    """Test get_doc_status handles old string-format payload."""
+    uri, doc = await operations.create_document_from_uri(
+        "/docs/d.md",
+        "src",
+        "text/markdown",
+        b"data",
+    )
+    # Old format: plain string SHA256
+    hashes = {"/docs/d.md": doc.hash}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/d.md"]["status"] == "matched"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_deleted(db):
+    """Test get_doc_status identifies deleted files."""
+    await operations.create_document_from_uri(
+        "/docs/e.md",
+        "src",
+        "text/markdown",
+        b"data",
+    )
+    # Source sends empty hashes — all stored URIs are deleted
+    res, to_remove = await operations.get_doc_status("src", {})
+    assert len(to_remove) == 1
+    assert to_remove[0]["uri"] == "/docs/e.md"
+    assert to_remove[0]["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_create_document_merges_metadata_into_existing(db):
+    """Test that re-ingesting merges all metadata into existing doc_meta."""
+    content = b"identical content"
+    uri1, doc1 = await operations.create_document_from_uri(
+        "/docs/f.md",
+        "src",
+        "text/markdown",
+        content,
+    )
+    original_md5 = doc1.doc_meta.get("md5")
+    assert doc1.doc_meta.get("_etag") is None
+    assert doc1.doc_meta.get("custom") is None
+
+    # Re-ingest same content with new metadata
+    uri2, doc2 = await operations.create_document_from_uri(
+        "/docs/f2.md",
+        "src",
+        "text/markdown",
+        content,
+        doc_meta={"_etag": '"new_etag"', "custom": "value"},
+    )
+    assert doc2.hash == doc1.hash
+    # New keys merged in
+    assert doc2.doc_meta.get("_etag") == '"new_etag"'
+    assert doc2.doc_meta.get("custom") == "value"
+    # Original keys preserved
+    assert doc2.doc_meta.get("md5") == original_md5
+
+
 @pytest.mark.asyncio
 async def test_add_history_for_hash_with_hist_meta(db):
     """Test add_history_for_hash with hist_meta provided"""

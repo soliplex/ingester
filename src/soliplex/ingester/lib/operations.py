@@ -74,12 +74,15 @@ def guess_extension(mime_type: str) -> str:
     return guess
 
 
-def _extract_hash_value(prefixed_hash: str) -> str:
+def _extract_hash_value(prefixed_hash: str | None) -> str:
     """Extract hash value from prefixed format.
 
     Handles formats like 'sha256-abc123' or 'md5:abc123', returning just the hash portion.
     Returns the original string if no prefix separator is found.
+    Returns empty string for None or non-string input.
     """
+    if not prefixed_hash or not isinstance(prefixed_hash, str):
+        return ""
     if "-" in prefixed_hash:
         return prefixed_hash.split("-", 1)[1]
     if ":" in prefixed_hash:
@@ -312,6 +315,13 @@ async def create_document_from_uri(
                     source=source,
                 ),
             )
+            # Merge incoming metadata into existing doc_meta
+            existing_meta = dict(existdoc.doc_meta or {})
+            merged = {**existing_meta, **doc_meta}
+            if merged != existing_meta:
+                existdoc.doc_meta = merged
+                session.add(existdoc)
+                await session.flush()
             doc = existdoc
         else:
             session.add(doc)
@@ -418,17 +428,58 @@ async def get_uris_for_source(source: str) -> list[models.DocumentURI]:
         return res
 
 
-async def get_doc_status(source: str, source_hashes: dict[str, str]):
+async def get_doc_status(source: str, source_hashes: dict):
     stored_uris = await get_uris_for_source(source)
     stored_dict = {x.uri: x.doc_hash for x in stored_uris}
+
+    # Batch-load Documents so we can check doc_meta ETags
+    doc_hashes_needed = set(stored_dict.values())
+    docs_by_hash: dict[str, models.Document] = {}
+    if doc_hashes_needed:
+        async with models.get_session() as session:
+            q = select(models.Document).where(models.Document.hash.in_(doc_hashes_needed))
+            rs = await session.exec(q)
+            for doc in rs.all():
+                session.expunge(doc)
+                docs_by_hash[doc.hash] = doc
+
     to_remove = []
     res = {}
-    for source_uri, source_hash in source_hashes.items():
+    for source_uri, source_info in source_hashes.items():
+        # Backward compat: old format is plain string, new is dict
+        if isinstance(source_info, str):
+            source_sha = source_info
+            source_etag = ""
+        else:
+            source_sha = source_info.get("sha256", "")
+            source_etag = source_info.get("etag", "")
+
         if source_uri in stored_dict:
-            extracted_source_hash = _extract_hash_value(source_hash)
-            stored_hash = _extract_hash_value(stored_dict[source_uri])
-            if extracted_source_hash == stored_hash:
-                res[source_uri] = {"hash": extracted_source_hash, "status": "matched"}
+            stored_doc_hash = stored_dict[source_uri]
+            stored_hash = _extract_hash_value(stored_doc_hash)
+            extracted_source_hash = _extract_hash_value(source_sha)
+
+            # Check 1: SHA256 match
+            if extracted_source_hash and extracted_source_hash == stored_hash:
+                res[source_uri] = {
+                    "hash": extracted_source_hash,
+                    "status": "matched",
+                }
+            # Check 2: ETag fallback
+            elif source_etag and stored_doc_hash in docs_by_hash:
+                stored_doc = docs_by_hash[stored_doc_hash]
+                stored_etag = (stored_doc.doc_meta or {}).get("_etag")
+                if stored_etag and stored_etag == source_etag:
+                    res[source_uri] = {
+                        "hash": stored_hash,
+                        "status": "matched",
+                    }
+                else:
+                    res[source_uri] = {
+                        "source_hash": extracted_source_hash,
+                        "stored_hash": stored_hash,
+                        "status": "mismatch",
+                    }
             else:
                 res[source_uri] = {
                     "source_hash": extracted_source_hash,
@@ -437,7 +488,10 @@ async def get_doc_status(source: str, source_hashes: dict[str, str]):
                 }
             del stored_dict[source_uri]
         else:
-            res[source_uri] = {"hash": source_hash, "status": "new"}
+            res[source_uri] = {
+                "hash": source_sha or source_etag,
+                "status": "new",
+            }
     for uri, doc_hash in stored_dict.items():
         if uri not in source_hashes:
             to_remove.append({"uri": uri, "hash": doc_hash, "status": "deleted"})

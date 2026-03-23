@@ -19,6 +19,7 @@ from slowapi.util import get_remote_address
 
 from soliplex.ingester.lib import operations
 from soliplex.ingester.lib.auth import get_current_user
+from soliplex.ingester.lib.config import configure_logging
 from soliplex.ingester.lib.config import get_settings
 from soliplex.ingester.lib.models import Database
 
@@ -38,12 +39,7 @@ limiter = Limiter(key_func=get_remote_address)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format=settings.log_format,
-        datefmt="%Y-%m-%dT%H:%M:%S",
-        style="{",
-    )
+    configure_logging(settings)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logger.info("Starting soliplex-ingester")
 

@@ -1,3 +1,7 @@
+import json
+import logging
+from datetime import UTC
+from datetime import datetime
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -133,3 +137,50 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+class JsonFormatter(logging.Formatter):
+    """Emit each log record as a single JSON object."""
+
+    _BUILTIN_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", (), None)))
+
+    def format(self, record: logging.LogRecord) -> str:
+        ts = datetime.fromtimestamp(record.created, tz=UTC).strftime("%Y-%m-%dT%H:%M:%S")
+        obj: dict = {
+            "timestamp": ts,
+            "level": record.levelname,
+            "name": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[0] is not None:
+            obj["exception"] = self.formatException(record.exc_info)
+        for key, val in record.__dict__.items():
+            if key not in self._BUILTIN_ATTRS:
+                obj[key] = val
+        return json.dumps(obj, default=str)
+
+
+def configure_logging(settings: Settings) -> None:
+    """Configure the root logger from *settings*.
+
+    When ``settings.log_format`` equals ``"json"``, a
+    `JsonFormatter` is installed; otherwise the value is
+    used as a ``str.format``-style pattern.
+    """
+    root = logging.getLogger()
+    root.setLevel(settings.log_level)
+
+    handler = logging.StreamHandler()
+    if settings.log_format == "json":
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                fmt=settings.log_format,
+                datefmt="%Y-%m-%dT%H:%M:%S",
+                style="{",
+            )
+        )
+
+    root.handlers.clear()
+    root.addHandler(handler)

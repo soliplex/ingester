@@ -1018,3 +1018,58 @@ async def test_update_doc_status_uri_not_found(db):
         # Let's just verify update_doc_status runs without error
         status, deleted_count = await operations.update_doc_status(test_source, hashes)
         assert status is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_file_only_valid_artifact_types(db):
+    """Test delete_file only tries artifact types valid for each step config.
+
+    Regression test: delete_file previously iterated over ALL ArtifactType
+    values for each step config, causing ValueError when e.g. a 'chunk'
+    step was asked for a 'document' artifact.
+    """
+    batch_id = await operations.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/test_valid_artifacts.pdf"
+    test_bytes = b"test bytes for artifact check"
+
+    uri1, doc1 = await operations.create_document_from_uri(
+        test_uri,
+        "test_source",
+        "application/pdf",
+        test_bytes,
+        batch_id=batch_id,
+    )
+
+    workflow_run, steps = await wf_ops.create_single_workflow_run(
+        workflow_definition_id="batch",
+        doc_id=doc1.hash,
+        priority=1,
+        param_id="test_base",
+    )
+
+    called_pairs = []
+
+    def tracking_get_op(artifact_type, step_config=None):
+        # Capture step_type eagerly while still bound to session
+        step_type = step_config.step_type if step_config else None
+        called_pairs.append((artifact_type, step_type))
+        mock_op = AsyncMock()
+        mock_op.delete = AsyncMock()
+        return mock_op
+
+    with patch(
+        "soliplex.ingester.lib.operations.dal.get_storage_operator",
+        side_effect=tracking_get_op,
+    ):
+        with patch(
+            "soliplex.ingester.lib.operations.add_history_for_hash",
+        ):
+            async with models.get_session() as session:
+                await operations.delete_file(doc1.hash, session)
+
+    # Verify every call used a valid artifact type for its step type
+    assert len(called_pairs) > 0, "Expected at least one storage op call"
+    for artifact_type, step_type in called_pairs:
+        assert step_type is not None
+        valid = models.ARTIFACTS_FROM_STEPS[step_type]
+        assert artifact_type in valid, f"Artifact {artifact_type} invalid for step {step_type} (valid: {valid})"

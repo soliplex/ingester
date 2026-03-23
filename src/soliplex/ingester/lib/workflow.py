@@ -251,19 +251,24 @@ async def split_parse_document(
             if use_serve:
                 logger.info(f"parse_document {doc_hash} using serve")
 
+                # Limit concurrent conversions to avoid holding all
+                # chunk bytes + conversion state in memory at once.
+                _convert_sem = asyncio.Semaphore(2)
+
                 async def _read_and_convert(split_path):
-                    fb = await read_file(split_path)
-                    result = await docling_convert(
-                        fb,
-                        doc.mime_type,
-                        source_uri=source_uri,
-                        config_dict=step_config.config_json,
-                    )
-                    del fb
-                    return {
-                        "success": True,
-                        "document_dict": json.loads(result["json"].decode("utf-8 ")),
-                    }
+                    async with _convert_sem:
+                        fb = await read_file(split_path)
+                        result = await docling_convert(
+                            fb,
+                            doc.mime_type,
+                            source_uri=source_uri,
+                            config_dict=step_config.config_json,
+                        )
+                        del fb
+                        return {
+                            "success": True,
+                            "document_dict": json.loads(result["json"].decode("utf-8 ")),
+                        }
 
                 proc_results = await asyncio.gather(*[_read_and_convert(sp) for sp in split_files])
 

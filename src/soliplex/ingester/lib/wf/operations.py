@@ -253,6 +253,43 @@ async def get_run_group_stats(run_group_id: int) -> dict[RunStatus, int]:
         return stats
 
 
+async def complete_run_group(
+    run_group_id: int,
+    status: RunStatus,
+    status_message: str | None = None,
+) -> None:
+    """
+    Mark a run group as completed.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID to complete
+    status : RunStatus
+        Final status (e.g. COMPLETED or FAILED)
+    status_message : str | None
+        Optional status message
+    """
+    try:
+        dt = datetime.datetime.now(datetime.UTC)
+        async with get_session() as session:
+            q = select(RunGroup).where(RunGroup.id == run_group_id)
+            result = await session.exec(q)
+            rg = result.first()
+            if rg is None:
+                logger.error(f"complete_run_group: run group {run_group_id} not found")
+                return
+            rg.status = status
+            rg.status_date = dt
+            rg.completed_date = dt
+            if status_message is not None:
+                rg.status_message = status_message
+            session.add(rg)
+            await session.commit()
+    except Exception:
+        logger.exception("error in complete_run_group:")
+
+
 async def delete_run_group(run_group_id: int) -> dict[str, int]:
     """
     Delete a RunGroup and all dependent records using Python/SQLModel.
@@ -899,7 +936,13 @@ async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: Work
         return step_config
 
 
-async def update_run_status(workflow_run_id: int, is_last_step: bool, status: RunStatus, session) -> RunStatus:
+async def update_run_status(
+    workflow_run_id: int,
+    is_last_step: bool,
+    status: RunStatus,
+    session,
+    status_message: str | None = None,
+) -> RunStatus:
     update_status = None
     if is_last_step and status == RunStatus.COMPLETED:
         update_status = RunStatus.COMPLETED
@@ -922,6 +965,8 @@ async def update_run_status(workflow_run_id: int, is_last_step: bool, status: Ru
             return status
         wf.status_date = dt
         wf.status = update_status
+        if status_message is not None:
+            wf.status_message = status_message
         if status == RunStatus.COMPLETED or status == RunStatus.FAILED:
             wf.completed_date = dt
 
@@ -997,7 +1042,61 @@ async def get_run_steps(status: RunStatus) -> list[RunStep]:
         return res
 
 
-async def get_run_group_durations(run_group_id: int) -> list[tuple]:
+async def get_run_steps_for_run_group(
+    run_group_id: int,
+    status: RunStatus,
+) -> list[dict]:
+    """
+    Get run step details with URI info for a run group,
+    filtered by status.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID to query
+    status : RunStatus
+        The step status to filter on (e.g. RunStatus.FAILED)
+
+    Returns
+    -------
+    list[dict]
+        Each dict contains batch_id, uri, status, step_type,
+        and status_message.
+    """
+    async with get_session() as session:
+        q = (
+            select(
+                DocumentURI.batch_id,
+                DocumentURI.uri,
+                RunStep.status,
+                RunStep.step_type,
+                RunStep.status_message,
+            )
+            .join(
+                WorkflowRun,
+                WorkflowRun.id == RunStep.workflow_run_id,
+            )
+            .join(
+                DocumentURI,
+                (DocumentURI.doc_hash == WorkflowRun.doc_id) & (DocumentURI.batch_id == WorkflowRun.batch_id),
+            )
+            .where(WorkflowRun.run_group_id == run_group_id)
+            .where(RunStep.status == status)
+        )
+        rs = await session.exec(q)
+        return [
+            {
+                "batch_id": row.batch_id,
+                "uri": row.uri,
+                "status": row.status,
+                "step_type": row.step_type,
+                "status_message": row.status_message,
+            }
+            for row in rs.all()
+        ]
+
+
+async def get_run_group_durations(run_group_id: int) -> list[dict]:
     """
     Get duration statistics for a run group.
 
@@ -1011,7 +1110,7 @@ async def get_run_group_durations(run_group_id: int) -> list[tuple]:
 
     Returns
     -------
-    list[tuple]
+    list[dict]
         Duration statistics per step type
 
     Raises
@@ -1064,10 +1163,10 @@ async def get_run_group_durations(run_group_id: int) -> list[tuple]:
         ).group_by(subq.c.step_type)
 
         result = await session.exec(q)
-        return result.all()
+        return [dict(row._mapping) for row in result.all()]
 
 
-async def get_step_stats(run_group_id: int) -> list[tuple]:
+async def get_step_stats(run_group_id: int) -> list[dict]:
     """
     Get step statistics for a run group.
 
@@ -1081,7 +1180,7 @@ async def get_step_stats(run_group_id: int) -> list[tuple]:
 
     Returns
     -------
-    list[tuple]
+    list[dict]
         Statistics per batch, param set, step type, and status
 
     Raises
@@ -1131,7 +1230,7 @@ async def get_step_stats(run_group_id: int) -> list[tuple]:
         )
 
         result = await session.exec(q)
-        return result.all()
+        return [dict(row._mapping) for row in result.all()]
 
 
 async def reset_failed_steps(run_group_id: int) -> None:
@@ -1338,7 +1437,7 @@ async def get_recent_steps(
         return enriched
 
 
-async def get_run_group_details(run_group_id: int) -> list[tuple]:
+async def get_run_group_details(run_group_id: int) -> list[dict]:
     """
     Get aggregated step details for a run group.
 
@@ -1352,9 +1451,9 @@ async def get_run_group_details(run_group_id: int) -> list[tuple]:
 
     Returns
     -------
-    list[tuple]
-        Rows of (batch_name, param_definition_id, step_type, status,
-        count, pages)
+    list[dict]
+        Rows with keys: name, param_definition_id, step_type,
+        status, count, pages
 
     Raises
     ------
@@ -1406,7 +1505,7 @@ async def get_run_group_details(run_group_id: int) -> list[tuple]:
         )
 
         result = await session.exec(q)
-        return result.all()
+        return [dict(row._mapping) for row in result.all()]
 
 
 async def get_workflow_runs_for_group_with_doc_info(

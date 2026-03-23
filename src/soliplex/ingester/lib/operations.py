@@ -248,7 +248,8 @@ async def delete_file(doc_hash: str, session):
     step_configs = result.all()
 
     for step_config in step_configs:
-        for artifact_type in models.ArtifactType:
+        valid_types = models.ARTIFACTS_FROM_STEPS.get(step_config.step_type, [])
+        for artifact_type in valid_types:
             op = dal.get_storage_operator(artifact_type, step_config)
             try:
                 await op.delete(doc_hash)

@@ -284,3 +284,41 @@ async def test_get_run_group_details_non_postgres(db):
     """Verify RuntimeError is raised when using SQLite."""
     with pytest.raises(RuntimeError, match="requires PostgreSQL"):
         await wf_ops.get_run_group_details(1)
+
+
+# ── get_run_steps_for_run_group ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_run_steps_for_run_group_failed(db):
+    """Returns failed steps with URI info for a run group."""
+    async with Database.session() as session:
+        batch, doc, doc_uri = await _seed_batch_and_doc(session, uri="/tmp/fail_test.pdf")
+        rg, wf_run, _, run_step = await _seed_workflow(session, batch, doc)
+        # Mark the step as FAILED
+        run_step_db = await session.get(models.RunStep, run_step.id)
+        run_step_db.status = RunStatus.FAILED
+        run_step_db.status_message = "timeout"
+        session.add(run_step_db)
+        await session.commit()
+
+    rows = await wf_ops.get_run_steps_for_run_group(rg.id, RunStatus.FAILED)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["batch_id"] == batch.id
+    assert row["uri"] == "/tmp/fail_test.pdf"
+    assert row["status"] == RunStatus.FAILED
+    assert row["step_type"] == WorkflowStepType.PARSE
+    assert row["status_message"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_get_run_steps_for_run_group_empty(db):
+    """Returns empty list when no steps match the status."""
+    async with Database.session() as session:
+        batch, doc, _ = await _seed_batch_and_doc(session)
+        rg, _, _, _ = await _seed_workflow(session, batch, doc)
+        await session.commit()
+
+    rows = await wf_ops.get_run_steps_for_run_group(rg.id, RunStatus.FAILED)
+    assert rows == []

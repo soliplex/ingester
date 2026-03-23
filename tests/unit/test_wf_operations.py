@@ -1037,7 +1037,19 @@ async def test_get_run_group_durations(db):
 
     # Mock the session and query execution since the SQL uses PostgreSQL-specific syntax
     mock_result = MagicMock()
-    mock_result.all.return_value = [("parse", 5, 10.5, 1.2, 5.5, 100, 20, 50.0, 120)]
+    mock_row = MagicMock()
+    mock_row._mapping = {
+        "step_type": "parse",
+        "count": 5,
+        "longest": 10.5,
+        "shortest": 1.2,
+        "average": 5.5,
+        "pages": 100,
+        "pages_per_min": 20,
+        "total_duration": 50.0,
+        "wall_clock_time": 120,
+    }
+    mock_result.all.return_value = [mock_row]
 
     mock_session = MagicMock()
     mock_session.exec = AsyncMock(return_value=mock_result)
@@ -1064,7 +1076,16 @@ async def test_get_step_stats(db):
 
     # Mock the session and query execution since the SQL uses PostgreSQL-specific syntax
     mock_result = MagicMock()
-    mock_result.all.return_value = [("Test Batch", "test_base", "parse", "PENDING", 5, 100)]
+    mock_row = MagicMock()
+    mock_row._mapping = {
+        "name": "Test Batch",
+        "param_definition_id": "test_base",
+        "workflow_step_name": "parse",
+        "status": "PENDING",
+        "count": 5,
+        "pages": 100,
+    }
+    mock_result.all.return_value = [mock_row]
 
     mock_session = MagicMock()
     mock_session.exec = AsyncMock(return_value=mock_result)
@@ -1294,3 +1315,47 @@ async def test_get_lifecycle_history_with_metadata(db):
     assert history[1].handler_name == "error_handler"
     assert history[1].status_message == "Processing failed due to timeout"
     assert history[1].status_meta["error_code"] == "TIMEOUT"
+
+
+@pytest.mark.asyncio
+async def test_get_run_steps_for_run_group(db):
+    """Test get_run_steps_for_run_group returns step details
+    with URI info filtered by status."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    test_bytes = b"test content"
+
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/rg_test.pdf",
+        "test_source",
+        "application/pdf",
+        test_bytes,
+        batch_id=batch_id,
+    )
+
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(run_group=run_group, doc_id=doc.hash)
+
+    # Mark the first step as FAILED
+    async with models.get_session() as session:
+        step_db = await session.get(models.RunStep, steps[0].id)
+        step_db.status = RunStatus.FAILED
+        step_db.status_message = "parse error"
+        session.add(step_db)
+        await session.commit()
+
+    # Query for FAILED steps
+    results = await wf_ops.get_run_steps_for_run_group(run_group.id, RunStatus.FAILED)
+    assert len(results) == 1
+    row = results[0]
+    assert row["batch_id"] == batch_id
+    assert row["uri"] == "/tmp/rg_test.pdf"
+    assert row["status"] == RunStatus.FAILED
+    assert row["status_message"] == "parse error"
+
+    # Query for COMPLETED should return nothing
+    completed = await wf_ops.get_run_steps_for_run_group(run_group.id, RunStatus.COMPLETED)
+    assert completed == []

@@ -16,6 +16,7 @@ from rich import print
 
 import soliplex.ingester
 
+from .lib.config import configure_logging
 from .lib.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -34,12 +35,7 @@ def init():
 
     try:
         settings = get_settings()
-        logging.basicConfig(
-            level=settings.log_level,
-            format=settings.log_format,
-            datefmt="%Y-%m-%dT%H:%M:%S",
-            style="{",
-        )
+        configure_logging(settings)
     except ValidationError:
         print("invalid settings. environment variables might not be set.  Run `si-cli validate-settings`")
         logging.basicConfig(

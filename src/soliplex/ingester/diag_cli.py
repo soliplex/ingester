@@ -9,6 +9,7 @@ from rich import print
 from rich.syntax import Syntax
 from rich.table import Table
 
+from .lib.config import configure_logging
 from .lib.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -20,12 +21,7 @@ def init():
 
     try:
         settings = get_settings()
-        logging.basicConfig(
-            level=settings.log_level,
-            format=settings.log_format,
-            datefmt="%Y-%m-%dT%H:%M:%S",
-            style="{",
-        )
+        configure_logging(settings)
     except ValidationError:
         print("invalid settings. environment variables might not be set.  Run `si-cli validate-settings`")
         logging.basicConfig(
@@ -413,6 +409,90 @@ def run_group_info(
     asyncio.run(_run_group_info(run_group_id))
 
 
+async def _run_group_steps(run_group_id: int, status: str):
+    from .lib.models import RunStatus
+    from .lib.wf.operations import get_run_steps_for_run_group
+
+    await _ensure_db()
+    try:
+        status_enum = RunStatus(status)
+    except ValueError:
+        valid = ", ".join(s.value for s in RunStatus)
+        print(f"[red]Invalid status '{status}'. Valid: {valid}[/red]")
+        raise typer.Exit(code=1) from None
+
+    rows = await get_run_steps_for_run_group(run_group_id, status_enum)
+    if not rows:
+        print(f"[yellow]No {status} steps for run group {run_group_id}[/yellow]")
+        return
+
+    table = Table(title=(f"Run Group {run_group_id} Steps ({status})"))
+    table.add_column("batch_id", style="cyan")
+    table.add_column("uri")
+    table.add_column("status")
+    table.add_column("step_type", style="green")
+    table.add_column("status_message")
+    for r in rows:
+        table.add_row(
+            str(r["batch_id"]) if r["batch_id"] else "",
+            r["uri"],
+            str(r["status"]),
+            str(r["step_type"]),
+            r["status_message"] or "",
+        )
+    print(table)
+
+
+@run_group_app.command("steps")
+def run_group_steps(
+    run_group_id: int = typer.Argument(help="Run group ID"),
+    status: str = typer.Option("FAILED", "--status", help="Filter by step status"),
+):
+    """List run steps with URI info for a run group."""
+    asyncio.run(_run_group_steps(run_group_id, status))
+
+
+async def _run_group_step_stats(run_group_id: int):
+    from .lib.wf.operations import get_step_stats
+
+    await _ensure_db()
+    try:
+        rows = await get_step_stats(run_group_id)
+    except RuntimeError as e:
+        print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+
+    if not rows:
+        print(f"[yellow]No step stats for run group {run_group_id}[/yellow]")
+        return
+
+    table = Table(title=f"Run Group {run_group_id} Step Stats")
+    table.add_column("batch_name")
+    table.add_column("param_def_id")
+    table.add_column("step_name", style="green")
+    table.add_column("status")
+    table.add_column("count", justify="right", style="cyan")
+    table.add_column("pages", justify="right")
+    for r in rows:
+        table.add_row(
+            str(r["name"]),
+            str(r["param_definition_id"]),
+            str(r["workflow_step_name"]),
+            str(r["status"]),
+            str(r["count"]),
+            str(r["pages"]) if r["pages"] is not None else "",
+        )
+    print(table)
+
+
+@run_group_app.command("step-stats")
+def run_group_step_stats(
+    run_group_id: int = typer.Argument(help="Run group ID"),
+):
+    """Show aggregated step statistics for a run group (PostgreSQL only)."""
+    asyncio.run(_run_group_step_stats(run_group_id))
+
+
 # ── workflow ──────────────────────────────────────────────────────
 
 
@@ -637,12 +717,12 @@ async def _status_details(run_group_id: int):
     table.add_column("pages", justify="right")
     for r in rows:
         table.add_row(
-            str(r[0]),
-            str(r[1]),
-            str(r[2]),
-            str(r[3]),
-            str(r[4]),
-            str(r[5]) if r[5] is not None else "",
+            str(r["name"]),
+            str(r["param_definition_id"]),
+            str(r["step_type"]),
+            str(r["status"]),
+            str(r["count"]),
+            str(r["pages"]) if r["pages"] is not None else "",
         )
     print(table)
 

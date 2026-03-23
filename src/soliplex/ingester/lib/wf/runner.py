@@ -124,6 +124,7 @@ async def set_step_status(
             step.is_last_step,
             step.status,
             session,
+            status_message=step.status_message,
         )
 
         session.expunge(step)
@@ -269,6 +270,12 @@ async def handle_lifecycle_event(
             )
             stats = await operations.get_run_group_stats(run_group.id)
             if stats[RunStatus.RUNNING] == 0 and stats[RunStatus.PENDING] == 0 and stats[RunStatus.ERROR] == 0:
+                has_failures = stats[RunStatus.FAILED] > 0
+                group_status = RunStatus.FAILED if has_failures else RunStatus.COMPLETED
+                await operations.complete_run_group(
+                    run_group.id,
+                    group_status,
+                )
                 await run_lifecycle_event(
                     workflow_def,
                     run_group,

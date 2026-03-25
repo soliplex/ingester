@@ -162,8 +162,52 @@ def resolve_lancedb_path(step_config: StepConfig) -> str:
     return db_path
 
 
+def resolve_lancedb_path_from_param_config(
+    store_config: dict[str, str | int | bool],
+) -> pathlib.Path:
+    """Resolve LanceDB path from a param set's store config."""
+    env = get_settings()
+    data_dir = store_config["data_dir"]
+    return pathlib.Path(env.lancedb_dir) / data_dir
+
+
 def _find_docs_by_hash(doc_hash: str, tbl) -> list[DocumentRecord]:
     return tbl.search().where(f"metadata like '%{doc_hash}%'").to_pydantic(DocumentRecord)
+
+
+async def check_rag_existence(
+    doc_hashes: list[str],
+    store_config: dict[str, str | int | bool],
+    embed_config: dict[str, str | int | bool],
+) -> set[str]:
+    """Return set of doc_hashes already present in the target RAG DB.
+
+    Args:
+        doc_hashes: List of document SHA256 hashes to check.
+        store_config: Store section from param set config.
+        embed_config: Embed section from param set config.
+
+    Returns:
+        Set of doc_hashes that already exist in the RAG database.
+    """
+    db_path = resolve_lancedb_path_from_param_config(store_config)
+    if not db_path.exists():
+        logger.info(f"RAG DB does not exist at {db_path}, nothing to skip")
+        return set()
+
+    config = build_embed_config(HRConfig, embed_config)
+    config = build_storage_config(config, store_config)
+
+    found = set()
+    async with _rag_lock:
+        async with HaikuRAG(config=config, create=False, db_path=db_path) as client:
+            tbl = client.document_repository.store.documents_table
+            for h in doc_hashes:
+                docs = _find_docs_by_hash(h, tbl)
+                if docs:
+                    found.add(h)
+    logger.info(f"pre-check: {len(found)}/{len(doc_hashes)} already in RAG at {db_path}")
+    return found
 
 
 async def save_to_rag(

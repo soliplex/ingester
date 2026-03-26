@@ -126,7 +126,7 @@ class Settings(BaseSettings):
     auth_trust_proxy_headers: bool = False  # Trust X-Auth-Request-* headers from OAuth2 Proxy
 
     # Rate limiting settings
-    rate_limit_ingest: str = "200/minute"  # Rate limit for document ingestion endpoint
+    rate_limit_ingest: str = "1000/minute"  # Rate limit for document ingestion endpoint
 
     # Security middleware settings
     allowed_origins: str = "*"  # CORS allowed origins (comma-separated or "*")

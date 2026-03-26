@@ -49,16 +49,52 @@ class NotFoundError(Exception):
     pass
 
 
+async def _filter_existing_in_rag(
+    documents: list[Document],
+    param_id: str,
+) -> list[Document]:
+    """Remove documents that already exist in the target RAG DB.
+
+    Resolves the RAG database path from the param set's store config
+    and checks each document's hash against the database metadata.
+    """
+    from soliplex.ingester.lib.rag import check_rag_existence
+
+    param_set = await get_param_set(param_id)
+    store_cfg = param_set.config.get(WorkflowStepType.STORE, {})
+    embed_cfg = param_set.config.get(WorkflowStepType.EMBED, {})
+    if "data_dir" not in store_cfg:
+        logger.warning("skip_existing: no store.data_dir in param set, skipping RAG pre-check")
+        return documents
+
+    all_hashes = [doc.hash for doc in documents]
+    existing = await check_rag_existence(all_hashes, store_cfg, embed_cfg)
+    if existing:
+        filtered = [d for d in documents if d.hash not in existing]
+        logger.info(f"skip_existing: {len(existing)} already in RAG, {len(filtered)} to process")
+        return filtered
+    return documents
+
+
 async def create_workflow_runs_for_batch(
     batch_id: int,
     workflow_definition_id: str,
     priority: int = 0,
     param_id: str | None = None,
     only_unparsed: bool = False,
+    skip_existing: bool = True,
 ) -> tuple[RunGroup, list[WorkflowRun]]:
     """
     Creates a workflow run for each document in a batch
 
+    Args:
+        batch_id: Batch to create runs for.
+        workflow_definition_id: Workflow to use.
+        priority: Run priority.
+        param_id: Parameter set ID.
+        only_unparsed: Only create runs for unparsed documents.
+        skip_existing: Skip documents already present in the
+            target RAG database (default True).
     """
     if only_unparsed:
         if param_id is None:
@@ -78,6 +114,8 @@ async def create_workflow_runs_for_batch(
                 param_id=param_id,
             )
         batch_documents = await get_documents_in_batch(batch_id)
+        if skip_existing and param_id is not None:
+            batch_documents = await _filter_existing_in_rag(batch_documents, param_id)
 
         existing_runs = await get_workflow_runs_for_group(run_group.id)
         existing_ids = set([run.doc_id for run in existing_runs])
@@ -98,6 +136,8 @@ async def create_workflow_runs_for_batch(
             param_id=param_id,
         )
         batch_documents = await get_documents_in_batch(batch_id)
+        if skip_existing and param_id is not None:
+            batch_documents = await _filter_existing_in_rag(batch_documents, param_id)
         runs = []
         for doc in batch_documents:
             run, steps = await create_workflow_run(
@@ -1278,6 +1318,67 @@ async def reset_failed_steps(run_group_id: int) -> None:
         await session.commit()
 
         logger.info(f"Reset {reset_steps} steps and {reset_runs} runs for run group {run_group_id}")
+
+
+async def reset_failed(run_group_id: int | None = None) -> None:
+    """
+    Reset all failed steps and workflow runs back to PENDING.
+
+    Sets failed run steps back to PENDING with retry count reset
+    to 0 and worker_id cleared. Sets failed workflow runs back to
+    PENDING.
+
+    Parameters
+    ----------
+    run_group_id : int | None
+        If specified, only reset within this run group.
+        If None, reset all failed steps and runs.
+    """
+    async with get_session() as session:
+        if run_group_id is not None:
+            failed_runs_subq = (
+                select(WorkflowRun.id)
+                .where(WorkflowRun.run_group_id == run_group_id)
+                .where(WorkflowRun.status == RunStatus.FAILED)
+                .subquery()
+            )
+            q1 = (
+                update(RunStep)
+                .where(RunStep.workflow_run_id.in_(select(failed_runs_subq.c.id)))
+                .where(RunStep.status == RunStatus.FAILED)
+                .values(
+                    status=RunStatus.PENDING,
+                    retry=0,
+                    worker_id=None,
+                )
+            )
+            q2 = (
+                update(WorkflowRun)
+                .where(WorkflowRun.run_group_id == run_group_id)
+                .where(WorkflowRun.status == RunStatus.FAILED)
+                .values(status=RunStatus.PENDING)
+            )
+        else:
+            q1 = (
+                update(RunStep)
+                .where(RunStep.status == RunStatus.FAILED)
+                .values(
+                    status=RunStatus.PENDING,
+                    retry=0,
+                    worker_id=None,
+                )
+            )
+            q2 = update(WorkflowRun).where(WorkflowRun.status == RunStatus.FAILED).values(status=RunStatus.PENDING)
+
+        result1 = await session.exec(q1)
+        reset_steps = result1.rowcount  # type: ignore
+        result2 = await session.exec(q2)
+        reset_runs = result2.rowcount  # type: ignore
+
+        await session.commit()
+
+        scope = f"run group {run_group_id}" if run_group_id else "all"
+        logger.info(f"reset_failed: {reset_steps} steps and {reset_runs} runs reset ({scope})")
 
 
 async def get_running_steps_enriched() -> list[dict]:

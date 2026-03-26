@@ -578,6 +578,23 @@ def workflow_info(
     asyncio.run(_workflow_info(workflow_run_id, status))
 
 
+async def _workflow_reset(run_group_id: int | None):
+    from .lib.wf.operations import reset_failed
+
+    await _ensure_db()
+    await reset_failed(run_group_id)
+    scope = f"run group {run_group_id}" if run_group_id else "all"
+    print(f"[green]Reset failed steps and runs ({scope})[/green]")
+
+
+@workflow_app.command("reset")
+def workflow_reset(
+    run_group_id: int = typer.Option(None, "--run-group-id", help="Run group ID (omit to reset all)"),
+):
+    """Reset all FAILED steps and runs back to PENDING."""
+    asyncio.run(_workflow_reset(run_group_id))
+
+
 # ── status ────────────────────────────────────────────────────────
 
 

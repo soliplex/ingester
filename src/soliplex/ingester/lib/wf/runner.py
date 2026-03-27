@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _worker_id = None
 _task_queue = None
 _lock = asyncio.Lock()
+_tasks: list[asyncio.Task] = []
 
 
 class WorkflowException(Exception):
@@ -46,10 +47,17 @@ def do_state_transition(
         return start_status
     my_worker_id = get_worker_id()
     if step_worker_id is not None and my_worker_id != step_worker_id:
-        # step came from another worker
-        if start_status == RunStatus.RUNNING:
-            msg = f"running step already assigned to worker {step_worker_id}"
+        if start_status != RunStatus.PENDING:
+            msg = f"step assigned to worker {step_worker_id}, current worker is {my_worker_id}"
             raise WorkflowException(msg)
+    if (
+        step_worker_id is None
+        and my_worker_id is not None
+        and start_status == RunStatus.PENDING
+        and end_status != RunStatus.RUNNING
+    ):
+        msg = "step was reclaimed (worker_id cleared), abandoning stale transition"
+        raise WorkflowException(msg)
     allowed_transitions = [
         (RunStatus.PENDING, RunStatus.RUNNING),
         (RunStatus.RUNNING, RunStatus.COMPLETED),
@@ -78,45 +86,51 @@ async def set_step_status(
     meta: dict[str, str] | None = None,
     increase_retry: bool = False,
 ) -> RunStep:
-    try:
-        async with get_session() as session:
-            q = select(RunStep).where(RunStep.id == run_step_id).with_for_update()
-            timestamp = datetime.datetime.now(datetime.UTC)
+    async with get_session() as session:
+        q = select(RunStep).where(RunStep.id == run_step_id).with_for_update(nowait=True)
+        timestamp = datetime.datetime.now(datetime.UTC)
 
-            results = await session.exec(q)
-            step = results.first()
-            step.status = do_state_transition(step.status, status, step.retry, step.retries, step.worker_id)
-            step.status_date = timestamp
-            step.status_message = message
-            step.status_meta = meta
-            step.worker_id = get_worker_id()
-
-            if step.start_date is None and status == RunStatus.RUNNING:
-                step.start_date = timestamp
-            if step.completed_date is None and status == RunStatus.COMPLETED:
-                step.completed_date = timestamp
-
-            if increase_retry:
-                if step.retry >= step.retries:
-                    logger.warning(f"step {step.id} already failed {step.retry} times")
-                step.retry += 1
-
-            session.add(step)
-            await session.flush()
-            await operations.update_run_status(step.workflow_run_id, step.is_last_step, step.status, session)
-
-            session.expunge(step)
-            await session.commit()
-
-            return step
-    except WorkflowException:
-        raise
-    except Exception as e:
-        logger.fatal(
-            f"error setting step status {run_step_id} {status} {e} swallowing to keep going",
-            exc_info=True,
+        results = await session.exec(q)
+        step = results.first()
+        if step is None:
+            logger.error(f"set_step_status: step {run_step_id} not found")
+            raise WorkflowException(f"step {run_step_id} not found")
+        step.status = do_state_transition(
+            step.status,
+            status,
+            step.retry,
+            step.retries,
+            step.worker_id,
         )
-        return None
+        step.status_date = timestamp
+        step.status_message = message
+        step.status_meta = meta
+        step.worker_id = get_worker_id()
+
+        if step.start_date is None and status == RunStatus.RUNNING:
+            step.start_date = timestamp
+        if step.completed_date is None and status == RunStatus.COMPLETED:
+            step.completed_date = timestamp
+
+        if increase_retry:
+            if step.retry >= step.retries:
+                logger.warning(f"step {step.id} already failed {step.retry} times")
+            step.retry += 1
+
+        session.add(step)
+        await session.flush()
+        await operations.update_run_status(
+            step.workflow_run_id,
+            step.is_last_step,
+            step.status,
+            session,
+            status_message=step.status_message,
+        )
+
+        session.expunge(step)
+        await session.commit()
+
+        return step
 
 
 async def get_runnable_steps(top: int | None = None, batch_id: int | None = None) -> list[RunStep]:
@@ -256,6 +270,12 @@ async def handle_lifecycle_event(
             )
             stats = await operations.get_run_group_stats(run_group.id)
             if stats[RunStatus.RUNNING] == 0 and stats[RunStatus.PENDING] == 0 and stats[RunStatus.ERROR] == 0:
+                has_failures = stats[RunStatus.FAILED] > 0
+                group_status = RunStatus.FAILED if has_failures else RunStatus.COMPLETED
+                await operations.complete_run_group(
+                    run_group.id,
+                    group_status,
+                )
                 await run_lifecycle_event(
                     workflow_def,
                     run_group,
@@ -320,28 +340,49 @@ async def run_lifecycle_event(
 
 async def run_wf_step(run_step: RunStep, coro_id: int = None):
     lc = {"coro_id": coro_id, "worker_id": get_worker_id()}
+    # Step is already RUNNING (set by consume_tasks), so skip
+    # the redundant set_step_status(RUNNING) call that was here.
+    workflow_run = None
+    workflow_def = None
+    run_group = None
     try:
-        await set_step_status(
-            run_step.id,
-            status=RunStatus.RUNNING,
-            increase_retry=False,
-            message="success",
-            meta={"coro_id": coro_id},
+        workflow_run = await operations.get_workflow_run(
+            run_step.workflow_run_id,
         )
-        workflow_run = await operations.get_workflow_run(run_step.workflow_run_id)
-        run_group = await operations.get_run_group(workflow_run.run_group_id)
-        workflow_def = await operations.get_workflow_definition(workflow_run.workflow_definition_id)
-        step_config = await operations.get_step_config_by_id(run_step.step_config_id)
+        run_group = await operations.get_run_group(
+            workflow_run.run_group_id,
+        )
+        workflow_def = await operations.get_workflow_definition(
+            workflow_run.workflow_definition_id,
+        )
+        step_config = await operations.get_step_config_by_id(
+            run_step.step_config_id,
+        )
         batch = await operations.get_batch(workflow_run.batch_id)
 
         logger.info(
-            f"cid={coro_id} running step {run_step.workflow_step_number} ({run_step.workflow_step_name})"
-            f" in workflow {workflow_def.name} priority={run_step.priority}"
+            f"cid={coro_id} running step"
+            f" {run_step.workflow_step_number}"
+            f" ({run_step.workflow_step_name})"
+            f" in workflow {workflow_def.name}"
+            f" priority={run_step.priority}"
             f" attempt={run_step.retry}/{run_step.retries}",
             extra=lc,
         )
-        await handle_lifecycle_event(workflow_def, run_step, workflow_run, run_group)
-        res = await build_step_coro(run_step, workflow_run, workflow_def, step_config, batch, run_group)
+        await handle_lifecycle_event(
+            workflow_def,
+            run_step,
+            workflow_run,
+            run_group,
+        )
+        res = await build_step_coro(
+            run_step,
+            workflow_run,
+            workflow_def,
+            step_config,
+            batch,
+            run_group,
+        )
         if isinstance(res, str):
             logger.info(
                 f"cid={coro_id} step {run_step.workflow_step_number} returned {res}",
@@ -358,11 +399,16 @@ async def run_wf_step(run_step: RunStep, coro_id: int = None):
             meta={"coro_id": coro_id},
         )
 
-        await handle_lifecycle_event(workflow_def, upd_step, workflow_run, run_group)
+        await handle_lifecycle_event(
+            workflow_def,
+            upd_step,
+            workflow_run,
+            run_group,
+        )
 
     except Exception as e:
         logger.exception(
-            f"error in step {run_step.workflow_step_number}",
+            f"error in step {run_step.workflow_step_number} run_id={run_step.workflow_run_id} step_id={run_step.id}",
             exc_info=e,
             extra=lc,
         )
@@ -373,11 +419,19 @@ async def run_wf_step(run_step: RunStep, coro_id: int = None):
                 f"exception: {e}",
                 meta={"coro_id": coro_id},
             )
-            await handle_lifecycle_event(workflow_def, upd_step, workflow_run, run_group)
-
+            if workflow_def is not None:
+                await handle_lifecycle_event(
+                    workflow_def,
+                    upd_step,
+                    workflow_run,
+                    run_group,
+                )
         except Exception as e2:
             logger.exception(
-                f"error setting step status to error {run_step.workflow_step_number}",
+                f"error setting step status to error"
+                f" step={run_step.workflow_step_number}"
+                f" step_id={run_step.id}"
+                f" run_id={run_step.workflow_run_id}",
                 exc_info=e2,
                 extra=lc,
             )
@@ -452,7 +506,14 @@ def build_coro(
 async def _worker_checkin():
     settings = get_settings()
     while True:
-        await worker_checkin(get_worker_id())
+        try:
+            await worker_checkin(get_worker_id())
+        except Exception as e:
+            logger.exception(
+                "worker checkin loop error, continuing",
+                exc_info=e,
+                extra={"worker_id": get_worker_id()},
+            )
         await asyncio.sleep(settings.worker_checkin_interval)
 
 
@@ -470,12 +531,45 @@ async def start_worker(create_tasks=True):
     task_count = settings.worker_task_count
     _task_queue = asyncio.Queue(maxsize=task_count)
     if create_tasks:
-        asyncio.create_task(_worker_checkin())
-        asyncio.create_task(check_dead_workers())
-        asyncio.create_task(queue_tasks())
+        await worker_checkin(_worker_id)
+        _tasks.append(
+            asyncio.create_task(
+                _worker_checkin(),
+                name="worker-checkin",
+            )
+        )
+        _tasks.append(
+            asyncio.create_task(
+                check_dead_workers(),
+                name="dead-worker-check",
+            )
+        )
+        _tasks.append(
+            asyncio.create_task(
+                queue_tasks(),
+                name="queue-tasks",
+            )
+        )
         for i in range(task_count):
-            asyncio.create_task(consume_tasks(i))
+            _tasks.append(
+                asyncio.create_task(
+                    consume_tasks(i),
+                    name=f"consumer-{i}",
+                )
+            )
     logger.info(f"started worker {_worker_id} with {task_count} tasks")
+
+
+async def stop_worker():
+    global _worker_id
+    global _task_queue
+    for task in _tasks:
+        task.cancel()
+    await asyncio.gather(*_tasks, return_exceptions=True)
+    _tasks.clear()
+    _worker_id = None
+    _task_queue = None
+    logger.info("worker stopped")
 
 
 async def consume_tasks(coro_id: int):
@@ -487,42 +581,73 @@ async def consume_tasks(coro_id: int):
 
     while True:
         run_step = None
-        task_num = await _task_queue.get()
-        async with _lock:
-            logger.debug(
-                f"cid={coro_id} worker queue task get {task_num}",
+        try:
+            task_num = await _task_queue.get()
+            try:
+                async with _lock:
+                    logger.debug(
+                        f"cid={coro_id} worker queue task get {task_num}",
+                        extra=lc,
+                    )
+                    avail_steps = await get_runnable_steps(top=1)
+                    if len(avail_steps) != 0:
+                        run_step = avail_steps[0]
+                        logger.info(
+                            f"worker cid={coro_id} queue task"
+                            f" got run_id="
+                            f"{run_step.workflow_run_id}"
+                            f" step="
+                            f"{run_step.workflow_step_number}"
+                            f" status={run_step.status}",
+                            extra=lc,
+                        )
+                        try:
+                            run_step = await set_step_status(
+                                run_step.id,
+                                RunStatus.RUNNING,
+                                increase_retry=True,
+                                meta={"coro_id": coro_id},
+                            )
+                        except Exception as e:
+                            logger.exception(
+                                f"cid={coro_id} failed to claim step {run_step.id}",
+                                exc_info=e,
+                                extra=lc,
+                            )
+                            run_step = None
+
+                if run_step:
+                    logger.debug(
+                        f"worker cid={coro_id} running step {run_step.workflow_run_id} {run_step.workflow_step_number}",
+                        extra=lc,
+                    )
+
+                    status = await run_wf_step(run_step, coro_id)
+                    logger.debug(
+                        f"worker cid={coro_id} finished step"
+                        f" {run_step.workflow_run_id}"
+                        f" {run_step.workflow_step_number}"
+                        f" status={status}",
+                        extra=lc,
+                    )
+                    if status == RunStatus.FAILED:
+                        await asyncio.sleep(2)
+            finally:
+                _task_queue.task_done()
+
+        except asyncio.CancelledError:
+            logger.info(
+                f"cid={coro_id} consumer cancelled, shutting down",
                 extra=lc,
             )
-            avail_steps = await get_runnable_steps(top=1)
-            if len(avail_steps) != 0:
-                run_step = avail_steps[0]
-                logger.info(
-                    f"worker cid={coro_id} queue task  got run_id={run_step.workflow_run_id} "
-                    + f"  {run_step.workflow_step_number} from queue {run_step.status}",
-                    extra=lc,
-                )
-
-                updated_step = await set_step_status(
-                    run_step.id,
-                    RunStatus.RUNNING,
-                    increase_retry=True,
-                    meta={"coro_id": coro_id},
-                )
-                run_step = updated_step
-
-        if run_step:
-            logger.debug(
-                f"worker cid={coro_id} running step " + f"{run_step.workflow_run_id} {run_step.workflow_step_number}",
+            raise
+        except Exception as e:
+            logger.exception(
+                f"cid={coro_id} unhandled error in consume_tasks, continuing",
+                exc_info=e,
                 extra=lc,
             )
-
-            status = await run_wf_step(run_step, coro_id)
-            logger.debug(
-                f"worker cid={coro_id} finished step" + f" {run_step.workflow_run_id} {run_step.workflow_step_number}",
-                extra=lc,
-            )
-            if status == RunStatus.FAILED:
-                await asyncio.sleep(2)
+            await asyncio.sleep(1)
 
 
 async def queue_tasks():
@@ -541,19 +666,24 @@ async def queue_tasks():
             logger.debug(f"queue task put {task_ct} curr={_task_queue.qsize()},'worker_id {get_worker_id()}'")
             task_ct += 1
 
+        except asyncio.CancelledError:
+            logger.info("queue_tasks cancelled, shutting down")
+            raise
         except Exception as e:
             logger.exception(
-                "failed to queue task",
+                "failed to queue task, continuing",
                 exc_info=e,
                 extra={"worker_id": get_worker_id()},
             )
-            return
+            await asyncio.sleep(1)
 
 
 async def worker_checkin(worker_id: str):
     try:
         async with get_session() as session:
-            checkin = datetime.datetime.now(datetime.UTC)
+            checkin = datetime.datetime.now(
+                datetime.UTC,
+            ).replace(tzinfo=None)
             logger.info(f"worker {worker_id} checkin {checkin}")
             q = select(WorkerCheckin).where(WorkerCheckin.id == worker_id)
             rs = await session.exec(q)
@@ -579,41 +709,68 @@ async def check_dead_workers():
     while True:
         try:
             checkin_interval = settings.worker_checkin_timeout
-            await asyncio.sleep(checkin_interval)
-            logger.info(f"checking for dead workers every {checkin_interval} seconds")
-            # add a random delay to avoid herding
-            last_checkin_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
-                seconds=checkin_interval + (random.randint(1, 20) / 10)
+            logger.info(
+                f"checking for dead workers every {checkin_interval} seconds",
+            )
+            # Use naive UTC for SQLite compatibility
+            # (SQLite stores datetimes without timezone)
+            now = datetime.datetime.now(
+                datetime.UTC,
+            ).replace(tzinfo=None)
+            jitter = random.randint(1, 20) / 10
+            last_checkin_time = now - datetime.timedelta(
+                seconds=checkin_interval + jitter,
             )
             async with get_session() as session:
-                q = select(WorkerCheckin).where(WorkerCheckin.last_checkin < last_checkin_time)
+                q = select(WorkerCheckin).where(
+                    WorkerCheckin.last_checkin < last_checkin_time,
+                )
                 results = await session.exec(q)
                 results = results.all()
                 for worker in results:
-                    # Make last_checkin timezone-aware (SQLite stores as naive UTC)
-                    last_checkin_aware = worker.last_checkin.replace(tzinfo=datetime.UTC)
-                    dead_duration = datetime.datetime.now(datetime.UTC) - last_checkin_aware
+                    checkin = worker.last_checkin
+                    if checkin.tzinfo is not None:
+                        checkin = checkin.replace(
+                            tzinfo=None,
+                        )
+                    dead_duration = now - checkin
                     logger.info(
-                        f"worker {worker.id} last checkin {worker.last_checkin}" + f" dead for {dead_duration} - removing"
+                        f"worker {worker.id} last checkin {worker.last_checkin} dead for {dead_duration} - removing",
                     )
-                    # remove the checkin
                     await session.delete(worker)
-                    q2 = select(RunStep).where(RunStep.worker_id == worker.id).where(RunStep.status != RunStatus.COMPLETED)
+                    q2 = (
+                        select(RunStep)
+                        .where(
+                            RunStep.worker_id == worker.id,
+                        )
+                        .where(
+                            RunStep.status != RunStatus.COMPLETED,
+                        )
+                    )
                     step_results = await session.exec(q2)
                     step_results = step_results.all()
-                    logger.info(f"removing {len(step_results)} steps from worker {worker.id}")
-                    # find any steps that were running on this worker and free them up by setting back to pending
-                    # and clearing worker id
+                    logger.info(
+                        f"resetting {len(step_results)} steps from dead worker {worker.id}",
+                    )
                     for step in step_results:
+                        logger.info(
+                            f"resetting step {step.id} run_id={step.workflow_run_id} status={step.status} -> PENDING",
+                        )
                         step.worker_id = None
                         if step.status == RunStatus.RUNNING:
                             step.status = RunStatus.PENDING
                         session.add(step)
 
                 await session.commit()
+        except asyncio.CancelledError:
+            logger.info(
+                "dead worker check cancelled, shutting down",
+            )
+            raise
         except Exception as e:
             logger.exception(
                 "error checking for dead workers",
                 exc_info=e,
                 extra={"worker_id": get_worker_id()},
             )
+        await asyncio.sleep(checkin_interval)

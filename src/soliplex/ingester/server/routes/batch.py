@@ -48,6 +48,7 @@ async def start_workflows(
     priority: int = Form(0),
     param_id: str = Form(None),
     only_unparsed: bool = Form(False),
+    skip_existing: bool = Form(True),
 ):
     try:
         run_group, runs = await wf_ops.create_workflow_runs_for_batch(
@@ -56,6 +57,7 @@ async def start_workflows(
             priority=priority,
             param_id=param_id,
             only_unparsed=only_unparsed,
+            skip_existing=skip_existing,
         )
         return {
             "message": "Workflows started",

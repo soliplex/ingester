@@ -16,6 +16,7 @@ from rich import print
 
 import soliplex.ingester
 
+from .lib.config import configure_logging
 from .lib.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -34,12 +35,7 @@ def init():
 
     try:
         settings = get_settings()
-        logging.basicConfig(
-            level=settings.log_level,
-            format=settings.log_format,
-            datefmt="%Y-%m-%dT%H:%M:%S",
-            style="{",
-        )
+        configure_logging(settings)
     except ValidationError:
         print("invalid settings. environment variables might not be set.  Run `si-cli validate-settings`")
         logging.basicConfig(
@@ -486,6 +482,87 @@ def protect(
     """
     validate_settings(dump=False)
     asyncio.run(_apply_protection(level))
+
+
+@app.command("vacuum")
+def vacuum(
+    db_name: str = typer.Argument(
+        help="Name of the LanceDB database to vacuum",
+    ),
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Write an HMAC-SHA512 signature after vacuuming (requires LANCEDB_HMAC_KEY)",
+    ),
+):
+    """Vacuum a LanceDB database to reclaim space.
+
+    Removes deleted rows and compacts data files in the specified
+    database under the configured lancedb_dir.
+
+    Examples:
+        si-cli vacuum my_database
+        si-cli vacuum my_database --sign
+    """
+    validate_settings(dump=False)
+    asyncio.run(_vacuum(db_name, sign))
+
+
+async def _vacuum(db_name: str, sign: bool):
+    from .lib.rag import vacuum_db
+
+    await vacuum_db(db_name, sign=sign)
+
+
+@app.command("vacuum-all")
+def vacuum_all_cmd(
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Write an HMAC-SHA512 signature after vacuuming each database (requires LANCEDB_HMAC_KEY)",
+    ),
+):
+    """Vacuum every LanceDB database under the configured lancedb_dir.
+
+    Iterates over all database directories and vacuums each one.
+
+    Examples:
+        si-cli vacuum-all
+        si-cli vacuum-all --sign
+    """
+    validate_settings(dump=False)
+    asyncio.run(_vacuum_all(sign))
+
+
+async def _vacuum_all(sign: bool):
+    from .lib.rag import vacuum_all
+
+    await vacuum_all(sign=sign)
+
+
+@app.command("verify-db")
+def verify_db_cmd(
+    db_name: str = typer.Argument(
+        help="Name of the LanceDB database to verify",
+    ),
+):
+    """Verify the HMAC-SHA512 signature of a LanceDB database.
+
+    Compares the stored .hmac file against a freshly computed HMAC
+    over all files in the database directory.
+
+    Examples:
+        si-cli verify-db my_database
+    """
+    validate_settings(dump=False)
+    from .lib.rag import verify_db
+
+    try:
+        verify_db(db_name)
+        print("[bold green]HMAC verification passed[/bold green]")
+    except (FileNotFoundError, ValueError) as e:
+        print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
 
 
 if __name__ == "__main__":

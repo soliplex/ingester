@@ -161,6 +161,36 @@ Python logging level.
 LOG_LEVEL=DEBUG
 ```
 
+#### LOG_FORMAT
+
+Log output format.
+
+**Default:** `text`
+
+**Options:**
+
+- `text` - Human-readable log lines (default Python formatting)
+- `json` - Structured JSON, one object per line
+
+**Example:**
+
+```bash
+LOG_FORMAT=json
+```
+
+**Notes:**
+
+- JSON format emits one JSON object per log line with fields: `timestamp`, `level`, `name`, `message`
+- Any `extra` fields passed to logger calls (e.g., `log.info("msg", extra={"doc_id": 123})`) are included as top-level keys in the JSON output
+- If an exception is attached, it appears in the `exception` field
+- Recommended for production and container environments where logs are consumed by aggregation tools (ELK, Datadog, CloudWatch, etc.)
+
+**JSON output example:**
+
+```json
+{"timestamp": "2026-03-23T14:05:12", "level": "INFO", "name": "soliplex.ingester", "message": "Processing document", "doc_id": 123, "batch_id": "abc"}
+```
+
 ---
 
 ### File Storage
@@ -637,6 +667,7 @@ DOCLING_HTTP_TIMEOUT=600
 
 # Logging
 LOG_LEVEL=INFO
+LOG_FORMAT=text
 
 # Storage
 FILE_STORE_TARGET=fs
@@ -806,6 +837,7 @@ DO_RAG=true
 ```bash
 DOC_DB_URL=postgresql+psycopg://user:pass@prod-db:5432/soliplex
 LOG_LEVEL=WARNING
+LOG_FORMAT=json
 INGEST_WORKER_CONCURRENCY=20
 DOCLING_CONCURRENCY=5
 DOCLING_SERVER_URL=http://docling-prod:5001/v1
@@ -1028,6 +1060,7 @@ env:
 | `DOCLING_CHUNK_SERVER_URL` | str | No | `http://localhost:5001/v1` | Docling chunking service URL |
 | `DOCLING_HTTP_TIMEOUT` | int | No | `600` | Docling timeout (seconds) |
 | `LOG_LEVEL` | str | No | `INFO` | Logging level |
+| `LOG_FORMAT` | str | No | `text` | Log format (`text` or `json`) |
 | `FILE_STORE_TARGET` | str | No | `fs` | Storage backend type |
 | `FILE_STORE_DIR` | str | No | `file_store` | Base storage directory |
 | `LANCEDB_DIR` | str | No | `lancedb` | LanceDB directory (supports S3 URIs) |

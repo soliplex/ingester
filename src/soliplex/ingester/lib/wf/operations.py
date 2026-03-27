@@ -49,16 +49,52 @@ class NotFoundError(Exception):
     pass
 
 
+async def _filter_existing_in_rag(
+    documents: list[Document],
+    param_id: str,
+) -> list[Document]:
+    """Remove documents that already exist in the target RAG DB.
+
+    Resolves the RAG database path from the param set's store config
+    and checks each document's hash against the database metadata.
+    """
+    from soliplex.ingester.lib.rag import check_rag_existence
+
+    param_set = await get_param_set(param_id)
+    store_cfg = param_set.config.get(WorkflowStepType.STORE, {})
+    embed_cfg = param_set.config.get(WorkflowStepType.EMBED, {})
+    if "data_dir" not in store_cfg:
+        logger.warning("skip_existing: no store.data_dir in param set, skipping RAG pre-check")
+        return documents
+
+    all_hashes = [doc.hash for doc in documents]
+    existing = await check_rag_existence(all_hashes, store_cfg, embed_cfg)
+    if existing:
+        filtered = [d for d in documents if d.hash not in existing]
+        logger.info(f"skip_existing: {len(existing)} already in RAG, {len(filtered)} to process")
+        return filtered
+    return documents
+
+
 async def create_workflow_runs_for_batch(
     batch_id: int,
     workflow_definition_id: str,
     priority: int = 0,
     param_id: str | None = None,
     only_unparsed: bool = False,
+    skip_existing: bool = True,
 ) -> tuple[RunGroup, list[WorkflowRun]]:
     """
     Creates a workflow run for each document in a batch
 
+    Args:
+        batch_id: Batch to create runs for.
+        workflow_definition_id: Workflow to use.
+        priority: Run priority.
+        param_id: Parameter set ID.
+        only_unparsed: Only create runs for unparsed documents.
+        skip_existing: Skip documents already present in the
+            target RAG database (default True).
     """
     if only_unparsed:
         if param_id is None:
@@ -78,6 +114,8 @@ async def create_workflow_runs_for_batch(
                 param_id=param_id,
             )
         batch_documents = await get_documents_in_batch(batch_id)
+        if skip_existing and param_id is not None:
+            batch_documents = await _filter_existing_in_rag(batch_documents, param_id)
 
         existing_runs = await get_workflow_runs_for_group(run_group.id)
         existing_ids = set([run.doc_id for run in existing_runs])
@@ -98,6 +136,8 @@ async def create_workflow_runs_for_batch(
             param_id=param_id,
         )
         batch_documents = await get_documents_in_batch(batch_id)
+        if skip_existing and param_id is not None:
+            batch_documents = await _filter_existing_in_rag(batch_documents, param_id)
         runs = []
         for doc in batch_documents:
             run, steps = await create_workflow_run(
@@ -251,6 +291,43 @@ async def get_run_group_stats(run_group_id: int) -> dict[RunStatus, int]:
             stats[row[0]] = row[1]
 
         return stats
+
+
+async def complete_run_group(
+    run_group_id: int,
+    status: RunStatus,
+    status_message: str | None = None,
+) -> None:
+    """
+    Mark a run group as completed.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID to complete
+    status : RunStatus
+        Final status (e.g. COMPLETED or FAILED)
+    status_message : str | None
+        Optional status message
+    """
+    try:
+        dt = datetime.datetime.now(datetime.UTC)
+        async with get_session() as session:
+            q = select(RunGroup).where(RunGroup.id == run_group_id)
+            result = await session.exec(q)
+            rg = result.first()
+            if rg is None:
+                logger.error(f"complete_run_group: run group {run_group_id} not found")
+                return
+            rg.status = status
+            rg.status_date = dt
+            rg.completed_date = dt
+            if status_message is not None:
+                rg.status_message = status_message
+            session.add(rg)
+            await session.commit()
+    except Exception:
+        logger.exception("error in complete_run_group:")
 
 
 async def delete_run_group(run_group_id: int) -> dict[str, int]:
@@ -899,7 +976,13 @@ async def get_step_config_for_workflow_run(workflow_run_id: int, step_type: Work
         return step_config
 
 
-async def update_run_status(workflow_run_id: int, is_last_step: bool, status: RunStatus, session) -> RunStatus:
+async def update_run_status(
+    workflow_run_id: int,
+    is_last_step: bool,
+    status: RunStatus,
+    session,
+    status_message: str | None = None,
+) -> RunStatus:
     update_status = None
     if is_last_step and status == RunStatus.COMPLETED:
         update_status = RunStatus.COMPLETED
@@ -914,11 +997,16 @@ async def update_run_status(workflow_run_id: int, is_last_step: bool, status: Ru
     logger.info(f"update run status {workflow_run_id} {update_status} {status}")
     if update_status is not None:
         dt = datetime.datetime.now(datetime.UTC)
-        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run_id).with_for_update()
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run_id).with_for_update(nowait=True)
         results = await session.exec(q)
         wf = results.first()
+        if wf is None:
+            logger.error(f"update_run_status: workflow run {workflow_run_id} not found")
+            return status
         wf.status_date = dt
         wf.status = update_status
+        if status_message is not None:
+            wf.status_message = status_message
         if status == RunStatus.COMPLETED or status == RunStatus.FAILED:
             wf.completed_date = dt
 
@@ -994,7 +1082,61 @@ async def get_run_steps(status: RunStatus) -> list[RunStep]:
         return res
 
 
-async def get_run_group_durations(run_group_id: int) -> list[tuple]:
+async def get_run_steps_for_run_group(
+    run_group_id: int,
+    status: RunStatus,
+) -> list[dict]:
+    """
+    Get run step details with URI info for a run group,
+    filtered by status.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID to query
+    status : RunStatus
+        The step status to filter on (e.g. RunStatus.FAILED)
+
+    Returns
+    -------
+    list[dict]
+        Each dict contains batch_id, uri, status, step_type,
+        and status_message.
+    """
+    async with get_session() as session:
+        q = (
+            select(
+                DocumentURI.batch_id,
+                DocumentURI.uri,
+                RunStep.status,
+                RunStep.step_type,
+                RunStep.status_message,
+            )
+            .join(
+                WorkflowRun,
+                WorkflowRun.id == RunStep.workflow_run_id,
+            )
+            .join(
+                DocumentURI,
+                (DocumentURI.doc_hash == WorkflowRun.doc_id) & (DocumentURI.batch_id == WorkflowRun.batch_id),
+            )
+            .where(WorkflowRun.run_group_id == run_group_id)
+            .where(RunStep.status == status)
+        )
+        rs = await session.exec(q)
+        return [
+            {
+                "batch_id": row.batch_id,
+                "uri": row.uri,
+                "status": row.status,
+                "step_type": row.step_type,
+                "status_message": row.status_message,
+            }
+            for row in rs.all()
+        ]
+
+
+async def get_run_group_durations(run_group_id: int) -> list[dict]:
     """
     Get duration statistics for a run group.
 
@@ -1008,7 +1150,7 @@ async def get_run_group_durations(run_group_id: int) -> list[tuple]:
 
     Returns
     -------
-    list[tuple]
+    list[dict]
         Duration statistics per step type
 
     Raises
@@ -1061,10 +1203,10 @@ async def get_run_group_durations(run_group_id: int) -> list[tuple]:
         ).group_by(subq.c.step_type)
 
         result = await session.exec(q)
-        return result.all()
+        return [dict(row._mapping) for row in result.all()]
 
 
-async def get_step_stats(run_group_id: int) -> list[tuple]:
+async def get_step_stats(run_group_id: int) -> list[dict]:
     """
     Get step statistics for a run group.
 
@@ -1078,7 +1220,7 @@ async def get_step_stats(run_group_id: int) -> list[tuple]:
 
     Returns
     -------
-    list[tuple]
+    list[dict]
         Statistics per batch, param set, step type, and status
 
     Raises
@@ -1128,7 +1270,7 @@ async def get_step_stats(run_group_id: int) -> list[tuple]:
         )
 
         result = await session.exec(q)
-        return result.all()
+        return [dict(row._mapping) for row in result.all()]
 
 
 async def reset_failed_steps(run_group_id: int) -> None:
@@ -1153,10 +1295,11 @@ async def reset_failed_steps(run_group_id: int) -> None:
             .subquery()
         )
 
-        # Update run steps to PENDING
+        # Update non-completed run steps to PENDING
         q1 = (
             update(RunStep)
             .where(RunStep.workflow_run_id.in_(select(failed_runs_subq.c.id)))
+            .where(RunStep.status != RunStatus.COMPLETED)
             .values(status=RunStatus.PENDING, retry=0)
         )
         result1 = await session.exec(q1)
@@ -1175,3 +1318,315 @@ async def reset_failed_steps(run_group_id: int) -> None:
         await session.commit()
 
         logger.info(f"Reset {reset_steps} steps and {reset_runs} runs for run group {run_group_id}")
+
+
+async def reset_failed(run_group_id: int | None = None) -> None:
+    """
+    Reset all failed steps and workflow runs back to PENDING.
+
+    Sets failed run steps back to PENDING with retry count reset
+    to 0 and worker_id cleared. Sets failed workflow runs back to
+    PENDING.
+
+    Parameters
+    ----------
+    run_group_id : int | None
+        If specified, only reset within this run group.
+        If None, reset all failed steps and runs.
+    """
+    async with get_session() as session:
+        if run_group_id is not None:
+            failed_runs_subq = (
+                select(WorkflowRun.id)
+                .where(WorkflowRun.run_group_id == run_group_id)
+                .where(WorkflowRun.status == RunStatus.FAILED)
+                .subquery()
+            )
+            q1 = (
+                update(RunStep)
+                .where(RunStep.workflow_run_id.in_(select(failed_runs_subq.c.id)))
+                .where(RunStep.status == RunStatus.FAILED)
+                .values(
+                    status=RunStatus.PENDING,
+                    retry=0,
+                    worker_id=None,
+                )
+            )
+            q2 = (
+                update(WorkflowRun)
+                .where(WorkflowRun.run_group_id == run_group_id)
+                .where(WorkflowRun.status == RunStatus.FAILED)
+                .values(status=RunStatus.PENDING)
+            )
+        else:
+            q1 = (
+                update(RunStep)
+                .where(RunStep.status == RunStatus.FAILED)
+                .values(
+                    status=RunStatus.PENDING,
+                    retry=0,
+                    worker_id=None,
+                )
+            )
+            q2 = update(WorkflowRun).where(WorkflowRun.status == RunStatus.FAILED).values(status=RunStatus.PENDING)
+
+        result1 = await session.exec(q1)
+        reset_steps = result1.rowcount  # type: ignore
+        result2 = await session.exec(q2)
+        reset_runs = result2.rowcount  # type: ignore
+
+        await session.commit()
+
+        scope = f"run group {run_group_id}" if run_group_id else "all"
+        logger.info(f"reset_failed: {reset_steps} steps and {reset_runs} runs reset ({scope})")
+
+
+async def get_running_steps_enriched() -> list[dict]:
+    """
+    Get all run steps in RUNNING status with enriched context.
+
+    Joins RunStep with WorkflowRun, DocumentURI, and RunGroup to provide
+    full context for each running step.
+
+    Returns
+    -------
+    list[dict]
+        List of dicts with keys: workflow_run_id, doc_hash, doc_uri,
+        run_group_id, param_definition_id, step_type, start_date,
+        elapsed_seconds
+    """
+    async with get_session() as session:
+        q = (
+            select(
+                RunStep.workflow_run_id,
+                WorkflowRun.doc_id.label("doc_hash"),
+                DocumentURI.uri.label("doc_uri"),
+                WorkflowRun.run_group_id,
+                RunGroup.param_definition_id,
+                RunStep.step_type,
+                RunStep.start_date,
+            )
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .join(RunGroup, RunGroup.id == WorkflowRun.run_group_id)
+            .outerjoin(
+                DocumentURI,
+                (DocumentURI.doc_hash == WorkflowRun.doc_id) & (DocumentURI.batch_id == WorkflowRun.batch_id),
+            )
+            .where(RunStep.status == RunStatus.RUNNING)
+        )
+        result = await session.exec(q)
+        rows = result.all()
+
+        now_aware = datetime.datetime.now(datetime.UTC)
+        now_naive = now_aware.replace(tzinfo=None)
+        enriched = []
+        for row in rows:
+            elapsed = None
+            if row.start_date:
+                sd = row.start_date
+                now = now_aware if sd.tzinfo else now_naive
+                elapsed = (now - sd).total_seconds()
+            enriched.append(
+                {
+                    "workflow_run_id": row.workflow_run_id,
+                    "doc_hash": row.doc_hash,
+                    "doc_uri": row.doc_uri,
+                    "run_group_id": row.run_group_id,
+                    "param_definition_id": row.param_definition_id,
+                    "step_type": row.step_type,
+                    "start_date": row.start_date,
+                    "elapsed_seconds": elapsed,
+                }
+            )
+        return enriched
+
+
+INTERVAL_MAP = {
+    "minute": datetime.timedelta(minutes=1),
+    "hour": datetime.timedelta(hours=1),
+    "day": datetime.timedelta(days=1),
+    "week": datetime.timedelta(weeks=1),
+}
+
+
+async def get_recent_steps(
+    interval: str = "minute",
+    status: RunStatus | None = None,
+) -> list[dict]:
+    """
+    Get run steps with a status_date within a specified interval.
+
+    Joins RunStep with WorkflowRun, DocumentURI, and RunGroup.
+
+    Parameters
+    ----------
+    interval : str
+        One of "minute", "hour", "day", "week"
+    status : RunStatus | None
+        Optional status filter
+
+    Returns
+    -------
+    list[dict]
+        Enriched step data
+
+    Raises
+    ------
+    ValueError
+        If interval is not a recognized value
+    """
+    if interval not in INTERVAL_MAP:
+        raise ValueError(f"Invalid interval '{interval}'. Must be one of: {', '.join(INTERVAL_MAP)}")
+
+    # Use naive datetime for cross-database compatibility (SQLite stores naive)
+    cutoff = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - INTERVAL_MAP[interval]
+
+    async with get_session() as session:
+        q = (
+            select(
+                RunStep.step_type,
+                RunStep.workflow_run_id,
+                WorkflowRun.doc_id.label("doc_hash"),
+                DocumentURI.uri.label("doc_uri"),
+                WorkflowRun.run_group_id,
+                RunGroup.param_definition_id,
+                RunStep.start_date,
+                RunStep.status_date,
+                RunStep.status,
+                RunStep.retry,
+                RunStep.status_message,
+            )
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .join(RunGroup, RunGroup.id == WorkflowRun.run_group_id)
+            .outerjoin(
+                DocumentURI,
+                (DocumentURI.doc_hash == WorkflowRun.doc_id) & (DocumentURI.batch_id == WorkflowRun.batch_id),
+            )
+            .where(RunStep.status_date >= cutoff)
+        )
+        if status is not None:
+            q = q.where(RunStep.status == status)
+
+        q = q.order_by(RunStep.status_date.desc())
+        result = await session.exec(q)
+        rows = result.all()
+
+        now_aware = datetime.datetime.now(datetime.UTC)
+        now_naive = now_aware.replace(tzinfo=None)
+        enriched = []
+        for row in rows:
+            elapsed = None
+            if row.start_date:
+                sd = row.start_date
+                now = now_aware if sd.tzinfo else now_naive
+                elapsed = (now - sd).total_seconds()
+            enriched.append(
+                {
+                    "step_type": row.step_type,
+                    "workflow_run_id": row.workflow_run_id,
+                    "doc_hash": row.doc_hash,
+                    "doc_uri": row.doc_uri,
+                    "run_group_id": row.run_group_id,
+                    "param_definition_id": row.param_definition_id,
+                    "start_date": row.start_date,
+                    "elapsed_seconds": elapsed,
+                    "retry": row.retry,
+                    "status": row.status,
+                    "status_message": row.status_message,
+                }
+            )
+        return enriched
+
+
+async def get_run_group_details(run_group_id: int) -> list[dict]:
+    """
+    Get aggregated step details for a run group.
+
+    **PostgreSQL only** - Uses PostgreSQL-specific JSONB functions
+    via SQLAlchemy for type safety and ORM benefits.
+
+    Parameters
+    ----------
+    run_group_id : int
+        The run group ID
+
+    Returns
+    -------
+    list[dict]
+        Rows with keys: name, param_definition_id, step_type,
+        status, count, pages
+
+    Raises
+    ------
+    RuntimeError
+        If database is not PostgreSQL
+    """
+    from soliplex.ingester.lib.config import get_settings
+
+    settings = get_settings()
+    doc_db_url = (
+        settings.doc_db_url.get_secret_value() if hasattr(settings.doc_db_url, "get_secret_value") else settings.doc_db_url
+    )
+    if "postgresql" not in doc_db_url:
+        raise RuntimeError("get_run_group_details requires PostgreSQL (uses PostgreSQL-specific functions)")
+
+    async with get_session() as session:
+        q = (
+            select(
+                DocumentBatch.name,
+                RunGroup.param_definition_id,
+                RunStep.step_type,
+                RunStep.status,
+                func.count(literal_column("1")).label("count"),
+                func.sum(
+                    cast(
+                        func.jsonb_extract_path_text(cast(Document.doc_meta, JSONB), "page_count"),
+                        Integer,
+                    )
+                ).label("pages"),
+            )
+            .select_from(RunStep)
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .join(DocumentBatch, DocumentBatch.id == WorkflowRun.batch_id)
+            .join(Document, Document.hash == WorkflowRun.doc_id)
+            .join(RunGroup, RunGroup.id == WorkflowRun.run_group_id)
+            .where(RunGroup.id == run_group_id)
+            .where(RunStep.status != RunStatus.PENDING)
+            .group_by(
+                DocumentBatch.name,
+                RunGroup.param_definition_id,
+                RunStep.step_type,
+                RunStep.status,
+            )
+            .order_by(
+                DocumentBatch.name,
+                RunStep.step_type,
+                RunStep.status,
+            )
+        )
+
+        result = await session.exec(q)
+        return [dict(row._mapping) for row in result.all()]
+
+
+async def get_workflow_runs_for_group_with_doc_info(
+    run_group_id: int,
+    status_filter: str | None = None,
+) -> dict:
+    """
+    Get workflow runs for a run group enriched with document info.
+
+    Combines get_workflow_runs_for_group() and get_document_info_for_workflow_runs(),
+    with an optional status filter applied before enrichment.
+
+    Args:
+        run_group_id: The run group ID to query
+        status_filter: Optional status string to filter runs (e.g. "FAILED", "COMPLETED")
+
+    Returns:
+        Dict mapping doc_id -> DocumentInfo for filtered workflow runs
+    """
+    runs = await get_workflow_runs_for_group(run_group_id)
+    if status_filter:
+        runs = [r for r in runs if r.status.value == status_filter.upper()]
+    return await get_document_info_for_workflow_runs(runs)

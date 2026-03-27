@@ -74,12 +74,15 @@ def guess_extension(mime_type: str) -> str:
     return guess
 
 
-def _extract_hash_value(prefixed_hash: str) -> str:
+def _extract_hash_value(prefixed_hash: str | None) -> str:
     """Extract hash value from prefixed format.
 
     Handles formats like 'sha256-abc123' or 'md5:abc123', returning just the hash portion.
     Returns the original string if no prefix separator is found.
+    Returns empty string for None or non-string input.
     """
+    if not prefixed_hash or not isinstance(prefixed_hash, str):
+        return ""
     if "-" in prefixed_hash:
         return prefixed_hash.split("-", 1)[1]
     if ":" in prefixed_hash:
@@ -111,6 +114,35 @@ async def find_document_uri(uri: str, source: str) -> models.DocumentURI:
         res = exec_rs.first()
         if res:
             session.expunge(res)
+        return res
+
+
+async def find_document_uris_by_pattern(pattern: str) -> list[models.DocumentURI]:
+    """Find DocumentURI records whose uri matches a pattern (case-insensitive).
+
+    Uses SQL ILIKE for case-insensitive pattern matching with
+    '%pattern%' wildcards.
+
+    Parameters
+    ----------
+    pattern : str
+        Substring to search for in DocumentURI.uri
+
+    Returns
+    -------
+    list[models.DocumentURI]
+        Matching DocumentURI records
+    """
+    logger.debug(
+        f"find document uris by pattern {pattern}",
+        extra=log_context(action="find_document_uris_by_pattern"),
+    )
+    async with models.get_session() as session:
+        q = select(models.DocumentURI).where(models.DocumentURI.uri.ilike(f"%{pattern}%"))
+        rs = await session.exec(q)
+        res = rs.all()
+        for item in res:
+            session.expunge(item)
         return res
 
 
@@ -216,7 +248,8 @@ async def delete_file(doc_hash: str, session):
     step_configs = result.all()
 
     for step_config in step_configs:
-        for artifact_type in models.ArtifactType:
+        valid_types = models.ARTIFACTS_FROM_STEPS.get(step_config.step_type, [])
+        for artifact_type in valid_types:
             op = dal.get_storage_operator(artifact_type, step_config)
             try:
                 await op.delete(doc_hash)
@@ -283,6 +316,13 @@ async def create_document_from_uri(
                     source=source,
                 ),
             )
+            # Merge incoming metadata into existing doc_meta
+            existing_meta = dict(existdoc.doc_meta or {})
+            merged = {**existing_meta, **doc_meta}
+            if merged != existing_meta:
+                existdoc.doc_meta = merged
+                session.add(existdoc)
+                await session.flush()
             doc = existdoc
         else:
             session.add(doc)
@@ -357,6 +397,7 @@ async def get_document_uri_history(
 
 async def update_doc_status(source: str, uri_hashes: dict[str, str]):
     status, to_delete = await get_doc_status(source, uri_hashes)
+    deleted_count = 0
     logger.info(
         f" found {len(to_delete)} to delete for {source}",
         extra=log_context(action="update_doc_status", source=source),
@@ -370,7 +411,8 @@ async def update_doc_status(source: str, uri_hashes: dict[str, str]):
             uri = await find_document_uri(row["uri"], source)
             if uri:
                 await delete_document_uri(uri.id, session)
-    return status
+                deleted_count += 1
+    return status, deleted_count
 
 
 async def get_uris_for_source(source: str) -> list[models.DocumentURI]:
@@ -387,17 +429,58 @@ async def get_uris_for_source(source: str) -> list[models.DocumentURI]:
         return res
 
 
-async def get_doc_status(source: str, source_hashes: dict[str, str]):
+async def get_doc_status(source: str, source_hashes: dict):
     stored_uris = await get_uris_for_source(source)
     stored_dict = {x.uri: x.doc_hash for x in stored_uris}
+
+    # Batch-load Documents so we can check doc_meta ETags
+    doc_hashes_needed = set(stored_dict.values())
+    docs_by_hash: dict[str, models.Document] = {}
+    if doc_hashes_needed:
+        async with models.get_session() as session:
+            q = select(models.Document).where(models.Document.hash.in_(doc_hashes_needed))
+            rs = await session.exec(q)
+            for doc in rs.all():
+                session.expunge(doc)
+                docs_by_hash[doc.hash] = doc
+
     to_remove = []
     res = {}
-    for source_uri, source_hash in source_hashes.items():
+    for source_uri, source_info in source_hashes.items():
+        # Backward compat: old format is plain string, new is dict
+        if isinstance(source_info, str):
+            source_sha = source_info
+            source_etag = ""
+        else:
+            source_sha = source_info.get("sha256", "")
+            source_etag = source_info.get("etag", "")
+
         if source_uri in stored_dict:
-            extracted_source_hash = _extract_hash_value(source_hash)
-            stored_hash = _extract_hash_value(stored_dict[source_uri])
-            if extracted_source_hash == stored_hash:
-                res[source_uri] = {"hash": extracted_source_hash, "status": "matched"}
+            stored_doc_hash = stored_dict[source_uri]
+            stored_hash = _extract_hash_value(stored_doc_hash)
+            extracted_source_hash = _extract_hash_value(source_sha)
+
+            # Check 1: SHA256 match
+            if extracted_source_hash and extracted_source_hash == stored_hash:
+                res[source_uri] = {
+                    "hash": extracted_source_hash,
+                    "status": "matched",
+                }
+            # Check 2: ETag fallback
+            elif source_etag and stored_doc_hash in docs_by_hash:
+                stored_doc = docs_by_hash[stored_doc_hash]
+                stored_etag = (stored_doc.doc_meta or {}).get("_etag")
+                if stored_etag and stored_etag == source_etag:
+                    res[source_uri] = {
+                        "hash": stored_hash,
+                        "status": "matched",
+                    }
+                else:
+                    res[source_uri] = {
+                        "source_hash": extracted_source_hash,
+                        "stored_hash": stored_hash,
+                        "status": "mismatch",
+                    }
             else:
                 res[source_uri] = {
                     "source_hash": extracted_source_hash,
@@ -406,7 +489,10 @@ async def get_doc_status(source: str, source_hashes: dict[str, str]):
                 }
             del stored_dict[source_uri]
         else:
-            res[source_uri] = {"hash": source_hash, "status": "new"}
+            res[source_uri] = {
+                "hash": source_sha or source_etag,
+                "status": "new",
+            }
     for uri, doc_hash in stored_dict.items():
         if uri not in source_hashes:
             to_remove.append({"uri": uri, "hash": doc_hash, "status": "deleted"})
@@ -516,6 +602,8 @@ async def delete_document_uri(doc_uri_id: int, session) -> models.DocumentURI:
     rs = await session.exec(q)
     res = rs.first()
     if res:
+        history_q = delete(models.DocumentURIHistory).where(models.DocumentURIHistory.doc_uri_id == doc_uri_id)
+        await session.exec(history_q)
         await session.delete(res)
         await delete_document(res.doc_hash, session, raise_on_error=False)
         await session.flush()
@@ -966,3 +1054,59 @@ async def delete_documents_by_hashes(doc_hashes: list[str]) -> dict[str, int]:
                 + deleted_lifecycle_history
             ),
         }
+
+
+async def get_document_with_uris(doc_hash: str) -> dict | None:
+    """Return document metadata and all associated DocumentURI records.
+
+    Combines get_document() and get_document_uris_by_hash() into a single
+    call. Returns None if the document does not exist.
+
+    Used by: si-diag document info <hash> and GET /api/v1/document/{doc_hash}.
+
+    Parameters
+    ----------
+    doc_hash : str
+        SHA256 document hash (e.g. "sha256-abc123...")
+
+    Returns
+    -------
+    dict | None
+        {"document": {...}, "uris": [...]} or None if not found
+    """
+    try:
+        doc = await get_document(doc_hash)
+    except DocumentNotFoundError:
+        return None
+    uris = await get_document_uris_by_hash(doc_hash)
+    return {"document": doc.model_dump(), "uris": [u.model_dump() for u in uris]}
+
+
+async def get_document_uri_history_by_hash(doc_hash: str) -> list[dict] | None:
+    """Return the full URI change history for all URIs associated with a document.
+
+    Combines get_document_uris_by_hash() and get_document_uri_history() for
+    all URI records belonging to the document. Returns None if the document
+    has no URI records.
+
+    Used by: si-diag document history <hash> and
+    GET /api/v1/document/{doc_hash}/history.
+
+    Parameters
+    ----------
+    doc_hash : str
+        SHA256 document hash (e.g. "sha256-abc123...")
+
+    Returns
+    -------
+    list[dict] | None
+        Flat list of DocumentURIHistory records as dicts, or None if no URIs found
+    """
+    uris = await get_document_uris_by_hash(doc_hash)
+    if not uris:
+        return None
+    history: list[dict] = []
+    for uri in uris:
+        uri_history = await get_document_uri_history(uri.id)
+        history.extend([h.model_dump() for h in uri_history])
+    return history

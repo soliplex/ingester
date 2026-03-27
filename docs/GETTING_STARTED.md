@@ -70,15 +70,16 @@ uv add https://github.com/soliplex/ingester.git
 uv run si-cli bootstrap
 ```
 
-This installs the package and makes the `si-cli` command available.
+This installs the package and makes the `si-cli` and `si-diag` commands available.
 
 ### 2. Verify Installation
 
 ```bash
 si-cli --help
+si-diag --help
 ```
 
-You should see the CLI help menu.
+You should see the CLI help menus.
 
 ## Configuration
 
@@ -369,6 +370,17 @@ Each worker processes steps independently, increasing throughput.
 
 ### Monitor System
 
+**Using si-diag (recommended):**
+
+```bash
+si-diag batch list                       # List all batches
+si-diag status running                   # Currently running steps
+si-diag status recent hour               # Recent activity
+si-diag run-group list --batch-id 1      # Run groups for a batch
+si-diag workflow list 1                  # Workflow runs in a run group
+si-diag document find "sample.pdf"       # Search documents by URI
+```
+
 **API Documentation:**
 Browse to <http://localhost:8000/docs> for interactive API docs.
 
@@ -610,7 +622,7 @@ docker-compose up -d
 - [Workflow System](WORKFLOWS.md) - Workflow concepts and configuration
 - [Database Schema](DATABASE.md) - Data models and relationships
 - [Configuration](CONFIGURATION.md) - Environment variables and settings
-- [CLI Reference](CLI.md) - Command-line interface guide
+- [CLI Reference](CLI.md) - Command-line interface guide (si-cli and si-diag)
 
 ### Examples
 

@@ -169,8 +169,9 @@ async def test_status(db):
     assert len(status3) == 1
     assert len(to_delete3) == 1
 
-    status4 = await operations.update_doc_status(test_source, hashes3)
-    logger.info(f"status4={status4}")
+    status4, deleted_count = await operations.update_doc_status(test_source, hashes3)
+    logger.info(f"status4={status4} deleted_count={deleted_count}")
+    assert deleted_count == 1
 
 
 @pytest.mark.asyncio
@@ -638,6 +639,139 @@ def test_extract_hash_value_no_separator():
     assert result == "abc123def456"
 
 
+def test_extract_hash_value_none():
+    """Test _extract_hash_value with None returns empty string"""
+    assert operations._extract_hash_value(None) == ""
+
+
+def test_extract_hash_value_empty():
+    """Test _extract_hash_value with empty string returns empty string"""
+    assert operations._extract_hash_value("") == ""
+
+
+def test_extract_hash_value_dict():
+    """Test _extract_hash_value with dict returns empty string"""
+    assert operations._extract_hash_value({"sha256": "abc", "etag": "def"}) == ""
+
+
+# --- get_doc_status ---
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_sha256_match(db):
+    """Test get_doc_status matches on SHA256 hash."""
+    uri, doc = await operations.create_document_from_uri(
+        "/docs/a.md",
+        "src",
+        "text/markdown",
+        b"hello",
+    )
+    hashes = {"/docs/a.md": {"sha256": doc.hash, "etag": ""}}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/a.md"]["status"] == "matched"
+    assert to_remove == []
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_etag_fallback(db):
+    """Test get_doc_status matches on ETag when SHA256 is empty."""
+    uri, doc = await operations.create_document_from_uri(
+        "/docs/b.md",
+        "src",
+        "text/markdown",
+        b"world",
+        doc_meta={"_etag": '"etag123"'},
+    )
+    # Send empty SHA256 but matching ETag
+    hashes = {"/docs/b.md": {"sha256": "", "etag": '"etag123"'}}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/b.md"]["status"] == "matched"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_etag_mismatch(db):
+    """Test get_doc_status returns mismatch when both SHA256 and ETag differ."""
+    uri, doc = await operations.create_document_from_uri(
+        "/docs/c.md",
+        "src",
+        "text/markdown",
+        b"content",
+        doc_meta={"_etag": '"old_etag"'},
+    )
+    hashes = {"/docs/c.md": {"sha256": "", "etag": '"new_etag"'}}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/c.md"]["status"] == "mismatch"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_new_file(db):
+    """Test get_doc_status returns new for unknown URIs."""
+    hashes = {"/docs/new.md": {"sha256": "abc", "etag": ""}}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/new.md"]["status"] == "new"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_backward_compat_string(db):
+    """Test get_doc_status handles old string-format payload."""
+    uri, doc = await operations.create_document_from_uri(
+        "/docs/d.md",
+        "src",
+        "text/markdown",
+        b"data",
+    )
+    # Old format: plain string SHA256
+    hashes = {"/docs/d.md": doc.hash}
+    res, to_remove = await operations.get_doc_status("src", hashes)
+    assert res["/docs/d.md"]["status"] == "matched"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_status_deleted(db):
+    """Test get_doc_status identifies deleted files."""
+    await operations.create_document_from_uri(
+        "/docs/e.md",
+        "src",
+        "text/markdown",
+        b"data",
+    )
+    # Source sends empty hashes — all stored URIs are deleted
+    res, to_remove = await operations.get_doc_status("src", {})
+    assert len(to_remove) == 1
+    assert to_remove[0]["uri"] == "/docs/e.md"
+    assert to_remove[0]["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_create_document_merges_metadata_into_existing(db):
+    """Test that re-ingesting merges all metadata into existing doc_meta."""
+    content = b"identical content"
+    uri1, doc1 = await operations.create_document_from_uri(
+        "/docs/f.md",
+        "src",
+        "text/markdown",
+        content,
+    )
+    original_md5 = doc1.doc_meta.get("md5")
+    assert doc1.doc_meta.get("_etag") is None
+    assert doc1.doc_meta.get("custom") is None
+
+    # Re-ingest same content with new metadata
+    uri2, doc2 = await operations.create_document_from_uri(
+        "/docs/f2.md",
+        "src",
+        "text/markdown",
+        content,
+        doc_meta={"_etag": '"new_etag"', "custom": "value"},
+    )
+    assert doc2.hash == doc1.hash
+    # New keys merged in
+    assert doc2.doc_meta.get("_etag") == '"new_etag"'
+    assert doc2.doc_meta.get("custom") == "value"
+    # Original keys preserved
+    assert doc2.doc_meta.get("md5") == original_md5
+
+
 @pytest.mark.asyncio
 async def test_add_history_for_hash_with_hist_meta(db):
     """Test add_history_for_hash with hist_meta provided"""
@@ -882,5 +1016,60 @@ async def test_update_doc_status_uri_not_found(db):
     with patch("soliplex.ingester.lib.operations.find_document_uri", side_effect=mock_find):
         # This path is hard to test because find_document_uri is also called internally
         # Let's just verify update_doc_status runs without error
-        status = await operations.update_doc_status(test_source, hashes)
+        status, deleted_count = await operations.update_doc_status(test_source, hashes)
         assert status is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_file_only_valid_artifact_types(db):
+    """Test delete_file only tries artifact types valid for each step config.
+
+    Regression test: delete_file previously iterated over ALL ArtifactType
+    values for each step config, causing ValueError when e.g. a 'chunk'
+    step was asked for a 'document' artifact.
+    """
+    batch_id = await operations.new_batch("test_source", "Test Batch")
+    test_uri = "/tmp/test_valid_artifacts.pdf"
+    test_bytes = b"test bytes for artifact check"
+
+    uri1, doc1 = await operations.create_document_from_uri(
+        test_uri,
+        "test_source",
+        "application/pdf",
+        test_bytes,
+        batch_id=batch_id,
+    )
+
+    workflow_run, steps = await wf_ops.create_single_workflow_run(
+        workflow_definition_id="batch",
+        doc_id=doc1.hash,
+        priority=1,
+        param_id="test_base",
+    )
+
+    called_pairs = []
+
+    def tracking_get_op(artifact_type, step_config=None):
+        # Capture step_type eagerly while still bound to session
+        step_type = step_config.step_type if step_config else None
+        called_pairs.append((artifact_type, step_type))
+        mock_op = AsyncMock()
+        mock_op.delete = AsyncMock()
+        return mock_op
+
+    with patch(
+        "soliplex.ingester.lib.operations.dal.get_storage_operator",
+        side_effect=tracking_get_op,
+    ):
+        with patch(
+            "soliplex.ingester.lib.operations.add_history_for_hash",
+        ):
+            async with models.get_session() as session:
+                await operations.delete_file(doc1.hash, session)
+
+    # Verify every call used a valid artifact type for its step type
+    assert len(called_pairs) > 0, "Expected at least one storage op call"
+    for artifact_type, step_type in called_pairs:
+        assert step_type is not None
+        valid = models.ARTIFACTS_FROM_STEPS[step_type]
+        assert artifact_type in valid, f"Artifact {artifact_type} invalid for step {step_type} (valid: {valid})"

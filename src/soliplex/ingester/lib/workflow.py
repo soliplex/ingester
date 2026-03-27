@@ -109,31 +109,32 @@ async def validate_document(
     else:
         raise doc_ops.DocumentNotFoundError(doc_hash)
     meta = doc.doc_meta
-    if "is_valid" not in meta:
-        # need to do validation
-        if doc.mime_type == "application/pdf":
-            try:
-                file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
-                fp = BytesIO(file_bytes)
-                del file_bytes
-                pdfdoc = pypdf.PdfReader(fp)
-                fp.close()
-                meta["is_valid"] = True
-                meta["invalid_reason"] = None
-                meta["page_count"] = len(pdfdoc.pages)
-                for k in ["/Author", "/Subject", "/Title", "/Keywords", "/Subject"]:
+
+    if doc.mime_type == "application/pdf":
+        try:
+            file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
+            fp = BytesIO(file_bytes)
+
+            pdfdoc = pypdf.PdfReader(fp)
+            meta["is_valid"] = True
+            meta["invalid_reason"] = None
+            meta["page_count"] = len(pdfdoc.pages)
+            for k in ["/Author", "/Subject", "/Title", "/Keywords", "/Subject"]:
+                if pdfdoc.metadata:
                     v = pdfdoc.metadata.get(k)
                     if v is not None:
                         cleaned_key = "pdf_" + k.lower().replace("/", "")
                         meta[cleaned_key] = v
-                del pdfdoc
-            except Exception as e:
-                meta["is_valid"] = False
-                meta["invalid_reason"] = str(e)
-            await doc_ops.update_doc_meta(doc_hash, meta)
-        else:
-            # no validation methods for other stuff at this point
-            meta["is_valid"] = True
+            fp.close()
+            del file_bytes
+            del pdfdoc
+        except Exception as e:
+            meta["is_valid"] = False
+            meta["invalid_reason"] = str(e)
+        await doc_ops.update_doc_meta(doc_hash, meta)
+    else:
+        # no validation methods for other stuff at this point
+        meta["is_valid"] = True
 
     if not meta["is_valid"]:
         msg = f"{doc_hash} invalid: {meta['invalid_reason']}"
@@ -156,12 +157,29 @@ async def split_parse_document(
     workflow_run: models.WorkflowRun = None,
     force: bool = False,
     file_bytes_override: bytes = None,
+    mime_type_override: str = None,
+    markdown_override: str = None,
 ):
     """
     splits document into pieces using pdf_splitter , parses each piece then combines the results
-    into one docling document.stores markdown and docling json documents to storage.  if the document isn't a pdf,
-    it delegates to the single-piece pipeline
+    into one docling document.  stores markdown and docling json documents to storage.
+    if the document isn't a pdf, it delegates to the single-piece pipeline.
+    if file_bytes_override is provided, it will be used instead of reading from storage.
+    If markdown_override is provided, it will be used instead of using the generated markdown.
+    This works around issues with docling
 
+    Args:
+        batch_id (int): batch id
+        doc_hash (str): document hash
+        source (str): source of document
+        step_config (StepConfig): step config
+        workflow_run (models.WorkflowRun): workflow run
+        file_bytes_override (bytes): file bytes to override
+        mime_type_override (str): mime type to override
+        markdown_override (str): markdown override for parsed md
+
+    Returns:
+        None
     """
     from pdf_splitter.processor import BatchProcessor
     from pdf_splitter.reassembly import merge_from_results
@@ -199,6 +217,8 @@ async def split_parse_document(
             step_config=step_config,
             workflow_run=workflow_run,
             file_bytes_override=file_bytes_override,
+            mime_type_override=mime_type_override,
+            markdown_override=markdown_override,
         )
         return
 
@@ -231,19 +251,24 @@ async def split_parse_document(
             if use_serve:
                 logger.info(f"parse_document {doc_hash} using serve")
 
+                # Limit concurrent conversions to avoid holding all
+                # chunk bytes + conversion state in memory at once.
+                _convert_sem = asyncio.Semaphore(2)
+
                 async def _read_and_convert(split_path):
-                    fb = await read_file(split_path)
-                    result = await docling_convert(
-                        fb,
-                        doc.mime_type,
-                        source_uri=source_uri,
-                        config_dict=step_config.config_json,
-                    )
-                    del fb
-                    return {
-                        "success": True,
-                        "document_dict": json.loads(result["json"].decode("utf-8 ")),
-                    }
+                    async with _convert_sem:
+                        fb = await read_file(split_path)
+                        result = await docling_convert(
+                            fb,
+                            doc.mime_type,
+                            source_uri=source_uri,
+                            config_dict=step_config.config_json,
+                        )
+                        del fb
+                        return {
+                            "success": True,
+                            "document_dict": json.loads(result["json"].decode("utf-8 ")),
+                        }
 
                 proc_results = await asyncio.gather(*[_read_and_convert(sp) for sp in split_files])
 
@@ -286,11 +311,28 @@ async def parse_document(
     step_config: StepConfig = None,
     workflow_run: models.WorkflowRun = None,
     file_bytes_override: bytes = None,
+    mime_type_override: str = None,
+    markdown_override: str = None,
 ):
     """
     parses document using docling  as one piece.  stores markdown and docling json documents to storage
-    if file_bytes_override is provided, it will be used instead of reading from storage
+    if file_bytes_override is provided, it will be used instead of reading from storage.
+    If markdown_override is provided, it will be used instead of using the generated markdown.
+    This works around issues with docling
 
+    Args:
+        batch_id (int): batch id
+        doc_hash (str): document hash
+        source (str): source of document
+        force (bool): force the parse even if it already exists
+        step_config (StepConfig): step config
+        workflow_run (models.WorkflowRun): workflow run
+        file_bytes_override (bytes): file bytes to override
+        mime_type_override (str): mime type to override
+        markdown_override (str): markdown override for parsed md
+
+    Returns:
+        None
     """
     logger.info(f"parse_document started  {source} {batch_id} {doc_hash}")
 
@@ -314,16 +356,20 @@ async def parse_document(
             file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
         else:
             file_bytes = file_bytes_override
-
+        # mime_type_override allows overriding mime type by pre-processors such as asciidoc or plantnuml
+        mime_type = mime_type_override if mime_type_override is not None else doc.mime_type
         parsed = await docling_convert(
             file_bytes,
-            doc.mime_type,
+            mime_type,
             source_uri=source_uri,
             config_dict=step_config.config_json,
         )
         if parsed:
             for fmt, content in parsed.items():
                 st = ArtifactType.PARSED_JSON if fmt == "json" else ArtifactType.PARSED_MD
+                if st == ArtifactType.PARSED_MD and markdown_override is not None:
+                    logger.info(f"using markdown override for {mime_type} /{doc_hash}")
+                    content = markdown_override
                 op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, st)
                 if force:
                     try:

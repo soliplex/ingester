@@ -187,7 +187,7 @@ async def get_workflow_def(workflow_id: str, response: Response):
 
 @wf_router.get("/param-sets", summary="get param sets")
 async def list_params():
-    wf = await wf_registry.load_param_registry()
+    wf = await wf_registry.load_param_registry(force_reload=True)
     res = [{"id": x.id, "name": x.name, "source": x.source} for x in wf.values()]
     return res
 
@@ -197,6 +197,16 @@ async def get_param_set(set_id: str, response: Response):
     yaml_content = await wf_registry.get_param_set_yaml_content(set_id)
     if yaml_content is not None:
         return Response(content=yaml_content, media_type="text/yaml")
+    else:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"error": f"param set {set_id} not found"}
+
+
+@wf_router.get("/param-sets2/{set_id}", summary="get param set by id")
+async def get_param_set2(set_id: str, response: Response):
+    content = await wf_registry.get_param_set(set_id)
+    if content is not None:
+        return content
     else:
         response.status_code = status.HTTP_404_NOT_FOUND
         return {"error": f"param set {set_id} not found"}

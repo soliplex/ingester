@@ -1,5 +1,7 @@
 import json
 import logging
+import logging.handlers
+import time
 from datetime import UTC
 from datetime import datetime
 from enum import StrEnum
@@ -10,6 +12,8 @@ from pydantic import SecretStr
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class ProtectionLevel(StrEnum):
@@ -39,6 +43,18 @@ class Settings(BaseSettings):
     docling_http_timeout: int = 600
     log_level: str = "INFO"
     log_format: str = "{name}|{asctime}|{levelname}|{message}"
+
+    # SMTP email alert settings (handler only added when smtp_host is set)
+    smtp_host: str | None = None
+    smtp_port: int = 25
+    smtp_from: str | None = None
+    smtp_to: list[str] | None = None
+    smtp_subject: str = "Soliplex Ingester Log Alert"
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_use_tls: bool = False
+    smtp_log_level: str = "ERROR"
+    smtp_cooldown: int = 30
     file_store_target: str = "fs"
     file_store_dir: str = "file_store"
     file_protection_level: ProtectionLevel = ProtectionLevel.NONE
@@ -160,6 +176,62 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(obj, default=str)
 
 
+class _ThrottledSMTPHandler(logging.handlers.SMTPHandler):
+    """SMTPHandler that suppresses emails within a cooldown period."""
+
+    def __init__(self, *args, cooldown: int = 30, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cooldown = cooldown
+        self._last_emit: float = 0
+
+    def emit(self, record):
+        now = time.monotonic()
+        if now - self._last_emit < self._cooldown:
+            return
+        self._last_emit = now
+        super().emit(record)
+
+
+def _add_smtp_handler(settings: Settings) -> None:
+    """Attach an SMTPHandler to the root logger if SMTP settings are configured."""
+    if not (settings.smtp_host and settings.smtp_from and settings.smtp_to):
+        return
+    try:
+        credentials = None
+        if settings.smtp_username and settings.smtp_password:
+            credentials = (
+                settings.smtp_username,
+                settings.smtp_password.get_secret_value(),
+            )
+        secure = () if settings.smtp_use_tls else None
+        handler = _ThrottledSMTPHandler(
+            mailhost=(settings.smtp_host, settings.smtp_port),
+            fromaddr=settings.smtp_from,
+            toaddrs=settings.smtp_to,
+            subject=settings.smtp_subject,
+            credentials=credentials,
+            secure=secure,
+            cooldown=settings.smtp_cooldown,
+        )
+        handler.setLevel(settings.smtp_log_level)
+        if settings.log_format == "json":
+            handler.setFormatter(JsonFormatter())
+        else:
+            handler.setFormatter(
+                logging.Formatter(
+                    fmt=settings.log_format,
+                    datefmt="%Y-%m-%dT%H:%M:%S",
+                    style="{",
+                )
+            )
+        logging.getLogger().addHandler(handler)
+    except Exception:
+        logger.warning(
+            "Failed to configure SMTP log handler",
+            exc_info=True,
+        )
+
+
 def configure_logging(settings: Settings) -> None:
     """Configure the root logger from *settings*.
 
@@ -184,3 +256,4 @@ def configure_logging(settings: Settings) -> None:
 
     root.handlers.clear()
     root.addHandler(handler)
+    _add_smtp_handler(settings)

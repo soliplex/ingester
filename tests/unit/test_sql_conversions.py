@@ -580,6 +580,302 @@ async def test_reset_failed_steps_no_failed_runs(db):
 
 
 # ============================================================================
+# Tests for reset_failed() - hard reset
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_hard_resets_all_non_completed(db):
+    """Hard reset sets every non-COMPLETED step to PENDING."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/hard_reset.pdf",
+        "test_source",
+        "application/pdf",
+        b"hard reset content",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+
+    # Set steps to a mix of statuses
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        statuses = [
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.RUNNING,
+            RunStatus.ERROR,
+        ]
+        for i, step in enumerate(steps[: len(statuses)]):
+            q = select(RunStep).where(RunStep.id == step.id)
+            result = await session.exec(q)
+            s = result.first()
+            s.status = statuses[i]
+            s.retry = 2
+            s.worker_id = "old-worker"
+            session.add(s)
+
+        q = select(WorkflowRun).where(
+            WorkflowRun.id == workflow_run.id,
+        )
+        result = await session.exec(q)
+        run = result.first()
+        run.status = RunStatus.FAILED
+        session.add(run)
+        await session.commit()
+
+    await wf_ops.reset_failed(run_group_id=run_group.id, hard=True)
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        for step in steps[: len(statuses)]:
+            q = select(RunStep).where(RunStep.id == step.id)
+            result = await session.exec(q)
+            s = result.first()
+            if statuses[steps.index(step)] == RunStatus.COMPLETED:
+                # COMPLETED steps are untouched
+                assert s.status == RunStatus.COMPLETED
+            else:
+                assert s.status == RunStatus.PENDING
+                assert s.retry == 0
+                assert s.worker_id is None
+
+        q = select(WorkflowRun).where(
+            WorkflowRun.id == workflow_run.id,
+        )
+        result = await session.exec(q)
+        run = result.first()
+        assert run.status == RunStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_hard_global(db):
+    """Hard reset without run_group_id resets all non-COMPLETED."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/hard_global.pdf",
+        "test_source",
+        "application/pdf",
+        b"hard global content",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        # Mark first step FAILED, second RUNNING
+        for i, status in enumerate(
+            [RunStatus.FAILED, RunStatus.RUNNING],
+        ):
+            q = select(RunStep).where(RunStep.id == steps[i].id)
+            result = await session.exec(q)
+            s = result.first()
+            s.status = status
+            s.retry = 1
+            s.worker_id = "w"
+            session.add(s)
+
+        q = select(WorkflowRun).where(
+            WorkflowRun.id == workflow_run.id,
+        )
+        result = await session.exec(q)
+        run = result.first()
+        run.status = RunStatus.RUNNING
+        session.add(run)
+        await session.commit()
+
+    await wf_ops.reset_failed(hard=True)
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        for step in steps[:2]:
+            q = select(RunStep).where(RunStep.id == step.id)
+            result = await session.exec(q)
+            s = result.first()
+            assert s.status == RunStatus.PENDING
+            assert s.retry == 0
+            assert s.worker_id is None
+
+        q = select(WorkflowRun).where(
+            WorkflowRun.id == workflow_run.id,
+        )
+        result = await session.exec(q)
+        run = result.first()
+        assert run.status == RunStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_hard_preserves_completed(db):
+    """Hard reset never touches COMPLETED steps or runs."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/hard_completed.pdf",
+        "test_source",
+        "application/pdf",
+        b"completed content",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        # Mark all steps and run as COMPLETED
+        for step in steps:
+            q = select(RunStep).where(RunStep.id == step.id)
+            result = await session.exec(q)
+            s = result.first()
+            s.status = RunStatus.COMPLETED
+            session.add(s)
+
+        q = select(WorkflowRun).where(
+            WorkflowRun.id == workflow_run.id,
+        )
+        result = await session.exec(q)
+        run = result.first()
+        run.status = RunStatus.COMPLETED
+        session.add(run)
+        await session.commit()
+
+    await wf_ops.reset_failed(run_group_id=run_group.id, hard=True)
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        for step in steps:
+            q = select(RunStep).where(RunStep.id == step.id)
+            result = await session.exec(q)
+            s = result.first()
+            assert s.status == RunStatus.COMPLETED
+
+        q = select(WorkflowRun).where(
+            WorkflowRun.id == workflow_run.id,
+        )
+        result = await session.exec(q)
+        run = result.first()
+        assert run.status == RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_soft_ignores_non_failed(db):
+    """Default (soft) reset only touches FAILED, not RUNNING/ERROR."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/soft_reset.pdf",
+        "test_source",
+        "application/pdf",
+        b"soft reset content",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        # Step 0: RUNNING, Step 1: ERROR — neither should be reset
+        for i, status in enumerate(
+            [RunStatus.RUNNING, RunStatus.ERROR],
+        ):
+            q = select(RunStep).where(RunStep.id == steps[i].id)
+            result = await session.exec(q)
+            s = result.first()
+            s.status = status
+            s.worker_id = "w"
+            session.add(s)
+
+        q = select(WorkflowRun).where(
+            WorkflowRun.id == workflow_run.id,
+        )
+        result = await session.exec(q)
+        run = result.first()
+        run.status = RunStatus.RUNNING
+        session.add(run)
+        await session.commit()
+
+    await wf_ops.reset_failed(run_group_id=run_group.id, hard=False)
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        q = select(RunStep).where(RunStep.id == steps[0].id)
+        result = await session.exec(q)
+        s = result.first()
+        assert s.status == RunStatus.RUNNING
+
+        q = select(RunStep).where(RunStep.id == steps[1].id)
+        result = await session.exec(q)
+        s = result.first()
+        assert s.status == RunStatus.ERROR
+
+        q = select(WorkflowRun).where(
+            WorkflowRun.id == workflow_run.id,
+        )
+        result = await session.exec(q)
+        run = result.first()
+        assert run.status == RunStatus.RUNNING
+
+
+# ============================================================================
 # Tests for get_run_group_stats() - Additional edge cases
 # ============================================================================
 

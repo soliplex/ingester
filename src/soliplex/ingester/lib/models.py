@@ -70,8 +70,10 @@ class Database:
             task_count = settings.worker_task_count
             pool_kwargs = {
                 "pool_size": task_count * 2 + 10,
-                "max_overflow": 5,
-                "pool_timeout": 10,
+                "max_overflow": 25,
+                "pool_timeout": 120,
+                "pool_pre_ping": True,
+                "pool_recycle": 1800,
             }
 
         cls._engine = create_async_engine(
@@ -328,6 +330,7 @@ class RunStatus(StrEnum):
     COMPLETED = "COMPLETED"  # success
     ERROR = "ERROR"  # failed but stil retrying
     FAILED = "FAILED"  # gave up
+    CANCELLED = "CANCELLED"  # cancelled subsequent steps
 
 
 class RunGroup(SQLModel, table=True):

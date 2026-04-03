@@ -398,6 +398,26 @@ async def parse_document(
                     except FileNotFoundError:
                         pass
                 await op.write(doc_hash, content)
+            for artifact_type in (
+                ArtifactType.PARSED_JSON,
+                ArtifactType.PARSED_MD,
+            ):
+                check_op = await _get_op(
+                    workflow_run.id,
+                    WorkflowStepType.PARSE,
+                    artifact_type,
+                )
+                if not await check_op.exists(doc_hash):
+                    msg = f"parse {doc_hash}: artifact {artifact_type} missing after write"
+                    logger.error(
+                        msg,
+                        extra=log_context(
+                            doc_hash=doc_hash,
+                            batch_id=batch_id,
+                            action="do_parse",
+                        ),
+                    )
+                    raise WorkflowException(msg)
             await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
         else:
             msg = f"failed to parse {doc_hash} {doc.mime_type} {source_uri}"
@@ -449,6 +469,17 @@ async def chunk_document(
             except FileNotFoundError:
                 pass
         await op.write(doc_hash, chunk_bytes)
+        if not await op.exists(doc_hash):
+            msg = f"chunk {doc_hash}: artifact {ArtifactType.CHUNKS} missing after write"
+            logger.error(
+                msg,
+                extra=log_context(
+                    doc_hash=doc_hash,
+                    batch_id=batch_id,
+                    action="chunk",
+                ),
+            )
+            raise WorkflowException(msg)
         await doc_ops.add_history_for_hash(doc_hash, "chunked", batch_id=batch_id)
 
     logger.info(f"chunk_document completed  {source} {batch_id} {doc_hash}")
@@ -484,6 +515,10 @@ async def embed_document(
     embed_bytes = embed_json.encode("utf-8")
     del embed_json
     await embed_op.write(doc_hash, embed_bytes)
+    if not await embed_op.exists(doc_hash):
+        msg = f"embed {doc_hash}: artifact {ArtifactType.EMBEDDINGS} missing after write"
+        logger.error(msg, extra=_lc)
+        raise WorkflowException(msg)
 
     await doc_ops.add_history_for_hash(doc_hash, "embedded", batch_id=batch_id)
 

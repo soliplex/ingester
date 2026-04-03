@@ -282,7 +282,7 @@ def config_workflows():
 async def _config_params():
     from .lib.wf.registry import load_param_registry
 
-    registry = await load_param_registry()
+    registry = await load_param_registry(force_reload=True)
     table = Table(title="Parameter Sets")
     table.add_column("id", style="cyan")
     table.add_column("name")

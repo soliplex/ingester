@@ -280,8 +280,10 @@ async def test_database_initialize_non_sqlite_url():
             "postgresql+asyncpg://localhost/test",
             connect_args={},
             pool_size=20,
-            max_overflow=5,
-            pool_timeout=10,
+            max_overflow=25,
+            pool_timeout=120,
+            pool_pre_ping=True,
+            pool_recycle=1800,
         )
 
     await Database.close()

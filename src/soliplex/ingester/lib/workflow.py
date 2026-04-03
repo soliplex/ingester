@@ -192,11 +192,8 @@ async def split_parse_document(
     doc = await doc_ops.get_document(doc_hash)
     doc_uris = await doc_ops.get_document_uris_by_hash(doc_hash)
     if len(doc_uris) == 0:
-        logger.warning(
-            f"skipping parse for {doc_hash} no uris found in db",
-            extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
-        )
-        return
+        msg = f"no uris found for {doc_hash}"
+        raise WorkflowException(msg)
     test_op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
     exists = await test_op.exists(doc_hash)
     logger.info(
@@ -222,8 +219,9 @@ async def split_parse_document(
         )
         return
 
-    test_op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
-    exists = await test_op.exists(doc_hash)
+    test_op_json = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
+    test_op_md = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_MD)
+    exists = await test_op_json.exists(doc_hash) and await test_op_md.exists(doc_hash)
     logger.info(
         f"do parse split {doc_hash} {exists} {force}",
         extra=_lc,
@@ -296,6 +294,19 @@ async def split_parse_document(
             markdown_txt = docling_doc.export_to_markdown()
             mdop = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_MD)
             await mdop.write(doc_hash, markdown_txt.encode("utf-8"))
+            # check for existience of files, in some cases it's missing
+            if not await test_op_json.exists(doc_hash) or not await test_op_md.exists(doc_hash):
+                logger.info(f"document {doc_hash} missing files,retrying write", extra=_lc)
+                await jsop.write(doc_hash, docling_json.encode("utf-8"))
+                await mdop.write(doc_hash, markdown_txt.encode("utf-8"))
+            json_exists = await test_op_json.exists(doc_hash)
+            md_exists = await test_op_md.exists(doc_hash)
+            logger.debug(f"document {doc_hash} json={json_exists} md={md_exists}", extra=_lc)
+            if not json_exists or not md_exists:
+                raise WorkflowException(
+                    f"document {doc_hash} missing files after retrying write json={json_exists} md={md_exists}",
+                )
+
             await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
         else:
             msg = f"split_to_files returned {split_result}.  should return 2 files.  {source_uri} {doc_hash}"
@@ -346,11 +357,8 @@ async def parse_document(
     if not exists or force:
         doc_uris = await doc_ops.get_document_uris_by_hash(doc_hash)
         if len(doc_uris) == 0:
-            logger.warning(
-                f"skipping parse for {doc_hash} no uris found in db",
-                extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
-            )
-            return
+            msg = f"no uris found for {doc_hash}"
+            raise WorkflowException(msg)
         source_uri = doc_uris[0].uri
         if file_bytes_override is None:
             file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
@@ -365,6 +373,19 @@ async def parse_document(
             config_dict=step_config.config_json,
         )
         if parsed:
+            expected = {"json", "md"}
+            missing = expected - parsed.keys()
+            if missing:
+                logger.error(
+                    f"docling result for {doc_hash} missing formats {missing}: {parsed}",
+                    extra=log_context(
+                        doc_hash=doc_hash,
+                        batch_id=batch_id,
+                        action="do_parse",
+                    ),
+                )
+                msg = f"parse {doc_hash} missing expected formats {missing}"
+                raise WorkflowException(msg)
             for fmt, content in parsed.items():
                 st = ArtifactType.PARSED_JSON if fmt == "json" else ArtifactType.PARSED_MD
                 if st == ArtifactType.PARSED_MD and markdown_override is not None:
@@ -377,6 +398,26 @@ async def parse_document(
                     except FileNotFoundError:
                         pass
                 await op.write(doc_hash, content)
+            for artifact_type in (
+                ArtifactType.PARSED_JSON,
+                ArtifactType.PARSED_MD,
+            ):
+                check_op = await _get_op(
+                    workflow_run.id,
+                    WorkflowStepType.PARSE,
+                    artifact_type,
+                )
+                if not await check_op.exists(doc_hash):
+                    msg = f"parse {doc_hash}: artifact {artifact_type} missing after write"
+                    logger.error(
+                        msg,
+                        extra=log_context(
+                            doc_hash=doc_hash,
+                            batch_id=batch_id,
+                            action="do_parse",
+                        ),
+                    )
+                    raise WorkflowException(msg)
             await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
         else:
             msg = f"failed to parse {doc_hash} {doc.mime_type} {source_uri}"
@@ -428,6 +469,17 @@ async def chunk_document(
             except FileNotFoundError:
                 pass
         await op.write(doc_hash, chunk_bytes)
+        if not await op.exists(doc_hash):
+            msg = f"chunk {doc_hash}: artifact {ArtifactType.CHUNKS} missing after write"
+            logger.error(
+                msg,
+                extra=log_context(
+                    doc_hash=doc_hash,
+                    batch_id=batch_id,
+                    action="chunk",
+                ),
+            )
+            raise WorkflowException(msg)
         await doc_ops.add_history_for_hash(doc_hash, "chunked", batch_id=batch_id)
 
     logger.info(f"chunk_document completed  {source} {batch_id} {doc_hash}")
@@ -463,6 +515,10 @@ async def embed_document(
     embed_bytes = embed_json.encode("utf-8")
     del embed_json
     await embed_op.write(doc_hash, embed_bytes)
+    if not await embed_op.exists(doc_hash):
+        msg = f"embed {doc_hash}: artifact {ArtifactType.EMBEDDINGS} missing after write"
+        logger.error(msg, extra=_lc)
+        raise WorkflowException(msg)
 
     await doc_ops.add_history_for_hash(doc_hash, "embedded", batch_id=batch_id)
 

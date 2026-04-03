@@ -107,7 +107,15 @@ async def set_step_status(
         step.status_meta = meta
         step.worker_id = get_worker_id()
 
-        if step.start_date is None and status == RunStatus.RUNNING:
+        if step.status == RunStatus.FAILED:
+            cancelled = await operations.cancel_pending_steps(
+                step.workflow_run_id,
+                session,
+            )
+            if cancelled:
+                logger.info(f"cancelled {cancelled} pending steps for run {step.workflow_run_id}")
+
+        if status == RunStatus.RUNNING:
             step.start_date = timestamp
         if step.completed_date is None and status == RunStatus.COMPLETED:
             step.completed_date = timestamp

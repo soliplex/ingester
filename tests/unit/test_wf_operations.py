@@ -2,6 +2,7 @@ import datetime
 import logging
 
 import pytest
+from sqlmodel import select
 
 import soliplex.ingester.lib.models as models
 import soliplex.ingester.lib.operations as doc_ops
@@ -1359,3 +1360,169 @@ async def test_get_run_steps_for_run_group(db):
     # Query for COMPLETED should return nothing
     completed = await wf_ops.get_run_steps_for_run_group(run_group.id, RunStatus.COMPLETED)
     assert completed == []
+
+
+# ============================================================================
+# Tests for cancel_pending_steps()
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_steps(db):
+    """cancel_pending_steps sets PENDING steps to CANCELLED."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/cancel_pending.pdf",
+        "test_source",
+        "application/pdf",
+        b"cancel pending bytes",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+
+    # Mark step 0 as FAILED, step 1 as COMPLETED, rest stay PENDING
+    async with models.get_session() as session:
+        q = select(models.RunStep).where(
+            models.RunStep.id == steps[0].id,
+        )
+        result = await session.exec(q)
+        s = result.first()
+        s.status = RunStatus.FAILED
+        session.add(s)
+
+        q = select(models.RunStep).where(
+            models.RunStep.id == steps[1].id,
+        )
+        result = await session.exec(q)
+        s = result.first()
+        s.status = RunStatus.COMPLETED
+        session.add(s)
+        await session.commit()
+
+    # Cancel pending steps
+    async with models.get_session() as session:
+        cancelled = await wf_ops.cancel_pending_steps(
+            workflow_run.id,
+            session,
+        )
+        await session.commit()
+
+    assert cancelled >= 1
+
+    # Verify statuses
+    async with models.get_session() as session:
+        for step in steps:
+            q = select(models.RunStep).where(
+                models.RunStep.id == step.id,
+            )
+            result = await session.exec(q)
+            s = result.first()
+            if step.id == steps[0].id:
+                assert s.status == RunStatus.FAILED
+            elif step.id == steps[1].id:
+                assert s.status == RunStatus.COMPLETED
+            else:
+                assert s.status == RunStatus.CANCELLED
+                assert s.status_message == "cancelled: prior step failed"
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_steps_none_pending(db):
+    """cancel_pending_steps returns 0 when no steps are PENDING."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/cancel_none.pdf",
+        "test_source",
+        "application/pdf",
+        b"cancel none bytes",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+
+    # Mark all steps as COMPLETED
+    async with models.get_session() as session:
+        for step in steps:
+            q = select(models.RunStep).where(
+                models.RunStep.id == step.id,
+            )
+            result = await session.exec(q)
+            s = result.first()
+            s.status = RunStatus.COMPLETED
+            session.add(s)
+        await session.commit()
+
+    async with models.get_session() as session:
+        cancelled = await wf_ops.cancel_pending_steps(
+            workflow_run.id,
+            session,
+        )
+        await session.commit()
+
+    assert cancelled == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_steps_only_affects_own_run(db):
+    """cancel_pending_steps does not touch steps in other runs."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+
+    # Create two workflow runs
+    uri1, doc1 = await doc_ops.create_document_from_uri(
+        "/tmp/cancel_run1.pdf",
+        "test_source",
+        "application/pdf",
+        b"run1 bytes",
+        batch_id=batch_id,
+    )
+    run1, steps1 = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc1.hash,
+    )
+
+    uri2, doc2 = await doc_ops.create_document_from_uri(
+        "/tmp/cancel_run2.pdf",
+        "test_source",
+        "application/pdf",
+        b"run2 bytes",
+        batch_id=batch_id,
+    )
+    run2, steps2 = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc2.hash,
+    )
+
+    # Cancel pending steps only for run1
+    async with models.get_session() as session:
+        await wf_ops.cancel_pending_steps(run1.id, session)
+        await session.commit()
+
+    # run2 steps should still be PENDING
+    async with models.get_session() as session:
+        for step in steps2:
+            q = select(models.RunStep).where(
+                models.RunStep.id == step.id,
+            )
+            result = await session.exec(q)
+            s = result.first()
+            assert s.status == RunStatus.PENDING

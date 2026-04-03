@@ -1015,6 +1015,41 @@ async def update_run_status(
     return status
 
 
+async def cancel_pending_steps(
+    workflow_run_id: int,
+    session,
+) -> int:
+    """Cancel all PENDING steps for a workflow run.
+
+    Used when a step transitions to FAILED so that remaining
+    steps that can never execute are marked CANCELLED.
+
+    Parameters
+    ----------
+    workflow_run_id : int
+        The workflow run whose pending steps to cancel.
+    session
+        An active database session (caller manages the transaction).
+
+    Returns
+    -------
+    int
+        Number of steps cancelled.
+    """
+    stmt = (
+        update(RunStep)
+        .where(RunStep.workflow_run_id == workflow_run_id)
+        .where(RunStep.status == RunStatus.PENDING)
+        .values(
+            status=RunStatus.CANCELLED,
+            status_date=datetime.datetime.now(datetime.UTC),
+            status_message="cancelled: prior step failed",
+        )
+    )
+    result = await session.exec(stmt)
+    return result.rowcount
+
+
 async def get_steps_for_batch(batch_id: int) -> list[RunStep]:
     """
     Get all run steps for a specific batch.
@@ -1320,55 +1355,99 @@ async def reset_failed_steps(run_group_id: int) -> None:
         logger.info(f"Reset {reset_steps} steps and {reset_runs} runs for run group {run_group_id}")
 
 
-async def reset_failed(run_group_id: int | None = None) -> None:
+async def reset_failed(
+    run_group_id: int | None = None,
+    hard: bool = False,
+) -> None:
     """
-    Reset all failed steps and workflow runs back to PENDING.
+    Reset steps and workflow runs back to PENDING.
 
-    Sets failed run steps back to PENDING with retry count reset
-    to 0 and worker_id cleared. Sets failed workflow runs back to
-    PENDING.
+    By default, resets only FAILED steps and runs. When *hard* is
+    ``True``, **all** steps regardless of current state are set to
+    PENDING with retry count and worker_id cleared, and all
+    non-COMPLETED runs are set to PENDING.
 
     Parameters
     ----------
     run_group_id : int | None
         If specified, only reset within this run group.
-        If None, reset all failed steps and runs.
+        If None, reset globally.
+    hard : bool
+        If True, reset every step and non-COMPLETED run.
     """
     async with get_session() as session:
+        reset_values = {
+            "status": RunStatus.PENDING,
+            "retry": 0,
+            "worker_id": None,
+        }
         if run_group_id is not None:
-            failed_runs_subq = (
-                select(WorkflowRun.id)
-                .where(WorkflowRun.run_group_id == run_group_id)
-                .where(WorkflowRun.status == RunStatus.FAILED)
-                .subquery()
-            )
-            q1 = (
-                update(RunStep)
-                .where(RunStep.workflow_run_id.in_(select(failed_runs_subq.c.id)))
-                .where(RunStep.status == RunStatus.FAILED)
-                .values(
-                    status=RunStatus.PENDING,
-                    retry=0,
-                    worker_id=None,
+            if hard:
+                runs_subq = (
+                    select(WorkflowRun.id)
+                    .where(
+                        WorkflowRun.run_group_id == run_group_id,
+                    )
+                    .subquery()
                 )
+            else:
+                runs_subq = (
+                    select(WorkflowRun.id)
+                    .where(
+                        WorkflowRun.run_group_id == run_group_id,
+                    )
+                    .where(
+                        WorkflowRun.status == RunStatus.FAILED,
+                    )
+                    .subquery()
+                )
+            q1 = update(RunStep).where(
+                RunStep.workflow_run_id.in_(
+                    select(runs_subq.c.id),
+                ),
             )
-            q2 = (
-                update(WorkflowRun)
-                .where(WorkflowRun.run_group_id == run_group_id)
-                .where(WorkflowRun.status == RunStatus.FAILED)
-                .values(status=RunStatus.PENDING)
+            if not hard:
+                q1 = q1.where(
+                    RunStep.status == RunStatus.FAILED,
+                )
+            else:
+                q1 = q1.where(
+                    RunStep.status != RunStatus.COMPLETED,
+                )
+            q1 = q1.values(**reset_values)
+            q2 = update(WorkflowRun).where(
+                WorkflowRun.run_group_id == run_group_id,
             )
+            if hard:
+                q2 = q2.where(
+                    WorkflowRun.status != RunStatus.COMPLETED,
+                )
+            else:
+                q2 = q2.where(
+                    WorkflowRun.status == RunStatus.FAILED,
+                )
+            q2 = q2.values(status=RunStatus.PENDING)
         else:
-            q1 = (
-                update(RunStep)
-                .where(RunStep.status == RunStatus.FAILED)
-                .values(
-                    status=RunStatus.PENDING,
-                    retry=0,
-                    worker_id=None,
+            q1 = update(RunStep)
+            if hard:
+                q1 = q1.where(
+                    RunStep.status != RunStatus.COMPLETED,
                 )
-            )
-            q2 = update(WorkflowRun).where(WorkflowRun.status == RunStatus.FAILED).values(status=RunStatus.PENDING)
+            else:
+                q1 = q1.where(
+                    RunStep.status == RunStatus.FAILED,
+                )
+            q1 = q1.values(**reset_values)
+            q2 = update(WorkflowRun)
+            if hard:
+                q2 = q2.where(
+                    WorkflowRun.status != RunStatus.COMPLETED,
+                )
+            else:
+                q2 = q2.where(
+                    WorkflowRun.status == RunStatus.FAILED,
+                )
+            q2 = q2.values(status=RunStatus.PENDING)
 
         result1 = await session.exec(q1)
         reset_steps = result1.rowcount  # type: ignore
@@ -1377,8 +1456,9 @@ async def reset_failed(run_group_id: int | None = None) -> None:
 
         await session.commit()
 
+        mode = "hard" if hard else "soft"
         scope = f"run group {run_group_id}" if run_group_id else "all"
-        logger.info(f"reset_failed: {reset_steps} steps and {reset_runs} runs reset ({scope})")
+        logger.info(f"reset_failed: {reset_steps} steps and {reset_runs} runs reset ({scope}, {mode})")
 
 
 async def get_running_steps_enriched() -> list[dict]:

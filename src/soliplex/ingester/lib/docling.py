@@ -165,3 +165,9 @@ async def docling_convert(
             return parsed
         else:
             raise ValueError(str(res["errors"]))
+
+
+def get_docling_schema_version() -> str:
+    import docling_core.types.doc.document as dd
+
+    return dd.CURRENT_VERSION

@@ -144,9 +144,9 @@ include = ["soliplex.ingester*"]
 "soliplex.ingester.server" = ["static/**/*"]
 
 [tool.uv]
-# 2-week cooldown: don't resolve packages newer than this date.
+# 1-week cooldown: don't resolve packages newer than this date.
 # Update periodically. haiku-rag-slim is exempt (see sources).
-exclude-newer = "2 weeks"
+exclude-newer = "1 weeks"
 exclude-newer-package = { haiku-rag-slim = "1 hour" , torch=false, torchvision=false }
 override-dependencies = [
     "py-key-value-aio>=0.3.0",

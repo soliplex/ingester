@@ -12,7 +12,7 @@ FROM base AS builder
 
 RUN apt-get update && apt-get -y upgrade
 RUN apt-get update && apt-get install -y git
-COPY --from=ghcr.io/astral-sh/uv:0.9.17 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /bin/
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
@@ -47,5 +47,11 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Switch to non-root user
 USER appuser
+# OCI metadata labels
+LABEL org.opencontainers.image.title="soliplex-ingester" \
+      org.opencontainers.image.description="Ingestion service for Soliplex" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.vendor="Enfold Systems" \
+      org.opencontainers.image.authors="Enfold Systems <info@enfoldsystems.net>"
 
 CMD ["si-cli", "serve", "--host=0.0.0.0"]

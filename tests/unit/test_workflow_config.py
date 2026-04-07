@@ -1,4 +1,5 @@
 import logging
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -184,3 +185,35 @@ async def test_param_set_comparison_missing_diff(db: Database):
     assert base_ids[WorkflowStepType.EMBED] != diff_ids[WorkflowStepType.EMBED]
     assert base_ids[WorkflowStepType.STORE] != diff_ids[WorkflowStepType.STORE]
     assert base_ids[WorkflowStepType.ROUTE] != diff_ids[WorkflowStepType.ROUTE]
+
+
+@pytest.mark.asyncio
+async def test_docling_schema_change_produces_different_ids(db: Database):
+    """
+    Test that changing the docling schema version produces different
+    step config IDs from PARSE onwards, since the docling schema is
+    injected into the PARSE step config.
+    """
+    with patch(
+        "soliplex.ingester.lib.wf.operations.get_docling_schema_version",
+        return_value="1.0.0",
+    ):
+        ids_v1 = await wf_ops.get_step_config_ids("test_base")
+
+    with patch(
+        "soliplex.ingester.lib.wf.operations.get_docling_schema_version",
+        return_value="2.0.0",
+    ):
+        ids_v2 = await wf_ops.get_step_config_ids("test_base")
+
+    # Steps before PARSE are unaffected by docling schema
+    assert ids_v1[WorkflowStepType.INGEST] == ids_v2[WorkflowStepType.INGEST]
+    assert ids_v1[WorkflowStepType.VALIDATE] == ids_v2[WorkflowStepType.VALIDATE]
+
+    # PARSE and all subsequent steps differ because the cumulative
+    # config includes the docling_schema value
+    assert ids_v1[WorkflowStepType.PARSE] != ids_v2[WorkflowStepType.PARSE]
+    assert ids_v1[WorkflowStepType.CHUNK] != ids_v2[WorkflowStepType.CHUNK]
+    assert ids_v1[WorkflowStepType.EMBED] != ids_v2[WorkflowStepType.EMBED]
+    assert ids_v1[WorkflowStepType.STORE] != ids_v2[WorkflowStepType.STORE]
+    assert ids_v1[WorkflowStepType.ROUTE] != ids_v2[WorkflowStepType.ROUTE]

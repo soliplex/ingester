@@ -752,21 +752,20 @@ async def check_dead_workers():
                             RunStep.worker_id == worker.id,
                         )
                         .where(
-                            RunStep.status != RunStatus.COMPLETED,
+                            RunStep.status == RunStatus.RUNNING,
                         )
                     )
                     step_results = await session.exec(q2)
                     step_results = step_results.all()
                     logger.info(
-                        f"resetting {len(step_results)} steps from dead worker {worker.id}",
+                        f"resetting {len(step_results)} running steps from dead worker {worker.id}",
                     )
                     for step in step_results:
                         logger.info(
                             f"resetting step {step.id} run_id={step.workflow_run_id} status={step.status} -> PENDING",
                         )
                         step.worker_id = None
-                        if step.status == RunStatus.RUNNING:
-                            step.status = RunStatus.PENDING
+                        step.status = RunStatus.PENDING
                         session.add(step)
 
                 await session.commit()

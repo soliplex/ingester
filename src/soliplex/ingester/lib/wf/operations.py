@@ -16,6 +16,7 @@ from sqlmodel import select
 from sqlmodel import update
 
 from soliplex.ingester.lib.dal import get_storage_operator
+from soliplex.ingester.lib.docling import get_docling_schema_version
 from soliplex.ingester.lib.models import ArtifactType
 from soliplex.ingester.lib.models import ConfigSet
 from soliplex.ingester.lib.models import ConfigSetItem
@@ -197,6 +198,8 @@ async def get_step_config_ids(param_id: str) -> dict[WorkflowStepType, int]:
             for st in typelist:
                 if st in param_set.config:
                     step_config = param_set.config[st]
+                    if st == WorkflowStepType.PARSE:
+                        step_config["docling_schema"] = get_docling_schema_version()
                 else:
                     step_config = {}
                 cuml_cfg = cuml_cfg.copy()

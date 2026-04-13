@@ -4,9 +4,11 @@ Instructions for AI coding agents working with Soliplex Ingester.
 
 ## Project Overview
 
-Document ingestion and RAG pipeline system. Processes documents through configurable workflows (validate, parse, chunk, embed, store) using async workers and stores results in LanceDB vector databases.
+Document ingestion and RAG pipeline system. Processes documents through
+configurable workflows (validate, parse, chunk, embed, store) using async
+workers and stores results in LanceDB vector databases.
 
-**Stack:** Python 3.12+, FastAPI, SQLModel, Pydantic v2, Typer CLI
+Stack: Python 3.12+, FastAPI, SQLModel, Pydantic v2, Typer CLI
 
 ## Setup and Commands
 
@@ -14,8 +16,7 @@ Document ingestion and RAG pipeline system. Processes documents through configur
 uv sync                                        # Install dependencies
 uv run --env-file .env si-cli serve --reload   # Run dev server
 uv run pytest                                  # Run tests
-uv run ruff format . && uv run ruff check .    # Format & lint
-uv run mypy src/                               # Type checking
+uv run ruff format . && uv run ruff check .    # Format and lint
 si-cli bootstrap                               # Initialize config files
 si-cli db-init                                 # Initialize database
 si-diag status running                         # Show running workflow steps
@@ -35,11 +36,14 @@ src/soliplex/ingester/
     ├── models.py       # SQLModel database models
     ├── operations.py   # Document CRUD operations
     ├── workflow.py     # Workflow step handlers
-    ├── dal.py          # Data access layer (storage)
+    ├── dal.py          # Data access layer (storage backends)
+    ├── auth.py         # Authentication (API key, OAuth2 proxy)
+    ├── rag.py          # HaikuRAG integration
+    ├── processing.py   # Document processing utilities
     └── wf/             # Workflow execution engine
         ├── runner.py   # Async worker
         ├── operations.py
-        └── registry.py # Workflow/param loading from dual directories
+        └── registry.py # Workflow/param loading from YAML
 
 config/
 ├── workflows/*.yaml    # Workflow definitions
@@ -48,18 +52,18 @@ config/
 
 tests/
 ├── unit/              # Unit tests (50% coverage min)
-└── functional/        # Integration tests
+└── functional/        # Integration tests (skipped by default)
 ```
 
 ## Code Conventions
 
 ### Python Style
 
-- PEP8 with 126 char line length (ruff configured)
+- Ruff enforced, 126 char line length
 - snake_case for functions/variables, PascalCase for classes
 - Type annotations required (Python 3.12+ syntax)
-- numpy-style docstrings
 - Single-line imports, grouped: stdlib, third-party, local
+- Ruff target version: py313
 
 ### Async Requirements
 
@@ -86,39 +90,33 @@ Use `soliplex.ingester` (dot notation), not `soliplex_ingester`:
 from soliplex.ingester.lib.models import Document
 from soliplex.ingester.lib.config import get_settings
 
-# Incorrect
+# Wrong
 from soliplex_ingester.lib.models import Document
 ```
 
 ## Testing
 
 ```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov=soliplex.ingester --cov-report=term-missing
-
-# Run specific test file
-uv run pytest tests/unit/test_operations.py
-
-# Run tests matching pattern
-uv run pytest -k "test_batch"
+uv run pytest                                              # All unit tests
+uv run pytest --cov=soliplex.ingester --cov-report=term-missing  # With coverage
+uv run pytest tests/unit/test_operations.py                # Specific file
+uv run pytest -k "test_batch"                              # Pattern match
 ```
 
-**Requirements:**
-- 50% coverage minimum enforced
+Requirements:
+
+- 50% branch coverage minimum enforced
 - Mock external services (Docling, HaikuRAG, Ollama)
 - Unit tests in `tests/unit/test_*.py`
-- Functional tests in `tests/functional/`
+- Functional tests in `tests/functional/` (skipped by default)
+- Test database: in-memory SQLite per test function
 
 ## Database
 
-**Development:** SQLite with aiosqlite
-**Production:** PostgreSQL with psycopg
+Development: SQLite with aiosqlite
+Production: PostgreSQL with psycopg
 
 ```bash
-# Initialize database
 si-cli db-init
 
 # Connection string format
@@ -128,15 +126,15 @@ DOC_DB_URL="postgresql+psycopg://user:pass@host:5432/soliplex"
 
 ## Key Models
 
-| Model | Table | Purpose |
-|-------|-------|---------|
-| DocumentBatch | documentbatch | Groups documents for processing |
-| Document | document | Unique documents by hash |
-| DocumentURI | documenturi | Maps URIs to documents |
-| WorkflowRun | workflowrun | Single workflow execution |
-| RunStep | runstep | Individual step in workflow |
-| RunGroup | rungroup | Groups workflow runs |
-| SyncState | sync_state | Incremental sync tracking |
+| Model | Purpose |
+|-------|---------|
+| DocumentBatch | Groups documents for processing |
+| Document | Unique documents by SHA256 hash |
+| DocumentURI | Maps URIs to documents |
+| WorkflowRun | Single workflow execution |
+| RunStep | Individual step in workflow |
+| RunGroup | Groups workflow runs for a batch |
+| SyncState | Incremental sync tracking |
 
 ## API Routes
 
@@ -154,44 +152,53 @@ DOC_DB_URL="postgresql+psycopg://user:pass@host:5432/soliplex"
 Required: `DOC_DB_URL`
 
 Key optional settings:
+
 - `DOCLING_SERVER_URL` - Document parsing service
 - `OLLAMA_BASE_URL` - Embedding model server
-- `FILE_STORE_TARGET` - Storage backend (fs, s3)
+- `FILE_STORE_TARGET` - Storage backend (fs, s3, db)
 - `LANCEDB_DIR` - Vector database location
-- `PARAM_DIR` / `USER_PARAM_DIR` - System and user parameter set directories (must differ)
+- `PARAM_DIR` / `USER_PARAM_DIR` - Parameter set directories (must differ)
 - `WORKFLOW_DIR` - Workflow definitions directory
 
 See `docs/CONFIGURATION.md` for full reference.
 
 ## Critical Warnings
 
-- Do not upgrade LanceDB beyond 0.25.3 (pinned version)
-- Do not change FILE_STORE_TARGET after documents ingested
-- Do not modify workflows while runs in progress
-- Never commit secrets - use environment variables
+- Do not change `FILE_STORE_TARGET` after documents are ingested
+- Do not modify workflows while runs are in progress
+- Never commit secrets -- use environment variables
 - Always use DAL from `lib/dal.py` for artifact storage
+- `PARAM_DIR` and `USER_PARAM_DIR` must be different directories
 
 ## File Organization
 
 When adding features:
+
 - Database models go in `lib/models.py`
 - API endpoints go in `server/routes/`
 - Workflow step handlers go in `lib/workflow.py`
+- Storage operations go through `lib/dal.py`
 - Tests go in `tests/unit/` or `tests/functional/`
 
 ## Documentation
 
 Detailed docs in `docs/` folder:
+
+- GETTING_STARTED.md - Quick start tutorial
 - ARCHITECTURE.md - System design
 - API.md - REST endpoint reference
 - WORKFLOWS.md - Workflow configuration
 - DATABASE.md - Schema reference
 - CONFIGURATION.md - Environment variables
 - CLI.md - Command reference (si-cli and si-diag)
+- AUTHENTICATION.md - API key and OAuth2 proxy setup
+- DOCKER.md - Docker Compose deployment
+- PARAMETER_SETS.md - Parameter configuration
 
 ## Documentation Standards
 
-All markdown files are linted by pymarkdown via pre-commit. After editing any `.md` file, run:
+All markdown files are linted by pymarkdown via pre-commit. After editing
+any `.md` file, run:
 
 ```bash
 pre-commit run --all-files pymarkdown                # Lint all markdown
@@ -200,16 +207,17 @@ pre-commit run --files docs/MYFILE.md pymarkdown     # Lint specific file
 
 Common rules enforced (disabled: MD013, MD024, MD033, MD036, MD041, MD060):
 
-- **MD022:** Blank line required after every heading
-- **MD025:** Only one top-level `#` heading per file
-- **MD031:** Blank lines required before and after fenced code blocks
-- **MD032:** Blank lines required before and after lists
-- **MD034:** No bare URLs — wrap in angle brackets `<URL>` or markdown links
-- **MD040:** Fenced code blocks must specify a language (e.g. `` ```bash ``, `` ```python ``)
+- MD022: Blank line required after every heading
+- MD025: Only one top-level heading per file
+- MD031: Blank lines required before and after fenced code blocks
+- MD032: Blank lines required before and after lists
+- MD034: No bare URLs -- wrap in angle brackets or markdown links
+- MD040: Fenced code blocks must specify a language
 
 ## Commit Standards
 
 When asked to commit:
+
 - Use conventional commit format
 - Include `Co-Authored-By: Claude <noreply@anthropic.com>` trailer
 - Stage specific files, avoid `git add -A`

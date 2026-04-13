@@ -15,7 +15,7 @@ The server provides REST API endpoints for document and workflow management:
 - **Workflow Routes** (`/api/v1/workflow/*`) - Workflow execution and monitoring
 - **Stats Routes** (`/api/v1/stats/*`) - System statistics and metrics
 
-Server entry point: `src/soliplex_ingester/server/__init__.py:30`
+Server entry point: `src/soliplex/ingester/server/__init__.py:30`
 
 ### 2. Workflow System
 
@@ -43,7 +43,7 @@ Document → Validate → Parse → Chunk → Embed → Store
 - `ENRICH` - Add metadata or additional processing
 - `ROUTE` - Conditional routing logic
 
-Implementation: `src/soliplex_ingester/lib/wf/`
+Implementation: `src/soliplex/ingester/lib/wf/`
 
 ### 3. Worker System
 
@@ -54,7 +54,7 @@ Async workers process workflow steps concurrently:
 - Automatic retry logic with configurable retry counts
 - Health check/heartbeat system via `WorkerCheckin`
 
-Worker implementation: `src/soliplex_ingester/lib/wf/runner.py`
+Worker implementation: `src/soliplex/ingester/lib/wf/runner.py`
 
 ### 4. Storage Layer
 
@@ -142,7 +142,7 @@ Configuration via environment variables with `pydantic-settings`:
 - External service URLs
 - Workflow and parameter directories
 
-See `src/soliplex_ingester/lib/config.py:15` for full configuration schema.
+See `src/soliplex/ingester/lib/config.py:15` for full configuration schema.
 
 ## Scalability
 

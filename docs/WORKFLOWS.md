@@ -56,7 +56,7 @@ The system supports these predefined step types:
 - **Purpose:** Check document format and readability
 - **Input:** Raw document
 - **Output:** Validation result
-- **Handler:** `soliplex_ingester.lib.workflow.validate_document`
+- **Handler:** `soliplex.ingester.lib.workflow.validate_document`
 
 ### PARSE
 
@@ -64,7 +64,7 @@ The system supports these predefined step types:
 - **Input:** Raw document
 - **Output:** Markdown and JSON representations
 - **Artifacts:** `ArtifactType.PARSED_MD`, `ArtifactType.PARSED_JSON`
-- **Handler:** `soliplex_ingester.lib.workflow.parse_document`
+- **Handler:** `soliplex.ingester.lib.workflow.parse_document`
 - **Service:** Docling server
 
 ### CHUNK
@@ -73,7 +73,7 @@ The system supports these predefined step types:
 - **Input:** Parsed markdown
 - **Output:** Array of text chunks
 - **Artifact:** `ArtifactType.CHUNKS`
-- **Handler:** `soliplex_ingester.lib.workflow.chunk_document`
+- **Handler:** `soliplex.ingester.lib.workflow.chunk_document`
 
 ### EMBED
 
@@ -81,7 +81,7 @@ The system supports these predefined step types:
 - **Input:** Text chunks
 - **Output:** Embedding vectors
 - **Artifact:** `ArtifactType.EMBEDDINGS`
-- **Handler:** `soliplex_ingester.lib.workflow.embed_document`
+- **Handler:** `soliplex.ingester.lib.workflow.embed_document`
 
 ### STORE
 
@@ -89,7 +89,7 @@ The system supports these predefined step types:
 - **Input:** Embeddings
 - **Output:** RAG document ID
 - **Artifact:** `ArtifactType.RAG`
-- **Handler:** `soliplex_ingester.lib.workflow.save_to_rag`
+- **Handler:** `soliplex.ingester.lib.workflow.save_to_rag`
 - **Backend:** LanceDB + HaikuRAG
 
 ### ENRICH
@@ -121,37 +121,37 @@ item_steps:
   validate:
     name: docling validate
     retries: 3
-    method: soliplex_ingester.lib.workflow.validate_document
+    method: soliplex.ingester.lib.workflow.validate_document
     parameters: {}
 
   parse:
     name: docling parse
     retries: 3
-    method: soliplex_ingester.lib.workflow.parse_document
+    method: soliplex.ingester.lib.workflow.parse_document
     parameters: {}
 
   chunk:
     name: docling chunk
     retries: 3
-    method: soliplex_ingester.lib.workflow.chunk_document
+    method: soliplex.ingester.lib.workflow.chunk_document
     parameters: {}
 
   embed:
     name: embeddings
     retries: 3
-    method: soliplex_ingester.lib.workflow.embed_document
+    method: soliplex.ingester.lib.workflow.embed_document
     parameters: {}
 
   store:
     name: save to rag
     retries: 3
-    method: soliplex_ingester.lib.workflow.save_to_rag
+    method: soliplex.ingester.lib.workflow.save_to_rag
     parameters: {}
 
 lifecycle_events:
   group_start:
     - name: log group start
-      method: soliplex_ingester.lib.workflow.log_event
+      method: soliplex.ingester.lib.workflow.log_event
       retries: 1
       parameters:
         message: "Starting workflow group"

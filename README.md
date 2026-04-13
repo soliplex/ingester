@@ -326,7 +326,7 @@ Found an error or unclear section? Please:
 
 ## Version Information
 
-- **Version:** 0.1.0
+- **Version:** 0.7.1
 - **Python:** 3.12+
 
 ## License
@@ -356,7 +356,7 @@ See LICENSE file in project root.
 
 ```bash
 # Installation
-pip install -e .
+uv sync
 
 # Configuration
 si-cli validate-settings
@@ -375,7 +375,7 @@ si-cli worker                            # Start worker
 si-cli list-workflows                    # List workflows
 si-cli dump-workflow batch               # View workflow
 si-cli list-param-sets                   # List parameters
-si-cli validate-haiku 1                  # Validate batch
+si-cli list-batches                      # List all batches
 
 # Diagnostics (si-diag)
 si-diag batch list                       # List batches

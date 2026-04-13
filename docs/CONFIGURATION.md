@@ -518,7 +518,7 @@ Default workflow to use when not specified.
 **Example:**
 
 ```bash
-DEFAULT_WORKFLOW_ID=batch
+DEFAULT_WORKFLOW_ID=batch_split
 ```
 
 **Notes:**
@@ -667,7 +667,7 @@ DOCLING_HTTP_TIMEOUT=600
 
 # Logging
 LOG_LEVEL=INFO
-LOG_FORMAT=text
+LOG_FORMAT={name}|{asctime}|{levelname}|{message}
 
 # Storage
 FILE_STORE_TARGET=fs
@@ -684,7 +684,7 @@ EMBED_BATCH_SIZE=1000
 
 # Workflow Configuration
 WORKFLOW_DIR=config/workflows
-DEFAULT_WORKFLOW_ID=batch
+DEFAULT_WORKFLOW_ID=batch_split
 PARAM_DIR=config/params
 USER_PARAM_DIR=config/user_params
 DEFAULT_PARAM_ID=default
@@ -1060,7 +1060,7 @@ env:
 | `DOCLING_CHUNK_SERVER_URL` | str | No | `http://localhost:5001/v1` | Docling chunking service URL |
 | `DOCLING_HTTP_TIMEOUT` | int | No | `600` | Docling timeout (seconds) |
 | `LOG_LEVEL` | str | No | `INFO` | Logging level |
-| `LOG_FORMAT` | str | No | `text` | Log format (`text` or `json`) |
+| `LOG_FORMAT` | str | No | `{name}\|{asctime}\|{levelname}\|{message}` | Log format string (or `json`) |
 | `FILE_STORE_TARGET` | str | No | `fs` | Storage backend type |
 | `FILE_STORE_DIR` | str | No | `file_store` | Base storage directory |
 | `LANCEDB_DIR` | str | No | `lancedb` | LanceDB directory (supports S3 URIs) |

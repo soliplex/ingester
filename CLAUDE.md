@@ -1,57 +1,53 @@
-# Project Context
+# Soliplex Ingester
 
-Python project to load documents into a RAG system using haiku.rag and docling. Uses workflows and parameters defined in YAML files to configure document processing (chunking, embedding, storing).
-
-**Integration Points:**
-
-- Svelte UI in `ui/` directory (see [ui/CLAUDE.md](ui/CLAUDE.md))
-- REST API endpoints for document management and workflow control
-- Agent processes managed by github.com/soliplex/ingester-agents
-
----
+Document ingestion and RAG pipeline. Processes documents through configurable
+workflows (validate, parse, chunk, embed, store) using async workers and stores
+results in LanceDB vector databases.
 
 ## Documentation
 
-Comprehensive docs in `docs/` folder - **always check these first**:
+Detailed docs in `docs/` -- check these first:
 
 | Topic | File |
 |-------|------|
+| Getting Started | [GETTING_STARTED.md](docs/GETTING_STARTED.md) |
 | Architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | API Reference | [API.md](docs/API.md) |
 | Workflows | [WORKFLOWS.md](docs/WORKFLOWS.md) |
 | Database | [DATABASE.md](docs/DATABASE.md) |
 | Configuration | [CONFIGURATION.md](docs/CONFIGURATION.md) |
 | Parameter Sets | [PARAMETER_SETS.md](docs/PARAMETER_SETS.md) |
-| CLI (si-cli & si-diag) | [CLI.md](docs/CLI.md) |
-
----
+| CLI Reference | [CLI.md](docs/CLI.md) |
+| Authentication | [AUTHENTICATION.md](docs/AUTHENTICATION.md) |
+| Docker Deployment | [DOCKER.md](docs/DOCKER.md) |
 
 ## Quick Reference
 
 ```bash
-uv sync                                    # Install dependencies
+uv sync                                       # Install dependencies
 uv run --env-file .env si-cli serve --reload  # Run dev server
-uv run pytest                              # Run tests
-uv run ruff format . && uv run ruff check .   # Format & lint
-si-cli bootstrap                           # Setup all configs
+uv run pytest                                 # Run tests (50% coverage min)
+uv run ruff format . && uv run ruff check .   # Format and lint
+si-cli bootstrap                              # Setup all configs
+si-cli db-init                                # Initialize database
 
-# Diagnostics (si-diag)
-si-diag batch list                         # List batches
-si-diag document find "pattern"            # Search documents by URI
-si-diag status running                     # Currently running steps
-si-diag status recent hour                 # Recent activity
+# Diagnostics (read-only)
+si-diag batch list                            # List batches
+si-diag document find "pattern"               # Search documents by URI
+si-diag status running                        # Currently running steps
+si-diag status recent hour                    # Recent activity
 ```
 
 ## Key Technologies
 
-- **Python 3.12+**, FastAPI, SQLModel, Pydantic v2
-- **Database:** SQLite (dev) / PostgreSQL (prod), LanceDB 0.25.3 (pinned)
-- **Storage:** OpenDAL (filesystem, S3, database)
-- **Testing:** pytest, 50% coverage minimum
+- Python 3.12+, FastAPI, SQLModel, Pydantic v2, Typer CLI
+- Database: SQLite (dev) / PostgreSQL (prod), LanceDB (vectors)
+- Storage backends: filesystem, S3, database (via OpenDAL)
+- Testing: pytest with 50% branch coverage minimum
 
 ## Critical Warnings
 
-- **Do not upgrade LanceDB** - pinned to 0.25.3
-- **Do not change FILE_STORE_TARGET** after documents ingested
-- **Do not modify workflows** while runs in progress
-- **Never commit secrets** - use environment variables
+- Do not change `FILE_STORE_TARGET` after documents are ingested
+- Do not modify workflows while runs are in progress
+- Never commit secrets -- use environment variables
+- `PARAM_DIR` and `USER_PARAM_DIR` must be different directories

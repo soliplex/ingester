@@ -84,7 +84,7 @@ invalid settings
 - `0` - Settings valid
 - `1` - Validation failed
 
-**Implementation:** `src/soliplex_ingester/cli.py:38`
+**Implementation:** `src/soliplex/ingester/cli.py:38`
 
 ---
 
@@ -123,7 +123,7 @@ si-cli db-init
 - For PostgreSQL, database must already exist
 - Uses synchronous SQLAlchemy engine (not async)
 
-**Implementation:** `src/soliplex_ingester/cli.py:68`
+**Implementation:** `src/soliplex/ingester/cli.py:68`
 
 ---
 
@@ -193,7 +193,7 @@ si-cli serve --proxy-headers --forwarded-allow-ips "10.0.0.0/8"
 
 When `--reload` is enabled:
 
-- Watches Python files in `soliplex_ingester` package
+- Watches Python files in `soliplex.ingester` package
 - Watches `*.yaml`, `*.yml`, `*.txt` files
 - Automatically restarts on changes
 
@@ -205,7 +205,7 @@ The server automatically starts a background worker on startup. The worker proce
 
 - `WEB_CONCURRENCY` - Default number of workers if not specified
 
-**Implementation:** `src/soliplex_ingester/cli.py:207`
+**Implementation:** `src/soliplex/ingester/cli.py:207`
 
 ---
 
@@ -267,65 +267,7 @@ Check worker status via API:
 curl http://localhost:8000/api/v1/workflow/steps?status=RUNNING
 ```
 
-**Implementation:** `src/soliplex_ingester/cli.py:148`
-
----
-
-### validate-haiku
-
-Validate HaikuRAG integration for a batch.
-
-**Usage:**
-
-```bash
-si-cli validate-haiku BATCH_ID [OPTIONS]
-```
-
-**Arguments:**
-
-- `BATCH_ID` (int, required) - Batch ID to validate
-
-**Options:**
-
-- `--detail` (bool) - Show detailed output (not yet implemented)
-
-**Description:**
-
-- Checks all documents in batch
-- Verifies parsed markdown exists
-- Confirms documents are indexed in HaikuRAG
-- Reports any errors or missing documents
-
-**Example:**
-
-```bash
-si-cli validate-haiku 1
-```
-
-**Output:**
-
-```json
------------results--------------
- found 10 results
------------fails--------------
-[
-  {
-    "doc": "sha256-abc123...",
-    "haiku": null,
-    "message": "Document not found in HaikuRAG",
-    "status": "haiku error"
-  }
-]
-```
-
-**Status Values:**
-
-- `success` - Document indexed correctly
-- `no_id` - Document has no `rag_id` (not yet stored)
-- `md error` - Parsed markdown not found
-- `haiku error` - Error fetching from HaikuRAG
-
-**Implementation:** `src/soliplex_ingester/cli.py:133`
+**Implementation:** `src/soliplex/ingester/cli.py`
 
 ---
 
@@ -358,7 +300,7 @@ batch_split
 interactive
 ```
 
-**Implementation:** `src/soliplex_ingester/cli.py:189`
+**Implementation:** `src/soliplex/ingester/cli.py:189`
 
 ---
 
@@ -398,7 +340,7 @@ si-cli dump-workflow batch
     "validate": {
       "name": "docling validate",
       "retries": 3,
-      "method": "soliplex_ingester.lib.workflow.validate_document",
+      "method": "soliplex.ingester.lib.workflow.validate_document",
       "parameters": {}
     },
     ...
@@ -407,7 +349,7 @@ si-cli dump-workflow batch
 }
 ```
 
-**Implementation:** `src/soliplex_ingester/cli.py:162`
+**Implementation:** `src/soliplex/ingester/cli.py:162`
 
 ---
 
@@ -440,7 +382,7 @@ high_quality
 fast_processing
 ```
 
-**Implementation:** `src/soliplex_ingester/cli.py:201`
+**Implementation:** `src/soliplex/ingester/cli.py:201`
 
 ---
 
@@ -490,7 +432,7 @@ si-cli dump-param-set default
 }
 ```
 
-**Implementation:** `src/soliplex_ingester/cli.py:175`
+**Implementation:** `src/soliplex/ingester/cli.py:175`
 
 ---
 
@@ -699,12 +641,6 @@ si-cli worker
 curl http://localhost:8000/api/v1/batch/status?batch_id=1
 ```
 
-**5. Validate results:**
-
-```bash
-si-cli validate-haiku 1
-```
-
 ---
 
 ### Configuration Management
@@ -762,12 +698,6 @@ si-cli serve --host localhost --port 8000
 si-cli worker
 # Should start without errors
 # Press Ctrl+C to stop
-```
-
-**Validate batch processing:**
-
-```bash
-si-cli validate-haiku BATCH_ID
 ```
 
 ---
@@ -836,8 +766,8 @@ Default format includes:
 Example:
 
 ```text
-2025-01-15 10:00:00,123 INFO soliplex_ingester.cli Starting server
-2025-01-15 10:00:01,456 INFO soliplex_ingester.server Starting worker
+2025-01-15 10:00:00,123 INFO soliplex.ingester.cli Starting server
+2025-01-15 10:00:01,456 INFO soliplex.ingester.server Starting worker
 ```
 
 ---
@@ -894,7 +824,7 @@ No special configuration needed.
 If `si-cli` is not in PATH, run directly:
 
 ```bash
-python -m soliplex_ingester.cli --help
+python -m soliplex.ingester.cli --help
 ```
 
 ---

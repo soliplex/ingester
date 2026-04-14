@@ -69,13 +69,13 @@ class Database:
         pool_kwargs = {}
         if "sqlite" in url:
             connect_args["check_same_thread"] = False
-            connect_args["timeout"] = 30
-            pool_kwargs = {"poolclass": NullPool}
-            # WAL mode persists on the database file — set it
-            # directly via sqlite3 to avoid aiosqlite adapter
-            # issues with the SQLAlchemy event listener.
             db_path = make_url(url).database
             if db_path and db_path != ":memory:":
+                connect_args["timeout"] = 30
+                pool_kwargs = {"poolclass": NullPool}
+                # WAL mode persists on the database file — set
+                # it directly via sqlite3 to avoid aiosqlite
+                # adapter issues with the event listener.
                 with sqlite3.connect(db_path) as conn:
                     conn.execute("PRAGMA journal_mode=WAL")
         else:

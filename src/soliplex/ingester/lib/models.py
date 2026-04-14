@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import json
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import StrEnum
@@ -12,8 +13,11 @@ from pydantic import computed_field
 from sqlalchemy import JSON
 from sqlalchemy import Column
 from sqlalchemy import UniqueConstraint
+from sqlalchemy.engine import make_url
+from sqlalchemy.event import listens_for
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 from sqlmodel import Field
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -65,6 +69,15 @@ class Database:
         pool_kwargs = {}
         if "sqlite" in url:
             connect_args["check_same_thread"] = False
+            connect_args["timeout"] = 30
+            pool_kwargs = {"poolclass": NullPool}
+            # WAL mode persists on the database file — set it
+            # directly via sqlite3 to avoid aiosqlite adapter
+            # issues with the SQLAlchemy event listener.
+            db_path = make_url(url).database
+            if db_path and db_path != ":memory:":
+                with sqlite3.connect(db_path) as conn:
+                    conn.execute("PRAGMA journal_mode=WAL")
         else:
             settings = get_settings()
             task_count = settings.worker_task_count
@@ -81,6 +94,14 @@ class Database:
             connect_args=connect_args,
             **pool_kwargs,
         )
+
+        if "sqlite" in url:
+
+            @listens_for(cls._engine.sync_engine, "connect")
+            def _set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.close()
 
         # Create all tables
         if get_settings().auto_create_database:

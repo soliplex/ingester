@@ -182,6 +182,66 @@ graph TB
 
 ---
 
+## Dockerfile Overview
+
+The [Dockerfile](../Dockerfile) uses a multi-stage build with four
+stages:
+
+| Stage         | Purpose                                              |
+|---------------|------------------------------------------------------|
+| `ui-builder`  | Node.js stage that builds the SvelteKit frontend     |
+| `base`        | System packages, uv, and non-root user               |
+| `builder`     | Installs Python dependencies and the package via uv   |
+| `development` | Full toolchain; expects bind-mounted source code      |
+| `production`  | Minimal image with UI assets baked in (default)       |
+
+The **production** stage is the last stage in the file, so it is the
+default target when no `--target` is specified.
+
+```bash
+# Production (default)
+docker build -t soliplex_ingester:latest .
+
+# Development
+docker build -t soliplex_ingester-dev --target development .
+```
+
+### Non-root User
+
+Both targets run as an `appuser` user rather than root. The UID and GID
+default to `1000` and can be set at build time:
+
+```bash
+docker build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g) .
+```
+
+This is most useful on Linux hosts where bind-mounted files must match
+the host user's ownership. On Docker Desktop (Windows / macOS), the
+defaults work without adjustment.
+
+### Health Check
+
+Both targets include a `HEALTHCHECK` instruction that polls the
+FastAPI `/docs` endpoint:
+
+```text
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"
+```
+
+Docker uses this to report container health and to drive restart
+policies and Compose `depends_on` conditions.
+
+### .dockerignore
+
+The repository includes a `.dockerignore` file that excludes `.git`,
+`.venv`, `__pycache__`, `.env`, test suites, documentation sources, and
+runtime data directories (`file-store/`, `lancedb/`, `db/`). This keeps
+the build context small and prevents secrets from leaking into the
+image.
+
+---
+
 ## Configuration
 
 ### Environment Variables
@@ -370,8 +430,42 @@ soliplex_ingester:
 **Building the image:**
 
 ```bash
-# From project root
+# Production (default target)
 docker build -t soliplex_ingester:latest .
+
+# Development target
+docker build -t soliplex_ingester-dev --target development .
+```
+
+### Development Service
+
+The `soliplex_ingester_dev` service builds the **development** target
+with hot reloading and bind-mounted source code so that edits on the
+host take effect immediately.
+
+```bash
+cd docker
+docker-compose up soliplex_ingester_dev
+```
+
+On Linux, pass your UID/GID so that files written by the container
+match your host user:
+
+```bash
+APP_UID=$(id -u) APP_GID=$(id -g) docker-compose up soliplex_ingester_dev
+```
+
+The development service:
+
+- Bind-mounts `../src/soliplex/ingester` into the container (live code)
+- Bind-mounts `../tests` for in-container test runs
+- Runs with `--reload` for automatic server restart on code changes
+- Includes dev dependencies (pytest, ruff, coverage)
+
+**Running tests inside the dev container:**
+
+```bash
+docker-compose run --rm soliplex_ingester_dev uv run pytest
 ```
 
 **Scaling workers:**
@@ -817,13 +911,17 @@ services:
 
 ### Health Checks
 
-Add health checks for automatic recovery:
+The Dockerfile includes a built-in `HEALTHCHECK` that polls the
+`/docs` endpoint. Docker reports container health automatically and
+Compose `depends_on` conditions can use it.
+
+To override in Compose or add health checks to other services:
 
 ```yaml
 services:
   soliplex_ingester:
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/batch/"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -1072,22 +1170,22 @@ docker stats docling
 
 **Solutions:**
 
-1. Check ownership:
+1. Rebuild with your host UID/GID so the container user matches:
+
+   ```bash
+   APP_UID=$(id -u) APP_GID=$(id -g) docker-compose up --build soliplex_ingester_dev
+   ```
+
+2. Check ownership:
 
    ```bash
    ls -la ./file_store ./lancedb
    ```
 
-2. Fix permissions:
+3. Fix existing directory permissions:
 
    ```bash
    sudo chown -R $(id -u):$(id -g) ./file_store ./lancedb
-   ```
-
-3. Or use Docker's user mapping:
-
-   ```yaml
-   user: "${UID}:${GID}"
    ```
 
 #### SeaweedFS Connection Errors

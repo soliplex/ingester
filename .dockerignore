@@ -1,11 +1,52 @@
-file-store
-docker
-lancedb
-.env
+# Version control
+.git
+.gitignore
+.gitleaks.toml
+.pre-commit-config.yaml
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
 .venv
-.ruff_cache
+venv
+build
+dist
+.coverage
 .pytest_cache
-/*.db
-/db
-/haiku.db
+.ruff_cache
+
+# Environment and secrets
+.env
+.env_*
+!.env.docker.example
+
+# Runtime data (bind-mounted, not baked in)
+file-store
+lancedb
+db
+*.db
+
+# Documentation and metadata
+docs
+*.md
+LICENSE
+
+# Docker configs (not needed inside image)
+docker
+
+# IDE and OS
+.DS_Store
+._*
+.claude
+.vscode
+
+# CI
+.github
+
+# Tests (not needed in production image)
 tests
+
+# Node artifacts (UI has its own build stage)
+ui/node_modules

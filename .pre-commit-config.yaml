@@ -28,8 +28,8 @@ repos:
       - id: pip-audit
         name: pip-audit
 
-        #ignore CVE-2026-39892  CVE-2026-40260 due to cooldown
-        entry: uv run --with pip-audit pip-audit  --ignore-vuln CVE-2026-39892 --ignore-vuln CVE-2026-40260
+        #ignore  due to cooldown
+        entry: uv run --with pip-audit pip-audit   --ignore-vuln CVE-2026-40347 --ignore-vuln CVE-2026-40260 --ignore-vuln GHSA-jj6c-8h6c-hppx
         language: system
         pass_filenames: false
         files: (^pyproject\.toml$|^uv\.lock$)

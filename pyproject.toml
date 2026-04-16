@@ -1,6 +1,6 @@
 [project]
 name = "soliplex-ingester"
-version = "0.7.1"
+version = "0.7.2"
 description = "ingestion workflow manager for soliplex"
 authors = [{ name = "Enfold Systems", email = "info@enfoldsystems.net" }]
 readme = "README.md"
@@ -153,7 +153,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-pdf-splitter = { git = "https://github.com/soliplex/pdf-splitter.git" ,tag="v0.4.1" }
+pdf-splitter = { git = "https://github.com/soliplex/pdf-splitter.git" ,tag="v0.5.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]

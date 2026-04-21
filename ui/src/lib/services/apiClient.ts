@@ -272,13 +272,15 @@ class ApiClient {
 		batchId: number,
 		workflowDefinitionId?: string,
 		priority?: number,
-		paramId?: string
+		paramId?: string,
+		onlyUnparsed?: boolean
 	): Promise<import('$lib/types/api').StartWorkflowsResponse> {
 		const formData = new URLSearchParams();
 		formData.append('batch_id', String(batchId));
 		if (workflowDefinitionId) formData.append('workflow_definition_id', workflowDefinitionId);
 		if (priority !== undefined) formData.append('priority', String(priority));
 		if (paramId) formData.append('param_id', paramId);
+		if (onlyUnparsed !== undefined) formData.append('only_unparsed', String(onlyUnparsed));
 
 		const response = await this.fetchWithTimeout(`${this.baseUrl}/batch/start-workflows`, {
 			method: 'POST',

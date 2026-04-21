@@ -25,6 +25,11 @@ class ProtectionLevel(StrEnum):
     ENCRYPT = "encrypt"
 
 
+class LLMProvider(StrEnum):
+    OPENAI = "openai"
+    OLLAMA = "ollama"
+
+
 class S3Settings(BaseSettings):
     bucket: str = "default"
     endpoint_url: str = "default"
@@ -126,7 +131,10 @@ class Settings(BaseSettings):
     worker_checkin_timeout: int = 600
     worker_task_count: int = 5
     embed_batch_size: int = 1000
-    ollama_base_url: str = "http://ollama_img:11434"
+    llm_provider: LLMProvider = LLMProvider.OLLAMA
+    ollama_base_url: str | None = "http://ollama:11434"
+    # if None, use ollama_base_url, otherwise use this. if vllm append /v1 due to limitations in haiku
+    embed_llm_url: str | None = None
 
     do_rag: bool = True  # used for testing to turn off haiku rag
 

@@ -147,7 +147,7 @@ include = ["soliplex.ingester*"]
 # 1-week cooldown: don't resolve packages newer than this date.
 # Update periodically. haiku-rag-slim is exempt (see sources).
 exclude-newer = "1 weeks"
-exclude-newer-package = { haiku-rag-slim = "1 hour" , torch=false, torchvision=false ,pypdf="1 day" }
+exclude-newer-package = { haiku-rag-slim = "1 hour" , torch=false, torchvision=false ,pypdf="1 day" ,authlib="2 days", lxml="1 day" }
 
 [tool.uv.sources]
 pdf-splitter = { git = "https://github.com/soliplex/pdf-splitter.git" ,tag="v0.5.0" }

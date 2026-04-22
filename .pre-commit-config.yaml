@@ -29,7 +29,7 @@ repos:
         name: pip-audit
 
         #ignore  due to cooldown
-        entry: uv run --with pip-audit pip-audit  --ignore-vuln=GHSA-jj8c-mmj3-mmgv
+        entry: uv audit --no-dev --frozen
         language: system
         pass_filenames: false
         files: (^pyproject\.toml$|^uv\.lock$)

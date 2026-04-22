@@ -85,7 +85,7 @@ def test_build_embed_config_ollama(mock_app_config, mock_settings):
 
 
 def test_build_embed_config_openai(mock_app_config, mock_settings):
-    """Test build_embed_config sets provider to None and base_url when config provider is OPENAI"""
+    """Test build_embed_config sets provider to openai and base_url from embed_llm_url when config provider is OPENAI"""
     with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
         config_dict = {
             "model": "test-model",
@@ -96,7 +96,7 @@ def test_build_embed_config_openai(mock_app_config, mock_settings):
 
         assert result.embeddings.model.name == "test-model"
         assert result.embeddings.model.vector_dim == 1024
-        assert result.embeddings.model.provider is None
+        assert result.embeddings.model.provider == "openai"
         assert result.embeddings.model.base_url == "http://embed-llm:8000/v1"
 
 

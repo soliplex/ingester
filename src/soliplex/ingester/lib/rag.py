@@ -19,6 +19,7 @@ from haiku.rag.store.exceptions import MigrationRequiredError
 from haiku.rag.store.models.chunk import Chunk
 
 from . import models
+from .config import LLMProvider
 from .config import get_settings
 from .models import StepConfig
 
@@ -47,9 +48,20 @@ def build_embed_config(start_config: AppConfig, config_dict: dict[str, str | int
     #    setattr(config.embeddings, k, v)
     config.embeddings.model.name = config_dict["model"]
     config.embeddings.model.vector_dim = config_dict["vector_dim"]
-    config.embeddings.model.provider = config_dict["provider"]
-    # force haiku to use env variable even if config has a value set
-    config.providers.ollama.base_url = env.ollama_base_url
+    llm_provider = config_dict["provider"]
+
+    if llm_provider == LLMProvider.OLLAMA:
+        config.embeddings.model.provider = "ollama"
+        # force haiku to use env variable even if config has a value set
+        config.providers.ollama.base_url = env.ollama_base_url
+    elif llm_provider == LLMProvider.OPENAI:
+        config.embeddings.model.provider = "openai"
+        config.embeddings.model.base_url = env.embed_llm_url
+        logger.debug("embeddings model base url: %s", config.embeddings.model.base_url)
+        if env.embed_llm_url is None:
+            raise ValueError("embed_llm_url is not set")
+    else:
+        raise ValueError(f"Unknown LLM provider {env.llm_provider}")
     return config
 
 

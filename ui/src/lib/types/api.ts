@@ -6,7 +6,8 @@ export enum RunStatus {
 	RUNNING = 'RUNNING',
 	COMPLETED = 'COMPLETED',
 	ERROR = 'ERROR',
-	FAILED = 'FAILED'
+	FAILED = 'FAILED',
+	CANCELLED = 'CANCELLED'
 }
 
 export enum WorkflowStepType {

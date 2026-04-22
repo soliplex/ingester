@@ -34,6 +34,8 @@
 				return '⚠';
 			case RunStatus.FAILED:
 				return '✗';
+			case RunStatus.CANCELLED:
+				return '⊘';
 			default:
 				return '•';
 		}
@@ -51,6 +53,8 @@
 				return 'text-orange-600';
 			case RunStatus.FAILED:
 				return 'text-red-600';
+			case RunStatus.CANCELLED:
+				return 'text-yellow-600';
 			default:
 				return 'text-gray-500';
 		}

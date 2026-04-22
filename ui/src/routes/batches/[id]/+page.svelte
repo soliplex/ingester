@@ -133,6 +133,12 @@
 							{data.workflowCounts.FAILED || 0}
 						</span>
 					</div>
+					<div class="flex items-center gap-2">
+						<StatusBadge status={RunStatus.CANCELLED} />
+						<span class="text-sm text-gray-600">
+							{data.workflowCounts.CANCELLED || 0}
+						</span>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -162,6 +168,7 @@
 						<option value={RunStatus.COMPLETED}>Completed</option>
 						<option value={RunStatus.ERROR}>Error</option>
 						<option value={RunStatus.FAILED}>Failed</option>
+						<option value={RunStatus.CANCELLED}>Cancelled</option>
 					</select>
 				</div>
 			</div>

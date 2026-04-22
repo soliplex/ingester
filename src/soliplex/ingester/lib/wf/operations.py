@@ -1365,9 +1365,10 @@ async def reset_failed(
     """
     Reset steps and workflow runs back to PENDING.
 
-    By default, resets only FAILED steps and runs. When *hard* is
-    ``True``, **all** steps regardless of current state are set to
-    PENDING with retry count and worker_id cleared, and all
+    By default, resets FAILED steps plus any CANCELLED steps that were
+    cascaded from a failed sibling, and FAILED workflow runs. When
+    *hard* is ``True``, **all** steps regardless of current state are
+    set to PENDING with retry count and worker_id cleared, and all
     non-COMPLETED runs are set to PENDING.
 
     Parameters
@@ -1378,6 +1379,10 @@ async def reset_failed(
     hard : bool
         If True, reset every step and non-COMPLETED run.
     """
+    # Soft mode resets both FAILED steps and the CANCELLED siblings that
+    # were marked by cancel_pending_steps — otherwise restarted runs hit
+    # "can't change from CANCELLED to RUNNING".
+    soft_step_statuses = [RunStatus.FAILED, RunStatus.CANCELLED]
     async with get_session() as session:
         reset_values = {
             "status": RunStatus.PENDING,
@@ -1411,7 +1416,7 @@ async def reset_failed(
             )
             if not hard:
                 q1 = q1.where(
-                    RunStep.status == RunStatus.FAILED,
+                    RunStep.status.in_(soft_step_statuses),
                 )
             else:
                 q1 = q1.where(
@@ -1438,7 +1443,7 @@ async def reset_failed(
                 )
             else:
                 q1 = q1.where(
-                    RunStep.status == RunStatus.FAILED,
+                    RunStep.status.in_(soft_step_statuses),
                 )
             q1 = q1.values(**reset_values)
             q2 = update(WorkflowRun)

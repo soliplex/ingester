@@ -1,8 +1,11 @@
+import json
 import logging
 import logging.handlers
 from unittest.mock import patch
 
+import pytest
 from pydantic import SecretStr
+from pydantic import ValidationError
 
 import soliplex.ingester.lib.config as cfg
 
@@ -128,6 +131,54 @@ def _make_settings(**overrides):
     defaults = {"doc_db_url": SecretStr("sqlite+aiosqlite:///test.db")}
     defaults.update(overrides)
     return cfg.Settings(**defaults)
+
+
+def test_openai_api_key_exported_to_environ(monkeypatch):
+    """openai_api_key field is exported to os.environ when env var is unset."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cfg.Settings(
+        doc_db_url=SecretStr("sqlite+aiosqlite:///test.db"),
+        openai_api_key=SecretStr("sk-test"),
+    )
+    import os
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-test"
+
+
+def test_openai_api_key_does_not_overwrite_existing_env(monkeypatch):
+    """An already-set OPENAI_API_KEY env var wins over the settings field."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-preexisting")
+    cfg.Settings(
+        doc_db_url=SecretStr("sqlite+aiosqlite:///test.db"),
+        openai_api_key=SecretStr("sk-fromfield"),
+    )
+    import os
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-preexisting"
+
+
+def test_openai_api_key_none_leaves_env_untouched(monkeypatch):
+    """When openai_api_key is unset, the env var is not mutated."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cfg.Settings(doc_db_url=SecretStr("sqlite+aiosqlite:///test.db"))
+    import os
+
+    assert "OPENAI_API_KEY" not in os.environ
+
+
+def test_openai_api_key_from_secrets_dir(monkeypatch, tmp_path):
+    """openai_api_key is loaded from a /run/secrets-style directory and exported."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    secret_file = tmp_path / "openai_api_key"
+    secret_file.write_text("sk-fromfile")
+    settings = cfg.Settings(
+        doc_db_url=SecretStr("sqlite+aiosqlite:///test.db"),
+        _secrets_dir=str(tmp_path),
+    )
+    import os
+
+    assert settings.openai_api_key.get_secret_value() == "sk-fromfile"
+    assert os.environ["OPENAI_API_KEY"] == "sk-fromfile"
 
 
 class TestAddSmtpHandler:
@@ -274,3 +325,117 @@ class TestThrottledSMTPHandler:
             handler._last_emit -= 31
             handler.emit(record)
             assert mock_emit.call_count == 2
+
+
+def test_validate_param_dirs_raises_when_identical(tmp_path):
+    """Settings raises ValidationError when param_dir and user_param_dir resolve to the same path."""
+    shared = tmp_path / "params"
+    shared.mkdir()
+    with pytest.raises(ValidationError) as exc_info:
+        _make_settings(param_dir=str(shared), user_param_dir=str(shared))
+    assert "user_param_dir must be different from param_dir" in str(exc_info.value)
+
+
+def test_validate_file_protection_hmac_requires_secret():
+    """HMAC protection level requires file_secret to be set."""
+    with pytest.raises(ValidationError) as exc_info:
+        _make_settings(file_protection_level=cfg.ProtectionLevel.HMAC, file_secret=None)
+    assert "FILE_SECRET is required" in str(exc_info.value)
+
+
+def test_validate_file_protection_encrypt_requires_secret():
+    """ENCRYPT protection level requires file_secret to be set."""
+    with pytest.raises(ValidationError) as exc_info:
+        _make_settings(file_protection_level=cfg.ProtectionLevel.ENCRYPT, file_secret=SecretStr(""))
+    assert "FILE_SECRET is required" in str(exc_info.value)
+
+
+def test_validate_file_protection_hmac_with_secret_ok():
+    """HMAC protection level with file_secret set validates successfully."""
+    settings = _make_settings(
+        file_protection_level=cfg.ProtectionLevel.HMAC,
+        file_secret=SecretStr("s3cret"),
+    )
+    assert settings.file_protection_level is cfg.ProtectionLevel.HMAC
+
+
+class TestJsonFormatter:
+    def test_basic_fields(self):
+        """JsonFormatter emits timestamp, level, name, and message."""
+        formatter = cfg.JsonFormatter()
+        record = logging.LogRecord(
+            name="my.logger",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="hello %s",
+            args=("world",),
+            exc_info=None,
+        )
+        out = json.loads(formatter.format(record))
+        assert out["level"] == "INFO"
+        assert out["name"] == "my.logger"
+        assert out["message"] == "hello world"
+        assert "timestamp" in out
+        assert "exception" not in out
+
+    def test_exception_field(self):
+        """exc_info is serialized into the 'exception' field."""
+        formatter = cfg.JsonFormatter()
+
+        def _raise():
+            raise RuntimeError("boom")
+
+        try:
+            _raise()
+        except RuntimeError:
+            import sys
+
+            exc_info = sys.exc_info()
+        record = logging.LogRecord(
+            name="x",
+            level=logging.ERROR,
+            pathname="",
+            lineno=0,
+            msg="err",
+            args=(),
+            exc_info=exc_info,
+        )
+        out = json.loads(formatter.format(record))
+        assert "RuntimeError" in out["exception"]
+        assert "boom" in out["exception"]
+
+    def test_extra_attrs_included(self):
+        """Non-builtin attrs on a LogRecord are preserved in the JSON output."""
+        formatter = cfg.JsonFormatter()
+        record = logging.LogRecord(name="x", level=logging.INFO, pathname="", lineno=0, msg="m", args=(), exc_info=None)
+        record.doc_hash = "abc123"
+        out = json.loads(formatter.format(record))
+        assert out["doc_hash"] == "abc123"
+
+
+def test_add_smtp_handler_with_credentials():
+    """SMTP credentials tuple is passed through when username and password are set."""
+    settings = _make_settings(
+        smtp_host="smtp.example.com",
+        smtp_from="a@b.com",
+        smtp_to=["c@d.com"],
+        smtp_username="user",
+        smtp_password=SecretStr("pw"),
+        smtp_use_tls=True,
+    )
+    with patch("soliplex.ingester.lib.config._ThrottledSMTPHandler") as mock_handler_cls:
+        cfg._add_smtp_handler(settings)
+        kwargs = mock_handler_cls.call_args.kwargs
+        assert kwargs["credentials"] == ("user", "pw")
+        assert kwargs["secure"] == ()
+
+
+def test_configure_logging_json_format():
+    """configure_logging installs JsonFormatter when log_format is 'json'."""
+    settings = _make_settings(log_format="json")
+    cfg.configure_logging(settings)
+    root = logging.getLogger()
+    stream_handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)]
+    assert stream_handlers
+    assert isinstance(stream_handlers[-1].formatter, cfg.JsonFormatter)

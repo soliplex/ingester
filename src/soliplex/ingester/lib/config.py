@@ -1,6 +1,7 @@
 import json
 import logging
 import logging.handlers
+import os
 import time
 from datetime import UTC
 from datetime import datetime
@@ -120,6 +121,22 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def export_openai_api_key(self) -> "Settings":
+        """Export openai_api_key to os.environ if not already set in the environment.
+
+        This lets downstream code (haiku.rag, OpenAI SDK) that reads
+        OPENAI_API_KEY directly from the process env pick up the value
+        whether it was supplied via env var or via /run/secrets/openai_api_key.
+        An existing OPENAI_API_KEY env var is authoritative and never overwritten.
+        """
+        if self.openai_api_key is None:
+            return self
+        if os.environ.get("OPENAI_API_KEY"):
+            return self
+        os.environ["OPENAI_API_KEY"] = self.openai_api_key.get_secret_value()
+        return self
+
+    @model_validator(mode="after")
     def validate_file_protection(self) -> "Settings":
         """Ensure FILE_SECRET is set when protection level requires it."""
         if self.file_protection_level in (ProtectionLevel.HMAC, ProtectionLevel.ENCRYPT):
@@ -131,7 +148,6 @@ class Settings(BaseSettings):
     worker_checkin_timeout: int = 600
     worker_task_count: int = 5
     embed_batch_size: int = 1000
-    llm_provider: LLMProvider = LLMProvider.OLLAMA
     ollama_base_url: str | None = "http://ollama:11434"
     # if None, use ollama_base_url, otherwise use this. if vllm append /v1 due to limitations in haiku
     embed_llm_url: str | None = None
@@ -143,6 +159,10 @@ class Settings(BaseSettings):
 
     # Production settings
     production_mode: bool = False  # Enable production security requirements (mandatory authentication)
+
+    # Optional OpenAI API key. When set (directly or via /run/secrets/openai_api_key),
+    # exported to os.environ["OPENAI_API_KEY"] so haiku.rag / OpenAI SDK can pick it up.
+    openai_api_key: SecretStr | None = None
 
     # Authentication settings
     api_key: SecretStr | None = None  # Static API key for programmatic access

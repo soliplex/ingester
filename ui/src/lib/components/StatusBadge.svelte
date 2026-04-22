@@ -33,10 +33,21 @@
 			color: 'bg-red-100 text-red-800 border-red-300',
 			icon: '✗',
 			label: 'Failed'
+		},
+		[RunStatus.CANCELLED]: {
+			color: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+			icon: '⊘',
+			label: 'Cancelled'
 		}
 	};
 
-	const config = $derived(statusConfig[status]);
+	const config = $derived(
+		statusConfig[status] ?? {
+			color: 'bg-gray-100 text-gray-800 border-gray-300',
+			icon: '?',
+			label: status ? String(status) : 'Unknown'
+		}
+	);
 </script>
 
 <span

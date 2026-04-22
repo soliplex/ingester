@@ -32,7 +32,9 @@ export const load: PageLoad = async () => {
 			completed: workflowItems.filter((w) => getWorkflowRun(w).status === RunStatus.COMPLETED)
 				.length,
 			error: workflowItems.filter((w) => getWorkflowRun(w).status === RunStatus.ERROR).length,
-			failed: workflowItems.filter((w) => getWorkflowRun(w).status === RunStatus.FAILED).length
+			failed: workflowItems.filter((w) => getWorkflowRun(w).status === RunStatus.FAILED).length,
+			cancelled: workflowItems.filter((w) => getWorkflowRun(w).status === RunStatus.CANCELLED)
+				.length
 		};
 
 		const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -54,6 +56,7 @@ export const load: PageLoad = async () => {
 				pendingWorkflows: workflowsByStatus.pending,
 				runningWorkflows: workflowsByStatus.running,
 				failedWorkflows: workflowsByStatus.failed + workflowsByStatus.error,
+				cancelledWorkflows: workflowsByStatus.cancelled,
 				completedToday,
 				successRate
 			},
@@ -69,6 +72,7 @@ export const load: PageLoad = async () => {
 				pendingWorkflows: 0,
 				runningWorkflows: 0,
 				failedWorkflows: 0,
+				cancelledWorkflows: 0,
 				completedToday: 0,
 				successRate: 0
 			},

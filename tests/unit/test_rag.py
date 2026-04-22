@@ -45,7 +45,6 @@ def mock_settings():
     settings.docling_http_timeout = 60
     settings.lancedb_dir = "/tmp/lancedb"
     settings.embed_batch_size = 10
-    settings.llm_provider = LLMProvider.OLLAMA
     settings.ollama_base_url = "http://ollama-test:11434"
     settings.embed_llm_url = "http://embed-llm:8000/v1"
     return settings
@@ -66,12 +65,12 @@ def test_build_docling_config(mock_app_config, mock_settings):
 
 
 def test_build_embed_config_ollama(mock_app_config, mock_settings):
-    """Test build_embed_config sets provider to ollama when env.llm_provider is OLLAMA"""
-    mock_settings.llm_provider = LLMProvider.OLLAMA
+    """Test build_embed_config sets provider to ollama when config provider is OLLAMA"""
     with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
         config_dict = {
             "model": "test-model",
             "vector_dim": 1024,
+            "provider": LLMProvider.OLLAMA,
         }
         result = rag.build_embed_config(mock_app_config, config_dict)
 
@@ -86,12 +85,12 @@ def test_build_embed_config_ollama(mock_app_config, mock_settings):
 
 
 def test_build_embed_config_openai(mock_app_config, mock_settings):
-    """Test build_embed_config sets provider to None and base_url when env.llm_provider is OPENAI"""
-    mock_settings.llm_provider = LLMProvider.OPENAI
+    """Test build_embed_config sets provider to None and base_url when config provider is OPENAI"""
     with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
         config_dict = {
             "model": "test-model",
             "vector_dim": 1024,
+            "provider": LLMProvider.OPENAI,
         }
         result = rag.build_embed_config(mock_app_config, config_dict)
 
@@ -99,6 +98,19 @@ def test_build_embed_config_openai(mock_app_config, mock_settings):
         assert result.embeddings.model.vector_dim == 1024
         assert result.embeddings.model.provider is None
         assert result.embeddings.model.base_url == "http://embed-llm:8000/v1"
+
+
+def test_build_embed_config_openai_missing_embed_llm_url(mock_app_config, mock_settings):
+    """Test build_embed_config raises ValueError when OPENAI provider has no embed_llm_url"""
+    mock_settings.embed_llm_url = None
+    with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
+        config_dict = {
+            "model": "test-model",
+            "vector_dim": 1024,
+            "provider": LLMProvider.OPENAI,
+        }
+        with pytest.raises(ValueError, match="embed_llm_url is not set"):
+            rag.build_embed_config(mock_app_config, config_dict)
 
 
 def test_build_embed_config_missing_required_key(mock_app_config, mock_settings):
@@ -174,7 +186,11 @@ def test_build_full_config(mock_app_config, mock_settings):
     """Test build_full_config function"""
     with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
         chunk_config = {"chunk_size": 512, "chunker": "hierarchical"}
-        embed_config = {"model": "test-model", "vector_dim": 1024, "provider": "test-provider"}
+        embed_config = {
+            "model": "test-model",
+            "vector_dim": 1024,
+            "provider": LLMProvider.OLLAMA,
+        }
         storage_config = {"data_dir": "test-dir"}
 
         result = rag.build_full_config(mock_app_config, chunk_config, embed_config, storage_config)
@@ -359,17 +375,22 @@ async def test_save_to_rag_missing_data_dir():
     step_config.config_json = {}  # Missing data_dir
 
     embed_config = MagicMock(spec=models.StepConfig)
-    embed_config.config_json = {"model": "test-model", "vector_dim": 1024, "provider": "test-provider"}
+    embed_config.config_json = {
+        "model": "test-model",
+        "vector_dim": 1024,
+        "provider": LLMProvider.OLLAMA,
+    }
 
-    with pytest.raises(ValueError, match="Missing required key data_dir"):
-        await rag.save_to_rag(
-            doc=mock_doc,
-            chunks=[],
-            docling_json='{"test": "data"}',
-            source_uri=models.DocumentURI(uri="http://example.com/doc.pdf", source="test"),
-            step_config=step_config,
-            embed_config=embed_config,
-        )
+    with patch("soliplex.ingester.lib.rag.build_embed_config", return_value=MagicMock()):
+        with pytest.raises(ValueError, match="Missing required key data_dir"):
+            await rag.save_to_rag(
+                doc=mock_doc,
+                chunks=[],
+                docling_json='{"test": "data"}',
+                source_uri=models.DocumentURI(uri="http://example.com/doc.pdf", source="test"),
+                step_config=step_config,
+                embed_config=embed_config,
+            )
 
 
 def test_build_storage_config_s3_in_data_dir(mock_app_config, mock_settings):
@@ -490,10 +511,9 @@ def test_build_chunk_config_without_text_context_radius(mock_app_config, mock_se
 
 
 def test_build_embed_config_unknown_provider(mock_app_config, mock_settings):
-    """Test build_embed_config raises ValueError for an unknown llm_provider"""
-    mock_settings.llm_provider = "unknown"
+    """Test build_embed_config raises ValueError for an unknown provider in config_dict"""
     with patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings):
-        config_dict = {"model": "m", "vector_dim": 8}
+        config_dict = {"model": "m", "vector_dim": 8, "provider": "unknown"}
         with pytest.raises(ValueError, match="Unknown LLM provider"):
             rag.build_embed_config(mock_app_config, config_dict)
 

@@ -16,7 +16,8 @@
 		{ value: RunStatus.RUNNING, label: 'Running' },
 		{ value: RunStatus.COMPLETED, label: 'Completed' },
 		{ value: RunStatus.ERROR, label: 'Error' },
-		{ value: RunStatus.FAILED, label: 'Failed' }
+		{ value: RunStatus.FAILED, label: 'Failed' },
+		{ value: RunStatus.CANCELLED, label: 'Cancelled' }
 	];
 
 	function handleStatusChange(event: Event) {

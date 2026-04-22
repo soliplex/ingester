@@ -87,9 +87,7 @@ async def docling_convert(
             parameters["do_picture_description"] = True
             prompt = config_dict.get("picture_description_prompt", DESC_DEFAULTS["prompt"])
             model = config_dict.get("picture_description_model", DESC_DEFAULTS["model"])
-            ollama_url = env.ollama_base_url.rstrip("/") + "/v1/chat/completions"
             picture_description_api = {
-                "url": ollama_url,
                 "params": {
                     "model": model,
                     "max_completion_tokens": config_dict.get("picture_description_max_tokens", DESC_DEFAULTS["max_tokens"]),
@@ -97,7 +95,6 @@ async def docling_convert(
                 "prompt": prompt,
                 "timeout": DESC_DEFAULTS["timeout"],
             }
-
             parameters["picture_description_api"] = json.dumps(picture_description_api)
         else:
             parameters["do_picture_description"] = False

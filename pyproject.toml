@@ -1,6 +1,6 @@
 [project]
 name = "soliplex-ingester"
-version = "0.7.1"
+version = "0.7.2"
 description = "ingestion workflow manager for soliplex"
 authors = [{ name = "Enfold Systems", email = "info@enfoldsystems.net" }]
 readme = "README.md"
@@ -28,12 +28,11 @@ dependencies = [
     "docling-core>=2.51.1",
     "fastapi[standard]>=0.125.0",
     "fsspec>=2025.12.0",
-    "haiku-rag-slim>=0.30.2",
     "opendal>=0.46.0",
-    "pdf-splitter",
+    "pdf-splitter >= 0.5.0",
     "psycopg[binary,pool]>=3.3.2",
     "pydantic-settings>=2.12.0",
-    "pypdf>=6.7.4",
+    "pypdf>=6.10.1",
     "slowapi>=0.1.9",
     "sqlmodel>=0.0.27",
     "tenacity>=9.1.2",
@@ -45,6 +44,7 @@ dependencies = [
     "cryptography>=44.0.0",
     "sqlalchemy>=2.0.46",
     "pydantic>=2.12.5",
+    "haiku-rag-slim>=0.39.0",
 ]
 
 [dependency-groups]
@@ -147,13 +147,10 @@ include = ["soliplex.ingester*"]
 # 1-week cooldown: don't resolve packages newer than this date.
 # Update periodically. haiku-rag-slim is exempt (see sources).
 exclude-newer = "1 weeks"
-exclude-newer-package = { haiku-rag-slim = "1 hour" , torch=false, torchvision=false }
-override-dependencies = [
-    "py-key-value-aio>=0.3.0",
-]
+exclude-newer-package = { haiku-rag-slim = "1 hour" , torch=false, torchvision=false ,pypdf="1 day" ,authlib="2 days", lxml="1 day" }
 
 [tool.uv.sources]
-pdf-splitter = { git = "https://github.com/soliplex/pdf-splitter.git" ,tag="v0.4.1" }
+pdf-splitter = { git = "https://github.com/soliplex/pdf-splitter.git" ,tag="v0.5.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]

@@ -18,6 +18,7 @@
 			totalRuns: item.stats.total_runs,
 			completed: item.stats.status_counts.COMPLETED || 0,
 			failed: (item.stats.status_counts.FAILED || 0) + (item.stats.status_counts.ERROR || 0),
+			cancelled: item.stats.status_counts.CANCELLED || 0,
 			avgDuration: formatDuration(item.stats.avg_duration)
 		}))
 	);
@@ -30,6 +31,7 @@
 		{ key: 'totalRuns', label: 'Total Runs' },
 		{ key: 'completed', label: 'Completed' },
 		{ key: 'failed', label: 'Failed' },
+		{ key: 'cancelled', label: 'Cancelled' },
 		{ key: 'avgDuration', label: 'Avg Duration' }
 	];
 
@@ -46,7 +48,7 @@
 			<ErrorMessage error={data.error} />
 		</div>
 	{:else}
-		<div class="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+		<div class="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
 			<StatsCard title="Total Workflows" value={data.systemStats.totalWorkflows} icon="⚙️" />
 			<StatsCard
 				title="Completed"
@@ -59,6 +61,12 @@
 				value={data.systemStats.failedWorkflows}
 				description="Requires attention"
 				icon="✗"
+			/>
+			<StatsCard
+				title="Cancelled"
+				value={data.systemStats.cancelledWorkflows}
+				description="User cancelled"
+				icon="⊘"
 			/>
 			<StatsCard title="Success Rate" value="{data.systemStats.successRate}%" icon="📊" />
 		</div>

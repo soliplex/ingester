@@ -177,7 +177,16 @@ embed:
 
 **Providers:**
 
+Soliplex Ingester ships with two embedding providers. The provider is selected
+per parameter set via `embed.provider`, but connection details (base URL, auth)
+come from **environment variables**, not the YAML. This keeps secrets and
+deployment-specific endpoints out of the param set definitions.
+
 #### Ollama
+
+Use Ollama when you want local / self-hosted embeddings with no per-token
+cost. All ingester workers share the Ollama server configured via
+`OLLAMA_BASE_URL`.
 
 ```yaml
 embed:
@@ -186,15 +195,30 @@ embed:
   vector_dim: 2560
 ```
 
-**Environment variables:**
-- `OLLAMA_BASE_URL` - Ollama server URL (e.g., `http://localhost:11434`)
+**Required environment variables:**
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `OLLAMA_BASE_URL` | Yes | Ollama server URL, e.g., `http://ollama:11434` (no `/v1` suffix) |
+
+**Setup checklist:**
+
+1. Set `OLLAMA_BASE_URL` in `.env` (or container env) — see [CONFIGURATION.md](CONFIGURATION.md#ollama_base_url).
+2. Pull the embedding model on the Ollama server: `ollama pull qwen3-embedding:4b`.
+3. Confirm `vector_dim` matches the model output (see dimension table below).
 
 **Popular models:**
+
 - `nomic-embed-text` - 768 dimensions, excellent performance
 - `mxbai-embed-large` - 1024 dimensions, high quality
 - `qwen3-embedding:4b` - 2560 dimensions, multilingual
 
 #### OpenAI
+
+Use the OpenAI provider for either the real OpenAI API or any
+**OpenAI-compatible** endpoint (vLLM, text-embeddings-inference, LiteLLM,
+Azure OpenAI proxy, etc.). The ingester does not assume `api.openai.com` —
+the endpoint is always taken from `EMBED_LLM_URL`.
 
 ```yaml
 embed:
@@ -203,13 +227,46 @@ embed:
   vector_dim: 1536
 ```
 
-**Environment variables:**
-- `OPENAI_API_KEY` - OpenAI API key
+**Required environment variables:**
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `OPENAI_API_KEY` | Yes | API key; may be loaded from `/run/secrets/openai_api_key`. For self-hosted endpoints that don't authenticate, set it to any non-empty value. |
+| `EMBED_LLM_URL` | Yes | Base URL including `/v1` suffix, e.g., `https://api.openai.com/v1` or `http://vllm:8000/v1` |
+
+**Setup checklist:**
+
+1. Set `OPENAI_API_KEY` — either as an env var or by mounting
+   `/run/secrets/openai_api_key`. See [CONFIGURATION.md](CONFIGURATION.md#openai_api_key).
+2. Set `EMBED_LLM_URL` to the full `/v1` endpoint. See
+   [CONFIGURATION.md](CONFIGURATION.md#embed_llm_url).
+3. Confirm `vector_dim` matches the model output.
+
+**Real OpenAI example:**
+
+```bash
+OPENAI_API_KEY=sk-...
+EMBED_LLM_URL=https://api.openai.com/v1
+```
+
+**Self-hosted vLLM example:**
+
+```bash
+OPENAI_API_KEY=not-used-but-required
+EMBED_LLM_URL=http://vllm.internal:8000/v1
+```
 
 **Models:**
+
 - `text-embedding-3-small` - 1536 dimensions, cost-effective
 - `text-embedding-3-large` - 3072 dimensions, highest quality
 - `text-embedding-ada-002` - 1536 dimensions (legacy)
+- Any embedding model served by your OpenAI-compatible backend (when using vLLM, etc.)
+
+**Troubleshooting:**
+
+- `embed_llm_url is not set` at embed time → `EMBED_LLM_URL` is missing; export it and restart workers.
+- 401 / 403 from your endpoint → `OPENAI_API_KEY` either wasn't set or is incorrect. If you mounted `/run/secrets/openai_api_key`, confirm no pre-existing `OPENAI_API_KEY` env var is overriding it (env wins over the secret file).
 
 **Important:** The `vector_dim` must match the actual dimension output by the model. Incorrect values will cause embedding errors.
 

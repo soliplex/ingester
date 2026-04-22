@@ -69,6 +69,9 @@
 		if (status === RunStatus.RUNNING) {
 			return 'text-blue-600';
 		}
+		if (status === RunStatus.CANCELLED) {
+			return 'text-yellow-600';
+		}
 		return 'text-gray-600';
 	}
 
@@ -86,6 +89,9 @@
 		}
 		if (status === RunStatus.RUNNING) {
 			return 'border-blue-300';
+		}
+		if (status === RunStatus.CANCELLED) {
+			return 'border-yellow-300';
 		}
 		return 'border-gray-300';
 	}

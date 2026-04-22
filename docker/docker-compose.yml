@@ -59,6 +59,49 @@ services:
 
 
   # ===========================================================================
+  # Soliplex Ingester - Development
+  # ===========================================================================
+  # Builds the development target with hot reloading and bind-mounted source.
+  #
+  #   docker-compose up soliplex_ingester_dev
+  #
+  # On Linux, set APP_UID/APP_GID so container files match host user:
+  #
+  #   APP_UID=$(id -u) APP_GID=$(id -g) docker-compose up soliplex_ingester_dev
+  #
+  soliplex_ingester_dev:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: development
+      args:
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
+
+    environment:
+      DOC_DB_URL: postgresql+psycopg://soliplex_attrib:soliplex_attrib@postgres:5432/soliplex_attrib
+      FILE_STORE_TARGET: fs
+      FILE_STORE_DIR: /var/soliplex/file_store
+      LANCEDB_DIR: /var/soliplex/lancedb
+      WORKER_TASK_COUNT: 10
+      DOCLING_SERVER_URL: http://haproxy:5004/v1
+      DOCLING_HTTP_TIMEOUT: 1200
+      DOCLING_CONCURRENCY: 4
+
+    ports:
+      - "8002:8000"
+
+    volumes:
+      - ../src/soliplex/ingester:/app/src/soliplex/ingester   # Live code
+      - ../tests:/app/tests                                   # Test suite
+      - ./file_store:/var/soliplex/file_store
+      - ./lancedb:/var/soliplex/lancedb
+
+    networks:
+      - soliplex_net
+
+
+  # ===========================================================================
   # PostgreSQL - Document and Workflow Database
   # ===========================================================================
   # Stores document metadata, workflow state, and processing history

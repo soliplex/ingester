@@ -6,6 +6,7 @@ import itertools
 import logging
 import pathlib
 
+from collections import defaultdict
 from docling_core.types.doc.document import DoclingDocument
 from haiku.rag.app import HaikuRAGApp
 from haiku.rag.chunkers import get_chunker
@@ -24,7 +25,8 @@ from .models import StepConfig
 
 logger = logging.getLogger(__name__)
 
-_rag_lock = asyncio.Lock()
+lock_map=defaultdict(asyncio.Lock)
+
 
 
 def build_docling_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
@@ -199,8 +201,9 @@ async def check_rag_existence(
     config = build_storage_config(config, store_config)
 
     found = set()
+    _rag_lock=lock_map[db_path]
     async with _rag_lock:
-        async with HaikuRAG(config=config, create=False, db_path=db_path) as client:
+        async with HaikuRAG(config=config,read_only=True, create=False, db_path=db_path) as client:
             tbl = client.document_repository.store.documents_table
             for h in doc_hashes:
                 docs = _find_docs_by_hash(h, tbl)
@@ -250,6 +253,7 @@ async def save_to_rag(
     # FIXME: move create to batch start
     # lock writes to avoid concurrent writes
     logger.info(f"bytes docling={len(docling_json)}", extra=_log_con)
+    _rag_lock=lock_map[db_path]
     async with _rag_lock:
         async with HaikuRAG(config=config, create=True, db_path=db_path) as client:
             # try to find the document

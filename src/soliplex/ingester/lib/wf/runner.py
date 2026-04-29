@@ -84,7 +84,6 @@ async def set_step_status(
     status: RunStatus,
     message: str | None = None,
     meta: dict[str, str] | None = None,
-    increase_retry: bool = False,
 ) -> RunStep:
     async with get_session() as session:
         q = select(RunStep).where(RunStep.id == run_step_id).with_for_update(nowait=True)
@@ -95,10 +94,13 @@ async def set_step_status(
         if step is None:
             logger.error(f"set_step_status: step {run_step_id} not found")
             raise WorkflowException(f"step {run_step_id} not found")
+        # retry counts failed attempts. Project this failure into the count
+        # passed to the state machine so the FAILED threshold reflects it.
+        projected_retry = step.retry + 1 if status == RunStatus.ERROR else step.retry
         step.status = do_state_transition(
             step.status,
             status,
-            step.retry,
+            projected_retry,
             step.retries,
             step.worker_id,
         )
@@ -120,9 +122,7 @@ async def set_step_status(
         if step.completed_date is None and status == RunStatus.COMPLETED:
             step.completed_date = timestamp
 
-        if increase_retry:
-            if step.retry >= step.retries:
-                logger.warning(f"step {step.id} already failed {step.retry} times")
+        if status == RunStatus.ERROR:
             step.retry += 1
 
         session.add(step)
@@ -374,7 +374,7 @@ async def run_wf_step(run_step: RunStep, coro_id: int = None):
             f" ({run_step.workflow_step_name})"
             f" in workflow {workflow_def.name}"
             f" priority={run_step.priority}"
-            f" attempt={run_step.retry}/{run_step.retries}",
+            f" attempt={run_step.retry + 1}/{run_step.retries}",
             extra=lc,
         )
         await handle_lifecycle_event(
@@ -402,7 +402,6 @@ async def run_wf_step(run_step: RunStep, coro_id: int = None):
         upd_step = await set_step_status(
             run_step.id,
             status=RunStatus.COMPLETED,
-            increase_retry=False,
             message="success",
             meta={"coro_id": coro_id},
         )
@@ -613,7 +612,6 @@ async def consume_tasks(coro_id: int):
                             run_step = await set_step_status(
                                 run_step.id,
                                 RunStatus.RUNNING,
-                                increase_retry=True,
                                 meta={"coro_id": coro_id},
                             )
                         except Exception as e:

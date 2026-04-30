@@ -1,21 +1,29 @@
-"""Tests for runner.do_state_transition worker-id and transition guards."""
+"""Tests for the runner module's pure state-machine helpers.
+
+The legacy ``do_state_transition`` mixed transition rules with a
+worker-ownership check that read process-global state. After the
+refactor, ownership is enforced at the SQL layer via lease tokens,
+so the in-memory layer is now two pure functions:
+
+* :func:`transition_allowed` — the rules table.
+* :func:`elevate_terminal` — ERROR → FAILED when retries exhausted.
+
+:func:`do_state_transition` is preserved as a thin compatibility
+wrapper that composes the two; tests for it are kept to the
+behaviors it can still meaningfully express.
+"""
 
 import pytest
 
 from soliplex.ingester.lib.models import RunStatus
-from soliplex.ingester.lib.wf import runner
 from soliplex.ingester.lib.wf.runner import WorkflowException
 from soliplex.ingester.lib.wf.runner import do_state_transition
+from soliplex.ingester.lib.wf.runner import elevate_terminal
+from soliplex.ingester.lib.wf.runner import transition_allowed
 
 
-@pytest.fixture(autouse=True)
-def _set_worker_id(monkeypatch):
-    """Set a deterministic worker id for all tests."""
-    monkeypatch.setattr(runner, "_worker_id", "worker-A")
-
-
-class TestAllowedTransitions:
-    """Happy-path transitions that must succeed."""
+class TestTransitionAllowed:
+    """Pure rules table."""
 
     @pytest.mark.parametrize(
         "start,end",
@@ -23,26 +31,13 @@ class TestAllowedTransitions:
             (RunStatus.PENDING, RunStatus.RUNNING),
             (RunStatus.RUNNING, RunStatus.COMPLETED),
             (RunStatus.RUNNING, RunStatus.ERROR),
+            (RunStatus.RUNNING, RunStatus.PENDING),
             (RunStatus.ERROR, RunStatus.RUNNING),
+            (RunStatus.PENDING, RunStatus.CANCELLED),
         ],
     )
     def test_allowed(self, start, end):
-        result = do_state_transition(start, end, 0, 3, "worker-A")
-        assert result == end
-
-    def test_same_status_is_noop(self):
-        result = do_state_transition(
-            RunStatus.RUNNING,
-            RunStatus.RUNNING,
-            0,
-            3,
-            "worker-A",
-        )
-        assert result == RunStatus.RUNNING
-
-
-class TestDisallowedTransitions:
-    """Transitions that must raise WorkflowException."""
+        assert transition_allowed(start, end) is True
 
     @pytest.mark.parametrize(
         "start,end",
@@ -55,91 +50,40 @@ class TestDisallowedTransitions:
         ],
     )
     def test_disallowed(self, start, end):
-        with pytest.raises(WorkflowException):
-            do_state_transition(start, end, 0, 3, "worker-A")
+        assert transition_allowed(start, end) is False
+
+    def test_identity_is_allowed(self):
+        for s in RunStatus:
+            assert transition_allowed(s, s) is True
 
 
-class TestWorkerIdGuard:
-    """Worker ownership checks."""
-
-    def test_rejects_step_owned_by_another_worker(self):
-        with pytest.raises(WorkflowException, match="assigned to worker"):
-            do_state_transition(
-                RunStatus.RUNNING,
-                RunStatus.COMPLETED,
-                0,
-                3,
-                "worker-B",
-            )
-
-    def test_allows_pending_step_owned_by_another_worker(self):
-        """After restart, a new worker can claim orphaned PENDING
-        steps still assigned to a dead worker."""
-        result = do_state_transition(
-            RunStatus.PENDING,
-            RunStatus.RUNNING,
-            0,
-            3,
-            "worker-B",
-        )
-        assert result == RunStatus.RUNNING
-
-    def test_reclaimed_step_rejects_stale_completion(self):
-        """Dead-worker race: worker_id cleared, stale worker tries
-        to complete."""
-        with pytest.raises(WorkflowException, match="reclaimed"):
-            do_state_transition(
-                RunStatus.PENDING,
-                RunStatus.COMPLETED,
-                0,
-                3,
-                None,
-            )
-
-    def test_reclaimed_step_rejects_stale_error(self):
-        """Dead-worker race: worker_id cleared, stale worker tries
-        to set error."""
-        with pytest.raises(WorkflowException, match="reclaimed"):
-            do_state_transition(
-                RunStatus.PENDING,
-                RunStatus.ERROR,
-                0,
-                3,
-                None,
-            )
-
-    def test_reclaimed_step_allows_fresh_pickup(self):
-        """After dead-worker reset, a new worker can pick up the
-        PENDING step normally."""
-        result = do_state_transition(
-            RunStatus.PENDING,
-            RunStatus.RUNNING,
-            0,
-            3,
-            None,
-        )
-        assert result == RunStatus.RUNNING
-
-
-class TestRetryExhaustion:
-    """ERROR with exhausted retries should become FAILED."""
+class TestElevateTerminal:
+    """ERROR → FAILED when retries exhausted; otherwise unchanged."""
 
     def test_error_becomes_failed_when_retries_exhausted(self):
-        result = do_state_transition(
-            RunStatus.RUNNING,
-            RunStatus.ERROR,
-            3,
-            3,
-            "worker-A",
-        )
-        assert result == RunStatus.FAILED
+        assert elevate_terminal(RunStatus.ERROR, retry=3, retries=3) == RunStatus.FAILED
+        assert elevate_terminal(RunStatus.ERROR, retry=4, retries=3) == RunStatus.FAILED
 
     def test_error_stays_error_when_retries_remain(self):
-        result = do_state_transition(
-            RunStatus.RUNNING,
-            RunStatus.ERROR,
-            1,
-            3,
-            "worker-A",
-        )
-        assert result == RunStatus.ERROR
+        assert elevate_terminal(RunStatus.ERROR, retry=1, retries=3) == RunStatus.ERROR
+
+    def test_other_statuses_unchanged(self):
+        for s in (RunStatus.RUNNING, RunStatus.COMPLETED, RunStatus.PENDING):
+            assert elevate_terminal(s, retry=99, retries=1) == s
+
+
+class TestDoStateTransitionWrapper:
+    """The legacy wrapper composes the two pure helpers."""
+
+    def test_allowed_returns_end(self):
+        assert do_state_transition(RunStatus.PENDING, RunStatus.RUNNING, 0, 3) == RunStatus.RUNNING
+
+    def test_disallowed_raises(self):
+        with pytest.raises(WorkflowException, match="can't change"):
+            do_state_transition(RunStatus.COMPLETED, RunStatus.RUNNING, 0, 3)
+
+    def test_error_elevates_to_failed(self):
+        assert do_state_transition(RunStatus.RUNNING, RunStatus.ERROR, 3, 3) == RunStatus.FAILED
+
+    def test_error_stays_error_with_retries_left(self):
+        assert do_state_transition(RunStatus.RUNNING, RunStatus.ERROR, 1, 3) == RunStatus.ERROR

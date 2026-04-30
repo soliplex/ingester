@@ -768,10 +768,27 @@ def status_details(
 # ── lancedb ────────────────────────────────────────────────────────
 
 
-async def _vacuum(db_name: str, sign: bool):
+async def _vacuum(db_name: str, sign: bool, force: bool):
+    from .lib.models import ResourceLockKind
+    from .lib.rag import _resolve_db_path
+    from .lib.rag import resource_key_for
     from .lib.rag import vacuum_db
+    from .lib.wf import operations as wf_ops
 
-    await vacuum_db(db_name, sign=sign)
+    if force:
+        try:
+            db_path = _resolve_db_path(db_name)
+        except FileNotFoundError as e:
+            print(f"error: {e}")
+            raise typer.Exit(code=1) from e
+        released = await wf_ops.force_release_resource_lock(resource_key_for(db_path))
+        if released:
+            print(f"force-released lock for {db_path}")
+    try:
+        await vacuum_db(db_name, sign=sign, holder_kind=ResourceLockKind.CLI, max_wait=0)
+    except TimeoutError as e:
+        print(f"error: {e}; pass --force to break the lock")
+        raise typer.Exit(code=2) from e
 
 
 @lancedb_app.command("vacuum")
@@ -784,23 +801,47 @@ def lancedb_vacuum(
         "--sign",
         help="Write an HMAC-SHA512 signature after vacuuming (requires LANCEDB_HMAC_KEY)",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Break the cross-subsystem RAG lock if held by another holder",
+    ),
 ):
     """Vacuum a LanceDB database to reclaim space.
 
     Removes deleted rows and compacts data files in the specified
     database under the configured lancedb_dir.
 
+    Holds the cross-subsystem RAG-DB lock for the duration of the
+    operation; fails fast with a non-zero exit code if the lock is
+    held elsewhere. Pass ``--force`` to break a stuck lock (logged).
+
     Examples:
         si-diag lancedb vacuum my_database
         si-diag lancedb vacuum my_database --sign
+        si-diag lancedb vacuum my_database --force
     """
-    asyncio.run(_vacuum(db_name, sign))
+    asyncio.run(_vacuum(db_name, sign, force))
 
 
 async def _vacuum_all(sign: bool):
-    from .lib.rag import vacuum_all
+    from .lib.models import ResourceLockKind
+    from .lib.rag import list_dbs
+    from .lib.rag import vacuum_db
 
-    await vacuum_all(sign=sign)
+    db_names = list_dbs()
+    if not db_names:
+        print("no databases found to vacuum")
+        return
+    for name in db_names:
+        try:
+            await vacuum_db(name, sign=sign, holder_kind=ResourceLockKind.CLI, max_wait=0)
+        except TimeoutError as e:
+            print(f"skip {name}: {e}")
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(f"failed to vacuum {name}")
 
 
 @lancedb_app.command("vacuum-all")
@@ -814,6 +855,7 @@ def lancedb_vacuum_all(
     """Vacuum every LanceDB database under the configured lancedb_dir.
 
     Iterates over all database directories and vacuums each one.
+    Skips any DB whose RAG-DB lock is currently held.
 
     Examples:
         si-diag lancedb vacuum-all

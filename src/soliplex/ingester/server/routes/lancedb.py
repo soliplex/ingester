@@ -267,19 +267,33 @@ async def get_info(
     "/vacuum", status_code=status.HTTP_200_OK, summary="Optimize and clean up all tables to reduce disk usage"
 )
 async def vacuum(response: Response, db: str = Query(..., description="Database name relative to lancedb_dir")):
-    settings = get_settings()
-    db_path = resolve_lancedb_path(db, settings.lancedb_dir)
-    app = create_app(db_path)
+    """Vacuum a LanceDB database.
+
+    The DB is held under the cross-subsystem :class:`ResourceLock`
+    so concurrent writers (workflow ``save_to_rag`` steps, the CLI
+    vacuum, lifecycle vacuums) cannot race the operation. Returns
+    409 with the current holder if the lock can't be acquired.
+    """
+    from soliplex.ingester.lib.models import ResourceLockKind
+    from soliplex.ingester.lib.rag import vacuum_db
+
+    # vacuum_db uses lancedb_dir-relative naming; the API parameter
+    # ``db`` is already the relative name.
     try:
-        await app.vacuum()
+        await vacuum_db(db, holder_kind=ResourceLockKind.WEB, max_wait=0)
+    except TimeoutError as e:
+        response.status_code = status.HTTP_409_CONFLICT
+        return {"status": "locked", "error": str(e)}
+    except FileNotFoundError as e:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"status": "not_found", "error": str(e)}
     except Exception as e:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return {
             "status": "error",
             "error": f"Failed to vacuum database: {e}",
         }
-    else:
-        return {"status": "ok"}
+    return {"status": "ok"}
 
 
 @lancedb_router.get("/documents", status_code=status.HTTP_200_OK, summary="List documents in LanceDB")

@@ -188,16 +188,25 @@ def bootstrap(haiku: bool = True, config: bool = True, env: bool = True):
 
 
 async def _start_worker():
+    from .lib.config import get_settings
     from .lib.models import Database
-    from .lib.wf.runner import start_worker
+    from .lib.wf.runner import Worker
+    from .lib.wf.runner import WorkerConfig
 
-    # Initialize database before starting worker
     await Database.initialize()
-
-    await start_worker()
-    # sleep forever
-    while True:
-        await asyncio.sleep(1)
+    settings = get_settings()
+    consumers: dict[str, int] = {}
+    if settings.docling_concurrency:
+        consumers["parse"] = settings.docling_concurrency
+    consumers["store"] = max(1, settings.worker_task_count)
+    consumers["*"] = max(1, settings.worker_task_count)
+    worker = Worker(config=WorkerConfig(consumers=consumers))
+    await worker.start()
+    try:
+        while True:
+            await asyncio.sleep(1)
+    finally:
+        await worker.stop(timeout=30.0)
 
 
 @app.command("worker")
@@ -509,9 +518,10 @@ def vacuum(
 
 
 async def _vacuum(db_name: str, sign: bool):
+    from .lib.models import ResourceLockKind
     from .lib.rag import vacuum_db
 
-    await vacuum_db(db_name, sign=sign)
+    await vacuum_db(db_name, sign=sign, holder_kind=ResourceLockKind.CLI)
 
 
 @app.command("vacuum-all")
@@ -535,9 +545,21 @@ def vacuum_all_cmd(
 
 
 async def _vacuum_all(sign: bool):
-    from .lib.rag import vacuum_all
+    from .lib.models import ResourceLockKind
+    from .lib.rag import list_dbs
+    from .lib.rag import vacuum_db
 
-    await vacuum_all(sign=sign)
+    db_names = list_dbs()
+    if not db_names:
+        print("no databases found to vacuum")
+        return
+    for name in db_names:
+        try:
+            await vacuum_db(name, sign=sign, holder_kind=ResourceLockKind.CLI)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(f"failed to vacuum {name}")
 
 
 @app.command("verify-db")

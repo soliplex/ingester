@@ -5,8 +5,9 @@ import hmac
 import itertools
 import logging
 import pathlib
+import uuid
+from contextlib import asynccontextmanager
 
-from collections import defaultdict
 from docling_core.types.doc.document import DoclingDocument
 from haiku.rag.app import HaikuRAGApp
 from haiku.rag.chunkers import get_chunker
@@ -21,12 +22,72 @@ from haiku.rag.store.models.chunk import Chunk
 
 from . import models
 from .config import get_settings
+from .models import ResourceLockKind
 from .models import StepConfig
 
 logger = logging.getLogger(__name__)
 
-lock_map=defaultdict(asyncio.Lock)
 
+def resource_key_for(db_path: pathlib.Path | str) -> str:
+    """Stable, opaque resource_key for a LanceDB. Used as the
+    primary key into ``resourcelock`` so every writer of this DB —
+    workflow ``save_to_rag`` steps, web vacuum endpoint, ``si-diag``
+    vacuum, ``end_group`` lifecycle vacuums — coordinates against
+    the same row."""
+    return f"rag:{pathlib.Path(db_path)}"
+
+
+@asynccontextmanager
+async def hold_rag_lock(
+    db_path: pathlib.Path | str,
+    holder_kind: ResourceLockKind,
+    *,
+    ttl_seconds: int = 600,
+    poll_interval: float = 1.0,
+    max_wait: float | None = None,
+    holder_meta: dict[str, str] | None = None,
+):
+    """Acquire the cross-subsystem RAG-DB lock for the duration of a
+    block. If the lock is held by someone else, waits up to
+    *max_wait* seconds (default: forever) before raising
+    :class:`TimeoutError`.
+
+    Used by every direct-from-Python RAG writer (CLI vacuum, lifecycle
+    vacuum). Workflow workers go through ``operations.claim_next_step``
+    which already acquires the lock at claim time, so they don't
+    need this wrapper.
+    """
+    # Local import to avoid the runner importing rag at import time
+    # (rag imports haiku-rag which is heavy).
+    from .wf import operations as wf_ops
+
+    key = resource_key_for(db_path)
+    holder_id = f"{holder_kind.value}:{uuid.uuid4()}"
+    deadline = None if max_wait is None else asyncio.get_event_loop().time() + max_wait
+    while True:
+        got = await wf_ops.acquire_resource_lock(
+            key,
+            holder_id=holder_id,
+            holder_kind=holder_kind,
+            ttl_seconds=ttl_seconds,
+            holder_meta=holder_meta,
+        )
+        if got:
+            break
+        if deadline is not None and asyncio.get_event_loop().time() > deadline:
+            current = await wf_ops.get_resource_lock(key)
+            who = (
+                f"{current.holder_kind}:{current.holder_id} since {current.acquired_at}" if current is not None else "unknown"
+            )
+            raise TimeoutError(f"RAG DB locked by {who}")
+        await asyncio.sleep(poll_interval)
+    try:
+        yield holder_id
+    finally:
+        try:
+            await wf_ops.release_resource_lock(key, holder_id)
+        except Exception:
+            logger.exception("failed to release rag lock %s", key)
 
 
 def build_docling_config(start_config: AppConfig, config_dict: dict[str, str | int | bool]) -> AppConfig:
@@ -201,14 +262,13 @@ async def check_rag_existence(
     config = build_storage_config(config, store_config)
 
     found = set()
-    _rag_lock=lock_map[db_path]
-    async with _rag_lock:
-        async with HaikuRAG(config=config,read_only=True, create=False, db_path=db_path) as client:
-            tbl = client.document_repository.store.documents_table
-            for h in doc_hashes:
-                docs = _find_docs_by_hash(h, tbl)
-                if docs:
-                    found.add(h)
+    # LanceDB read-only access is concurrent-safe — no lock needed.
+    async with HaikuRAG(config=config, read_only=True, create=False, db_path=db_path) as client:
+        tbl = client.document_repository.store.documents_table
+        for h in doc_hashes:
+            docs = _find_docs_by_hash(h, tbl)
+            if docs:
+                found.add(h)
     logger.info(f"pre-check: {len(found)}/{len(doc_hashes)} already in RAG at {db_path}")
     return found
 
@@ -250,29 +310,28 @@ async def save_to_rag(
     db_path = resolve_lancedb_path(step_config)
 
     meta["source"] = source
-    # FIXME: move create to batch start
-    # lock writes to avoid concurrent writes
     logger.info(f"bytes docling={len(docling_json)}", extra=_log_con)
-    _rag_lock=lock_map[db_path]
-    async with _rag_lock:
-        async with HaikuRAG(config=config, create=True, db_path=db_path) as client:
-            # try to find the document
-            found = _find_docs_by_hash(doc_hash, client.document_repository.store.documents_table)
-            if found and len(found) != 0:
-                logger.info(f"Found existing document {found[0].id}", extra=_log_con)
-                doc_id = found[0].id
-                # delete the document
-                await client.delete_document(doc_id)
-                logger.debug(f"deleted existing document {found[0].id}", extra=_log_con)
+    # Per-DB serialization is enforced by the workflow's claim layer
+    # via the resource_key on the step (operations.claim_next_step
+    # holds a ResourceLock for the duration of execution). Direct
+    # callers from outside the workflow should wrap themselves in
+    # :func:`hold_rag_lock` instead.
+    async with HaikuRAG(config=config, create=True, db_path=db_path) as client:
+        found = _find_docs_by_hash(doc_hash, client.document_repository.store.documents_table)
+        if found and len(found) != 0:
+            logger.info(f"Found existing document {found[0].id}", extra=_log_con)
+            doc_id = found[0].id
+            await client.delete_document(doc_id)
+            logger.debug(f"deleted existing document {found[0].id}", extra=_log_con)
 
-            new_doc = await client.import_document(
-                chunks=chunks,
-                title=title,
-                uri=uri,
-                metadata=meta,
-                docling_document=docling_document,
-            )
-        return new_doc.id
+        new_doc = await client.import_document(
+            chunks=chunks,
+            title=title,
+            uri=uri,
+            metadata=meta,
+            docling_document=docling_document,
+        )
+    return new_doc.id
 
 
 def _compute_db_hmac(
@@ -373,8 +432,18 @@ def _resolve_db_path(db_name: str) -> pathlib.Path:
     return db_path
 
 
-async def vacuum_db(db_name: str, sign: bool = False):
+async def vacuum_db(
+    db_name: str,
+    sign: bool = False,
+    holder_kind: ResourceLockKind = ResourceLockKind.CLI,
+    max_wait: float | None = None,
+):
     """Vacuum a LanceDB database to reclaim space.
+
+    Acquires the cross-subsystem :class:`ResourceLock` for the DB
+    before opening it, so vacuums can never race with workflow
+    ``save_to_rag`` writers, the web vacuum endpoint, or other
+    vacuum runs.
 
     If the database requires a migration, it will be run automatically
     before vacuuming. If a haiku.rag.lancedb subfolder exists inside
@@ -383,29 +452,37 @@ async def vacuum_db(db_name: str, sign: bool = False):
     Args:
         db_name: Name of the database directory under lancedb_dir.
         sign: If True, write an HMAC signature after vacuuming.
+        holder_kind: Identifies the caller (``cli``, ``web``,
+            ``lifecycle``) in the lock row for observability.
+        max_wait: Seconds to wait for the lock; ``None`` waits
+            forever. Callers that prefer fail-fast behavior (e.g.
+            ``si-diag``) should pass ``0``.
 
     Raises:
         FileNotFoundError: If the database does not exist.
+        TimeoutError: If the lock could not be acquired within
+            *max_wait* seconds.
     """
     db_path = _resolve_db_path(db_name)
     logger.info(f"vacuuming db {db_path}")
-    config = get_config()
-    config.storage.vacuum_retention_seconds = 0
-    app = HaikuRAGApp(
-        db_path=db_path,
-        config=config,
-        read_only=False,
-    )
-    try:
-        await app.vacuum()
-    except MigrationRequiredError:
-        logger.info(f"migration required for {db_path}, running migrate first")
-        applied = app.migrate()
-        for desc in applied:
-            logger.info(f"applied migration: {desc}")
-        await app.vacuum()
-    if sign:
-        sign_db(db_name)
+    async with hold_rag_lock(db_path, holder_kind=holder_kind, max_wait=max_wait):
+        config = get_config()
+        config.storage.vacuum_retention_seconds = 0
+        app = HaikuRAGApp(
+            db_path=db_path,
+            config=config,
+            read_only=False,
+        )
+        try:
+            await app.vacuum()
+        except MigrationRequiredError:
+            logger.info(f"migration required for {db_path}, running migrate first")
+            applied = app.migrate()
+            for desc in applied:
+                logger.info(f"applied migration: {desc}")
+            await app.vacuum()
+        if sign:
+            sign_db(db_name)
 
 
 def list_dbs() -> list[str]:

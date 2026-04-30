@@ -46,12 +46,28 @@ async def lifespan(app: FastAPI):
     # Initialize database before starting worker
     await Database.initialize()
 
-    import soliplex.ingester.lib.wf.runner as runner
+    from soliplex.ingester.lib.wf.runner import Worker
+    from soliplex.ingester.lib.wf.runner import WorkerConfig
 
-    await runner.start_worker()
+    # Build the consumer pool layout. ``parse`` and ``store`` get
+    # dedicated pools so we can bound their concurrency independently
+    # of the catch-all pool. Tune via settings.docling_concurrency
+    # for parse and worker_task_count for the rest.
+    consumers: dict[str, int] = {}
+    if settings.docling_concurrency:
+        consumers["parse"] = settings.docling_concurrency
+    consumers["store"] = max(1, settings.worker_task_count)
+    consumers["*"] = max(1, settings.worker_task_count)
+    worker = Worker(config=WorkerConfig(consumers=consumers))
+    await worker.start()
+    app.state.wf_worker = worker
     yield
 
     # Cleanup
+    try:
+        await worker.stop(timeout=30.0)
+    except Exception:
+        logger.exception("worker shutdown failed")
     await Database.close()
     logger.info("soliplex-ingester stopped")
 

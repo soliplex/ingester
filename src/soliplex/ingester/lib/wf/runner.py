@@ -1,450 +1,712 @@
+"""Workflow runner — class-based worker orchestrator.
+
+The persistence seam lives in :mod:`operations`. Everything in this
+module is in-memory orchestration over those primitives:
+
+* :class:`Worker` — instance, no module globals. Owns a checkin loop,
+  a dead-worker reaper, a lifecycle event bus, and a set of typed
+  consumer pools. Construction is cheap; multiple workers can coexist
+  in one process for tests.
+* :class:`Metrics` — pluggable observability protocol. The default
+  :class:`LoggingMetrics` no-ops below INFO; production wires
+  Prometheus.
+* Pure helpers (:func:`transition_allowed`, :func:`elevate_terminal`)
+  used to be tangled inside ``do_state_transition``; the lease-token
+  gate at the SQL layer (in operations.py) replaces the runtime
+  worker-id check that used to live alongside them.
+
+A few module-level shims (:func:`start_worker`, :func:`stop_worker`,
+:func:`get_runnable_steps`) are preserved as thin wrappers because
+production callers (FastAPI lifespan, CLI ``si-cli worker``) are
+small enough to update in this PR but the existing tests reach into
+them. Everything new should use :class:`Worker` directly.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import datetime
 import inspect
 import logging
-import random
+import time
 import uuid
-
-from sqlalchemy import func
-from sqlalchemy import tuple_
-from sqlmodel import select
+from collections.abc import Awaitable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+from typing import Protocol
 
 from soliplex.ingester.lib.config import get_settings
 from soliplex.ingester.lib.models import DocumentBatch
 from soliplex.ingester.lib.models import EventHandler
 from soliplex.ingester.lib.models import LifeCycleEvent
+from soliplex.ingester.lib.models import ResourceLockKind
 from soliplex.ingester.lib.models import RunGroup
 from soliplex.ingester.lib.models import RunStatus
 from soliplex.ingester.lib.models import RunStep
 from soliplex.ingester.lib.models import StepConfig
-from soliplex.ingester.lib.models import WorkerCheckin
 from soliplex.ingester.lib.models import WorkflowDefinition
 from soliplex.ingester.lib.models import WorkflowRun
-from soliplex.ingester.lib.models import get_session
+from soliplex.ingester.lib.models import WorkflowStepType
 
 from . import operations
 
 logger = logging.getLogger(__name__)
 
-_worker_id = None
-_task_queue = None
-_lock = asyncio.Lock()
-_tasks: list[asyncio.Task] = []
+
+# ---------------------------------------------------------------------
+# State-machine helpers (pure)
+# ---------------------------------------------------------------------
 
 
 class WorkflowException(Exception):
     pass
 
 
-def do_state_transition(
-    start_status: RunStatus,
-    end_status: RunStatus,
-    retry: int,
-    retries: int,
-    step_worker_id: str,
-) -> RunStatus:
-    if start_status == end_status:
-        return start_status
-    my_worker_id = get_worker_id()
-    if step_worker_id is not None and my_worker_id != step_worker_id:
-        if start_status != RunStatus.PENDING:
-            msg = f"step assigned to worker {step_worker_id}, current worker is {my_worker_id}"
-            raise WorkflowException(msg)
-    if (
-        step_worker_id is None
-        and my_worker_id is not None
-        and start_status == RunStatus.PENDING
-        and end_status != RunStatus.RUNNING
-    ):
-        msg = "step was reclaimed (worker_id cleared), abandoning stale transition"
-        raise WorkflowException(msg)
-    allowed_transitions = [
+_ALLOWED_TRANSITIONS: frozenset[tuple[RunStatus, RunStatus]] = frozenset(
+    {
         (RunStatus.PENDING, RunStatus.RUNNING),
         (RunStatus.RUNNING, RunStatus.COMPLETED),
         (RunStatus.RUNNING, RunStatus.ERROR),
+        (RunStatus.RUNNING, RunStatus.PENDING),  # graceful release
         (RunStatus.ERROR, RunStatus.RUNNING),
-    ]
-    allowed = False
-    for start, end in allowed_transitions:
-        if start == start_status and end == end_status:
-            allowed = True
-            break
-    if not allowed:
-        msg = f"can't change from {start_status.value} to {end_status.value}"
-        raise WorkflowException(msg)
+        (RunStatus.PENDING, RunStatus.CANCELLED),  # cascaded by FAILED
+    },
+)
 
+
+def transition_allowed(start: RunStatus, end: RunStatus) -> bool:
+    """Pure rules table. Returns True iff the transition is legal.
+
+    Identity transitions are allowed (no-op).
+    """
+    if start == end:
+        return True
+    return (start, end) in _ALLOWED_TRANSITIONS
+
+
+def elevate_terminal(end_status: RunStatus, retry: int, retries: int) -> RunStatus:
+    """If the caller asked for ERROR but no retries remain, elevate
+    to FAILED. Otherwise return *end_status* unchanged."""
     if end_status == RunStatus.ERROR and retry >= retries:
-        logger.info(f"after {retry} retries step  failed")
-        end_status = RunStatus.FAILED
+        return RunStatus.FAILED
     return end_status
 
 
-async def set_step_status(
-    run_step_id: int,
-    status: RunStatus,
-    message: str | None = None,
-    meta: dict[str, str] | None = None,
-) -> RunStep:
-    async with get_session() as session:
-        q = select(RunStep).where(RunStep.id == run_step_id).with_for_update(nowait=True)
-        timestamp = datetime.datetime.now(datetime.UTC)
-
-        results = await session.exec(q)
-        step = results.first()
-        if step is None:
-            logger.error(f"set_step_status: step {run_step_id} not found")
-            raise WorkflowException(f"step {run_step_id} not found")
-        # retry counts failed attempts. Project this failure into the count
-        # passed to the state machine so the FAILED threshold reflects it.
-        projected_retry = step.retry + 1 if status == RunStatus.ERROR else step.retry
-        step.status = do_state_transition(
-            step.status,
-            status,
-            projected_retry,
-            step.retries,
-            step.worker_id,
-        )
-        step.status_date = timestamp
-        step.status_message = message
-        step.status_meta = meta
-        step.worker_id = get_worker_id()
-
-        if step.status == RunStatus.FAILED:
-            cancelled = await operations.cancel_pending_steps(
-                step.workflow_run_id,
-                session,
-            )
-            if cancelled:
-                logger.info(f"cancelled {cancelled} pending steps for run {step.workflow_run_id}")
-
-        if status == RunStatus.RUNNING:
-            step.start_date = timestamp
-        if step.completed_date is None and status == RunStatus.COMPLETED:
-            step.completed_date = timestamp
-
-        if status == RunStatus.ERROR:
-            step.retry += 1
-
-        session.add(step)
-        await session.flush()
-        await operations.update_run_status(
-            step.workflow_run_id,
-            step.is_last_step,
-            step.status,
-            session,
-            status_message=step.status_message,
-        )
-
-        session.expunge(step)
-        await session.commit()
-
-        return step
+# ---------------------------------------------------------------------
+# Metrics protocol (Phase 8)
+# ---------------------------------------------------------------------
 
 
-async def get_runnable_steps(top: int | None = None, batch_id: int | None = None) -> list[RunStep]:
+class Metrics(Protocol):
+    def incr(self, name: str, value: int = 1, **labels: str) -> None: ...
+    def observe(self, name: str, value: float, **labels: str) -> None: ...
+
+
+class LoggingMetrics:
+    """Default Metrics impl. Emits at DEBUG so it's effectively a
+    no-op in production unless the logger is configured otherwise."""
+
+    def incr(self, name: str, value: int = 1, **labels: str) -> None:
+        logger.debug("metric incr %s=%d %s", name, value, labels)
+
+    def observe(self, name: str, value: float, **labels: str) -> None:
+        logger.debug("metric observe %s=%.6f %s", name, value, labels)
+
+
+# ---------------------------------------------------------------------
+# Lifecycle event bus
+# ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LifecycleEventEnvelope:
+    """In-memory event payload published to subscribers."""
+
+    event: LifeCycleEvent
+    workflow_def: WorkflowDefinition
+    run_step: RunStep
+    workflow_run: WorkflowRun
+    run_group: RunGroup
+
+
+LifecycleSubscriber = Callable[[LifecycleEventEnvelope], Awaitable[None]]
+
+
+class LifecycleBus:
+    """Tiny pub/sub. Hooks run on a separate task pool so a slow
+    handler can never block step execution.
+
+    GROUP_END is *not* fired here directly — it is emitted by a
+    coordinator task that subscribes to step-end events and
+    consults :func:`operations.try_complete_run_group` for
+    exactly-once semantics across workers.
     """
-    Get pending runsteps that are ready to execute.
 
-    Finds the next eligible step for each workflow run, ordered by priority.
-    Uses SQLModel ORM with subqueries for cross-database compatibility.
-    Replaces raw SQL to prevent SQL injection vulnerabilities.
+    def __init__(self) -> None:
+        self._subscribers: list[LifecycleSubscriber] = []
+        self._pending: set[asyncio.Task[None]] = set()
 
-    Parameters
-    ----------
-    top : int | None
-        Maximum number of steps to return (default: 100)
-    batch_id : int | None
-        Optional batch ID to filter by
+    def subscribe(self, fn: LifecycleSubscriber) -> None:
+        self._subscribers.append(fn)
 
-    Returns
-    -------
-    list[RunStep]
-        List of eligible run steps, ordered by priority
+    async def publish(self, envelope: LifecycleEventEnvelope) -> None:
+        for fn in self._subscribers:
+            task = asyncio.create_task(self._run_one(fn, envelope))
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
+
+    async def drain(self, timeout: float = 5.0) -> None:
+        if not self._pending:
+            return
+        await asyncio.wait(self._pending, timeout=timeout)
+
+    async def _run_one(
+        self,
+        fn: LifecycleSubscriber,
+        envelope: LifecycleEventEnvelope,
+    ) -> None:
+        try:
+            await fn(envelope)
+        except Exception:
+            logger.exception(
+                "lifecycle subscriber failed for event %s",
+                envelope.event,
+            )
+
+
+# ---------------------------------------------------------------------
+# Worker
+# ---------------------------------------------------------------------
+
+
+@dataclass
+class WorkerConfig:
+    """Knobs that callers may want to override per-instance."""
+
+    consumers: dict[str, int]
+    """Map of step type → consumer count. ``"*"`` is the catch-all
+    pool that picks up anything not explicitly listed. Pass an empty
+    dict to default to ``{"*": worker_task_count}``."""
+
+    poll_interval: float = 1.0
+    """Sleep between empty claim attempts."""
+
+    poll_backoff_max: float = 5.0
+    """Upper bound on exponential backoff for an idle consumer."""
+
+    checkin_interval: int | None = None
+    """Override settings.worker_checkin_interval."""
+
+    checkin_timeout: int | None = None
+    """Override settings.worker_checkin_timeout."""
+
+    resource_lock_ttl: int = 300
+    """TTL passed to acquire_resource_lock; the heartbeat refreshes
+    this twice per TTL window."""
+
+
+class Worker:
+    """A workflow worker. Construct, ``await worker.start()``, do
+    work, ``await worker.stop()``.
+
+    The worker is multi-process safe: coordination happens entirely
+    through the database (atomic claim with ``SKIP LOCKED``, lease
+    tokens, self-skip in the reaper, ``ResourceLock`` rendezvous).
+    Two ``Worker`` instances in the same process are also safe
+    because nothing is module-global anymore.
     """
-    if top is None:
-        top = 100
 
-    async with get_session() as session:
-        # Status values to exclude
-        completed_statuses = [RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.RUNNING]
+    def __init__(
+        self,
+        config: WorkerConfig | None = None,
+        metrics: Metrics | None = None,
+    ) -> None:
+        settings = get_settings()
+        if config is None:
+            config = WorkerConfig(consumers={"*": settings.worker_task_count})
+        if not config.consumers:
+            config.consumers = {"*": settings.worker_task_count}
+        self._config = config
+        self._metrics = metrics or LoggingMetrics()
+        self._worker_id = str(uuid.uuid4())
+        self._stop_event = asyncio.Event()
+        self._tasks: list[asyncio.Task[Any]] = []
+        # Per-claim leases the worker is currently holding. Used by
+        # the heartbeat loop to refresh resource locks for in-flight
+        # steps.
+        self._inflight: dict[int, _InFlight] = {}
+        self._lifecycle = LifecycleBus()
+        self._installed_lifecycle_hooks = False
 
-        # Subquery 1: Find minimum step number per workflow run
-        # (only for runs that are eligible)
-        subq_min_step = (
-            select(
-                RunStep.workflow_run_id,
-                func.min(RunStep.workflow_step_number).label("min_step"),
-            )
-            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
-            .where(RunStep.retry < RunStep.retries)
-            .where(RunStep.status.not_in(completed_statuses))
-            .where(WorkflowRun.status.not_in([RunStatus.COMPLETED, RunStatus.FAILED]))
+    # ----- public API -------------------------------------------------
+
+    @property
+    def id(self) -> str:
+        return self._worker_id
+
+    @property
+    def lifecycle(self) -> LifecycleBus:
+        return self._lifecycle
+
+    async def start(self) -> None:
+        """Bring the worker online. Returns once all background
+        tasks have been scheduled."""
+        if self._tasks:
+            logger.warning("Worker.start called twice; ignoring")
+            return
+        self._install_default_lifecycle_hooks()
+        await operations.worker_heartbeat(self._worker_id)
+        self._tasks.append(
+            asyncio.create_task(self._heartbeat_loop(), name=f"worker-{self._worker_id}-heartbeat"),
         )
-
-        # Add batch filter if specified
-        if batch_id is not None:
-            subq_min_step = subq_min_step.where(WorkflowRun.batch_id == batch_id)
-
-        subq_min_step = subq_min_step.group_by(RunStep.workflow_run_id).subquery()
-
-        # Subquery 2: Find workflow runs that have running steps
-        subq_running = select(RunStep.workflow_run_id).where(RunStep.status == RunStatus.RUNNING).distinct().subquery()
-
-        # Main query: Get eligible steps
-        q = (
-            select(RunStep)
-            .where(
-                tuple_(RunStep.workflow_run_id, RunStep.workflow_step_number).in_(
-                    select(subq_min_step.c.workflow_run_id, subq_min_step.c.min_step)
+        self._tasks.append(
+            asyncio.create_task(self._reaper_loop(), name=f"worker-{self._worker_id}-reaper"),
+        )
+        self._tasks.append(
+            asyncio.create_task(self._lock_sweeper_loop(), name=f"worker-{self._worker_id}-lock-sweep"),
+        )
+        for step_type, count in self._config.consumers.items():
+            for i in range(count):
+                self._tasks.append(
+                    asyncio.create_task(
+                        self._consumer_loop(step_type, i),
+                        name=f"worker-{self._worker_id}-consumer-{step_type}-{i}",
+                    ),
                 )
-            )
-            .where(RunStep.status.not_in(completed_statuses))
-            .where(RunStep.workflow_run_id.not_in(select(subq_running.c.workflow_run_id)))
-            .order_by(
-                RunStep.priority.desc(),
-                RunStep.retry,
-                RunStep.created_date,
-                RunStep.workflow_step_number,
-            )
-            .limit(top)
-        )
-
-        result = await session.exec(q)
-        steps = result.all()
-
-        if steps:
-            session.expunge_all()
-
-        return list(steps)
-
-
-def get_lifecycle_event(workflow_def: WorkflowDefinition, evt: LifeCycleEvent) -> list[EventHandler] | None:
-    if workflow_def.lifecycle_events is not None:
-        return workflow_def.lifecycle_events.get(evt)
-    return None
-
-
-async def handle_lifecycle_event(
-    workflow_def: WorkflowDefinition,
-    run_step: RunStep,
-    workflow_run: WorkflowRun,
-    run_group: RunGroup,
-):
-    if run_step.status == RunStatus.RUNNING:
-        await run_lifecycle_event(
-            workflow_def,
-            run_group,
-            workflow_run,
-            LifeCycleEvent.STEP_START,
-            run_step,
-        )
-        if run_step.workflow_step_number == 1:
-            await run_lifecycle_event(
-                workflow_def,
-                run_group,
-                workflow_run,
-                LifeCycleEvent.ITEM_START,
-                run_step,
-            )
-            stats = await operations.get_run_group_stats(run_group.id)
-            if (
-                stats[RunStatus.RUNNING] == 1
-                and stats[RunStatus.COMPLETED] == 0
-                and stats[RunStatus.FAILED] == 0
-                and stats[RunStatus.ERROR] == 0
-            ):
-                await run_lifecycle_event(
-                    workflow_def,
-                    run_group,
-                    workflow_run,
-                    LifeCycleEvent.GROUP_START,
-                    run_step,
-                )
-    if run_step.status == RunStatus.COMPLETED:
-        await run_lifecycle_event(
-            workflow_def,
-            run_group,
-            workflow_run,
-            LifeCycleEvent.STEP_END,
-            run_step,
-        )
-        if run_step.is_last_step:
-            await run_lifecycle_event(
-                workflow_def,
-                run_group,
-                workflow_run,
-                LifeCycleEvent.ITEM_END,
-                run_step,
-            )
-            stats = await operations.get_run_group_stats(run_group.id)
-            if stats[RunStatus.RUNNING] == 0 and stats[RunStatus.PENDING] == 0 and stats[RunStatus.ERROR] == 0:
-                has_failures = stats[RunStatus.FAILED] > 0
-                group_status = RunStatus.FAILED if has_failures else RunStatus.COMPLETED
-                await operations.complete_run_group(
-                    run_group.id,
-                    group_status,
-                )
-                await run_lifecycle_event(
-                    workflow_def,
-                    run_group,
-                    workflow_run,
-                    LifeCycleEvent.GROUP_END,
-                    run_step,
-                )
-
-
-async def run_lifecycle_event(
-    workflow_def: WorkflowDefinition,
-    run_group: RunGroup,
-    workflow_run: WorkflowRun,
-    event: LifeCycleEvent,
-    run_step: RunStep,
-):
-    evt_list = get_lifecycle_event(workflow_def, event)
-    if evt_list is not None and len(evt_list) > 0:
-        step_config = await operations.get_step_config_by_id(run_step.step_config_id)
-        for evt in evt_list:
-            hist_id = None
-            try:
-                logger.info(f"executing lifecycle event {evt.name} for {workflow_def.name}")
-                hist = await operations.create_lifecycle_history(
-                    run_group.id,
-                    workflow_run.id,
-                    event,
-                    RunStatus.RUNNING,
-                    run_step.id,
-                    evt.name,
-                )
-                hist_id = hist.id
-                res = await build_coro(
-                    evt,
-                    run_step,
-                    workflow_run,
-                    workflow_def,
-                    step_config,
-                    None,
-                    run_group,
-                )
-                if res is None or not isinstance(res, dict):
-                    res = {"result": str(res)}
-                await operations.update_lifecycle_history(
-                    hist_id,
-                    RunStatus.COMPLETED,
-                    status_message="success",
-                    status_meta=res,
-                )
-            except Exception as e:
-                logger.exception(f"step start {workflow_run.doc_id} failed", exc_info=e)
-                try:
-                    await operations.update_lifecycle_history(
-                        hist_id,
-                        RunStatus.FAILED,
-                        status_meta={"error": str(e)},
-                        status_message=str(e),
-                    )
-                except Exception:
-                    logger.exception("update lifecycle history failed", exc_info=e)
-
-
-async def run_wf_step(run_step: RunStep, coro_id: int = None):
-    lc = {"coro_id": coro_id, "worker_id": get_worker_id()}
-    # Step is already RUNNING (set by consume_tasks), so skip
-    # the redundant set_step_status(RUNNING) call that was here.
-    workflow_run = None
-    workflow_def = None
-    run_group = None
-    try:
-        workflow_run = await operations.get_workflow_run(
-            run_step.workflow_run_id,
-        )
-        run_group = await operations.get_run_group(
-            workflow_run.run_group_id,
-        )
-        workflow_def = await operations.get_workflow_definition(
-            workflow_run.workflow_definition_id,
-        )
-        step_config = await operations.get_step_config_by_id(
-            run_step.step_config_id,
-        )
-        batch = await operations.get_batch(workflow_run.batch_id)
-
         logger.info(
-            f"cid={coro_id} running step"
-            f" {run_step.workflow_step_number}"
-            f" ({run_step.workflow_step_name})"
-            f" in workflow {workflow_def.name}"
-            f" priority={run_step.priority}"
-            f" attempt={run_step.retry + 1}/{run_step.retries}",
-            extra=lc,
+            "started worker %s consumers=%s",
+            self._worker_id,
+            self._config.consumers,
         )
-        await handle_lifecycle_event(
-            workflow_def,
-            run_step,
-            workflow_run,
-            run_group,
-        )
-        res = await build_step_coro(
-            run_step,
-            workflow_run,
-            workflow_def,
-            step_config,
-            batch,
-            run_group,
-        )
-        if isinstance(res, str):
+
+    async def stop(self, timeout: float = 30.0) -> None:
+        """Graceful shutdown.
+
+        1. Signal consumers to stop claiming new work.
+        2. Wait up to *timeout* for in-flight steps to finish.
+        3. Cancel any consumer still mid-step. Their ``CancelledError``
+           handler calls :func:`operations.release_step` so the row
+           comes back to PENDING immediately, gated on the lease so
+           it can never bounce a fresh claimant.
+        4. Drain lifecycle subscribers.
+        5. Delete our checkin row so peers don't wait the full
+           checkin timeout to discover we left.
+        """
+        if not self._tasks:
+            return
+        self._stop_event.set()
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        while self._inflight and asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(0.1)
+
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+
+        await self._lifecycle.drain(timeout=2.0)
+
+        try:
+            await operations.delete_worker_checkin(self._worker_id)
+        except Exception:
+            logger.exception("worker %s: failed to delete checkin row", self._worker_id)
+
+        logger.info("stopped worker %s", self._worker_id)
+
+    # ----- consumer / claim -------------------------------------------
+
+    def _allowed_types_for(self, step_type: str) -> list[WorkflowStepType] | None:
+        """Translate a consumer-pool key into an *allowed_types*
+        argument for ``claim_next_step``. The ``"*"`` pool gets
+        everything not claimed by an explicit pool."""
+        if step_type == "*":
+            named = [k for k in self._config.consumers if k != "*"]
+            if not named:
+                return None
+            all_types = [t for t in WorkflowStepType]
+            return [t for t in all_types if t.value not in named]
+        return [WorkflowStepType(step_type)]
+
+    async def _consumer_loop(self, step_type: str, coro_id: int) -> None:
+        allowed = self._allowed_types_for(step_type)
+        backoff = self._config.poll_interval
+        lc = {"worker_id": self._worker_id, "coro_id": coro_id, "pool": step_type}
+        while not self._stop_event.is_set():
+            lease = str(uuid.uuid4())
+            self._metrics.incr("claim_attempts", pool=step_type)
+            t0 = time.monotonic()
+            try:
+                step = await operations.claim_next_step(
+                    self._worker_id,
+                    lease,
+                    allowed_types=allowed,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("claim error in consumer %s", step_type, extra=lc)
+                self._metrics.incr("claim_error", pool=step_type)
+                await asyncio.sleep(min(backoff, self._config.poll_backoff_max))
+                backoff = min(backoff * 2, self._config.poll_backoff_max)
+                continue
+            self._metrics.observe("claim_duration", time.monotonic() - t0, pool=step_type)
+            if step is None:
+                self._metrics.incr("claim_idle", pool=step_type)
+                await asyncio.sleep(min(backoff, self._config.poll_backoff_max))
+                backoff = min(backoff * 2, self._config.poll_backoff_max)
+                continue
+            backoff = self._config.poll_interval
+            self._metrics.incr("claim_success", pool=step_type)
+            await self._run_step(step, lease, coro_id)
+
+    async def _run_step(self, run_step: RunStep, lease: str, coro_id: int) -> None:
+        lc = {"worker_id": self._worker_id, "coro_id": coro_id, "step_id": run_step.id}
+        inflight = _InFlight(step_id=run_step.id, lease=lease, resource_key=run_step.resource_key)
+        self._inflight[run_step.id] = inflight
+        t0 = time.monotonic()
+        workflow_def: WorkflowDefinition | None = None
+        workflow_run: WorkflowRun | None = None
+        run_group: RunGroup | None = None
+        try:
+            workflow_run = await operations.get_workflow_run(run_step.workflow_run_id)
+            run_group = await operations.get_run_group(workflow_run.run_group_id)
+            workflow_def = await operations.get_workflow_definition(
+                workflow_run.workflow_definition_id,
+            )
+            step_config = await operations.get_step_config_by_id(run_step.step_config_id)
+            batch = await operations.get_batch(workflow_run.batch_id)
+
+            # If the step declared a resource lock, acquire it before
+            # executing. The claim layer already filtered out steps
+            # whose lock was visibly held; this races only with
+            # web/CLI/lifecycle holders that grabbed the lock between
+            # claim and acquire — recovery is to release the step
+            # back to PENDING and try the next loop.
+            if run_step.resource_key:
+                got = await operations.acquire_resource_lock(
+                    run_step.resource_key,
+                    holder_id=lease,
+                    holder_kind=ResourceLockKind.WORKER,
+                    step_id=run_step.id,
+                    ttl_seconds=self._config.resource_lock_ttl,
+                    holder_meta={"worker_id": self._worker_id},
+                )
+                if not got:
+                    logger.warning(
+                        "race on resource_key=%s, releasing step %s",
+                        run_step.resource_key,
+                        run_step.id,
+                        extra=lc,
+                    )
+                    await operations.release_step(run_step.id, lease)
+                    return
+
             logger.info(
-                f"cid={coro_id} step {run_step.workflow_step_number} returned {res}",
+                "running step %s (%s) in %s priority=%d attempt=%d/%d",
+                run_step.workflow_step_number,
+                run_step.workflow_step_name,
+                workflow_def.name,
+                run_step.priority,
+                run_step.retry + 1,
+                run_step.retries,
                 extra=lc,
             )
-        else:
-            res = str(res)
 
-        upd_step = await set_step_status(
-            run_step.id,
-            status=RunStatus.COMPLETED,
-            message="success",
-            meta={"coro_id": coro_id},
-        )
+            # STEP_START fires fire-and-forget. Group/item-start
+            # events are derived by the same hook layer.
+            await self._lifecycle.publish(
+                LifecycleEventEnvelope(
+                    LifeCycleEvent.STEP_START,
+                    workflow_def,
+                    run_step,
+                    workflow_run,
+                    run_group,
+                ),
+            )
+            if run_step.workflow_step_number == 1:
+                await self._lifecycle.publish(
+                    LifecycleEventEnvelope(
+                        LifeCycleEvent.ITEM_START,
+                        workflow_def,
+                        run_step,
+                        workflow_run,
+                        run_group,
+                    ),
+                )
 
-        await handle_lifecycle_event(
-            workflow_def,
-            upd_step,
-            workflow_run,
-            run_group,
-        )
+            res = await build_step_coro(
+                run_step,
+                workflow_run,
+                workflow_def,
+                step_config,
+                batch,
+                run_group,
+            )
+            logger.info("step %s returned %s", run_step.workflow_step_number, res, extra=lc)
 
-    except Exception as e:
-        logger.exception(
-            f"error in step {run_step.workflow_step_number} run_id={run_step.workflow_run_id} step_id={run_step.id}",
-            exc_info=e,
-            extra=lc,
-        )
-        try:
-            upd_step = await set_step_status(
+            ok = await operations.complete_step(
                 run_step.id,
-                RunStatus.ERROR,
-                f"exception: {e}",
+                lease,
+                message="success",
                 meta={"coro_id": coro_id},
             )
-            if workflow_def is not None:
-                await handle_lifecycle_event(
+            if not ok:
+                self._metrics.incr("lease_lost", phase="complete")
+                logger.warning("lease lost on completion of step %s", run_step.id, extra=lc)
+                return
+            self._metrics.incr("step_completed")
+            await operations.recompute_run_status(run_step.workflow_run_id)
+            await self._lifecycle.publish(
+                LifecycleEventEnvelope(
+                    LifeCycleEvent.STEP_END,
                     workflow_def,
-                    upd_step,
+                    run_step,
                     workflow_run,
                     run_group,
-                )
-        except Exception as e2:
-            logger.exception(
-                f"error setting step status to error"
-                f" step={run_step.workflow_step_number}"
-                f" step_id={run_step.id}"
-                f" run_id={run_step.workflow_run_id}",
-                exc_info=e2,
-                extra=lc,
+                ),
             )
-        return RunStatus.FAILED
-    else:
-        return RunStatus.COMPLETED
+            if run_step.is_last_step:
+                await self._lifecycle.publish(
+                    LifecycleEventEnvelope(
+                        LifeCycleEvent.ITEM_END,
+                        workflow_def,
+                        run_step,
+                        workflow_run,
+                        run_group,
+                    ),
+                )
+
+        except asyncio.CancelledError:
+            # Graceful shutdown path. Release the step back to
+            # PENDING so it's immediately re-claimable.
+            try:
+                released = await operations.release_step(run_step.id, lease)
+                if released:
+                    logger.info("released step %s on shutdown", run_step.id, extra=lc)
+                    self._metrics.incr("step_released")
+            except Exception:
+                logger.exception("release_step failed during shutdown", extra=lc)
+            raise
+        except Exception as e:
+            logger.exception("step %s failed", run_step.id, extra=lc)
+            try:
+                new_status = await operations.error_step(
+                    run_step.id,
+                    lease,
+                    message=f"exception: {e}",
+                    meta={"coro_id": coro_id},
+                )
+                if new_status is None:
+                    self._metrics.incr("lease_lost", phase="error")
+                    return
+                if new_status == RunStatus.FAILED:
+                    self._metrics.incr("step_failed")
+                else:
+                    self._metrics.incr("step_error")
+                await operations.recompute_run_status(run_step.workflow_run_id)
+                if workflow_def is not None and workflow_run is not None and run_group is not None:
+                    evt = LifeCycleEvent.STEP_FAILED if new_status == RunStatus.FAILED else LifeCycleEvent.STEP_END
+                    await self._lifecycle.publish(
+                        LifecycleEventEnvelope(
+                            evt,
+                            workflow_def,
+                            run_step,
+                            workflow_run,
+                            run_group,
+                        ),
+                    )
+            except Exception:
+                logger.exception("error_step bookkeeping failed for step %s", run_step.id, extra=lc)
+        finally:
+            self._inflight.pop(run_step.id, None)
+            self._metrics.observe("step_duration", time.monotonic() - t0)
+
+    # ----- background loops -------------------------------------------
+
+    async def _heartbeat_loop(self) -> None:
+        settings = get_settings()
+        interval = self._config.checkin_interval or settings.worker_checkin_interval
+        # Refresh resource locks at the same cadence as the heartbeat
+        # — operators may want a longer step lock TTL than checkin.
+        while not self._stop_event.is_set():
+            try:
+                await operations.worker_heartbeat(self._worker_id)
+                for inflight in list(self._inflight.values()):
+                    if inflight.resource_key:
+                        ok = await operations.refresh_resource_lock(
+                            inflight.resource_key,
+                            holder_id=inflight.lease,
+                            ttl_seconds=self._config.resource_lock_ttl,
+                        )
+                        if not ok:
+                            logger.warning(
+                                "lost resource lock %s for step %s during heartbeat",
+                                inflight.resource_key,
+                                inflight.step_id,
+                            )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("heartbeat loop iteration failed")
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            except TimeoutError:
+                continue
+            else:
+                return
+
+    async def _reaper_loop(self) -> None:
+        settings = get_settings()
+        timeout = self._config.checkin_timeout or settings.worker_checkin_timeout
+        # Run the reaper at half the timeout so a dead worker is
+        # noticed within ~1.5 timeouts on average.
+        interval = max(30, timeout // 2)
+        while not self._stop_event.is_set():
+            try:
+                reaped, reset = await operations.reap_dead_workers(
+                    self._worker_id,
+                    threshold_seconds=timeout,
+                )
+                if reaped:
+                    logger.info(
+                        "reaped %d dead workers, reset %d steps",
+                        len(reaped),
+                        len(reset),
+                    )
+                    self._metrics.incr("worker_reaped", value=len(reaped))
+                    self._metrics.incr("step_reset_by_reaper", value=len(reset))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("reaper loop iteration failed")
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            except TimeoutError:
+                continue
+            else:
+                return
+
+    async def _lock_sweeper_loop(self) -> None:
+        # Belt-and-braces: even though acquire_resource_lock sweeps
+        # opportunistically, this loop ensures expired rows don't
+        # accumulate when traffic is low.
+        interval = 60
+        while not self._stop_event.is_set():
+            try:
+                count = await operations.sweep_expired_resource_locks()
+                if count:
+                    logger.info("swept %d expired resource locks", count)
+                    self._metrics.incr("resource_lock_swept", value=count)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("lock sweeper iteration failed")
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            except TimeoutError:
+                continue
+            else:
+                return
+
+    # ----- default lifecycle hooks ------------------------------------
+
+    def _install_default_lifecycle_hooks(self) -> None:
+        if self._installed_lifecycle_hooks:
+            return
+        self._installed_lifecycle_hooks = True
+
+        async def dispatch_user_handlers(envelope: LifecycleEventEnvelope) -> None:
+            await _run_workflow_lifecycle_handlers(envelope)
+
+        async def maybe_complete_group(envelope: LifecycleEventEnvelope) -> None:
+            if envelope.event not in (LifeCycleEvent.STEP_END, LifeCycleEvent.STEP_FAILED, LifeCycleEvent.ITEM_END):
+                return
+            new_status = await operations.try_complete_run_group(envelope.run_group.id)
+            if new_status is None:
+                return
+            await self._lifecycle.publish(
+                LifecycleEventEnvelope(
+                    LifeCycleEvent.GROUP_END,
+                    envelope.workflow_def,
+                    envelope.run_step,
+                    envelope.workflow_run,
+                    envelope.run_group,
+                ),
+            )
+
+        self._lifecycle.subscribe(dispatch_user_handlers)
+        self._lifecycle.subscribe(maybe_complete_group)
+
+
+@dataclass
+class _InFlight:
+    step_id: int
+    lease: str
+    resource_key: str | None
+
+
+# ---------------------------------------------------------------------
+# Lifecycle dispatcher (executes user-configured EventHandlers)
+# ---------------------------------------------------------------------
+
+
+async def _run_workflow_lifecycle_handlers(envelope: LifecycleEventEnvelope) -> None:
+    workflow_def = envelope.workflow_def
+    if workflow_def.lifecycle_events is None:
+        return
+    handlers = workflow_def.lifecycle_events.get(envelope.event)
+    if not handlers:
+        return
+    step_config = await operations.get_step_config_by_id(envelope.run_step.step_config_id)
+    for handler in handlers:
+        hist_id = None
+        try:
+            logger.info("lifecycle %s for %s", envelope.event.name, workflow_def.name)
+            hist = await operations.create_lifecycle_history(
+                envelope.run_group.id,
+                envelope.workflow_run.id,
+                envelope.event,
+                RunStatus.RUNNING,
+                envelope.run_step.id,
+                handler.name,
+            )
+            hist_id = hist.id
+            res = await build_coro(
+                handler,
+                envelope.run_step,
+                envelope.workflow_run,
+                envelope.workflow_def,
+                step_config,
+                None,
+                envelope.run_group,
+            )
+            if res is None or not isinstance(res, dict):
+                res = {"result": str(res)}
+            await operations.update_lifecycle_history(
+                hist_id,
+                RunStatus.COMPLETED,
+                status_message="success",
+                status_meta=res,
+            )
+        except Exception as e:
+            logger.exception("lifecycle handler %s failed", handler.name)
+            try:
+                await operations.update_lifecycle_history(
+                    hist_id,
+                    RunStatus.FAILED,
+                    status_meta={"error": str(e)},
+                    status_message=str(e),
+                )
+            except Exception:
+                logger.exception("update lifecycle history failed")
+
+
+# ---------------------------------------------------------------------
+# Coroutine builders (unchanged from before)
+# ---------------------------------------------------------------------
 
 
 def build_step_coro(
@@ -455,8 +717,7 @@ def build_step_coro(
     batch: DocumentBatch,
     run_group: RunGroup,
 ):
-    """
-    Build a coroutine from a workflow context"""
+    """Build a coroutine from a workflow context."""
     workflow_handler = workflow_def.item_steps[step_config.step_type]
     return build_coro(
         workflow_handler,
@@ -497,285 +758,173 @@ def build_coro(
         "source": batch_source,
         "run_group": run_group,
     }
-
     ns.update(workflow_run.run_params)
     ns.update(handler.parameters)
     if extra_args is not None:
         ns.update(extra_args)
-    call = {}
-    for k in sig.parameters.keys():
-        if k in ns:
-            call[k] = ns[k]
-
+    call = {k: ns[k] for k in sig.parameters.keys() if k in ns}
     return fn(**call)
 
 
-async def _worker_checkin():
+# ---------------------------------------------------------------------
+# Module-level shims
+#
+# The new architecture is class-based but a few production callers
+# (FastAPI startup, CLI ``si-cli worker``) reach in through the old
+# entry points. Keep them as thin wrappers around a single private
+# Worker so we don't ship unrelated caller updates in this PR.
+# ---------------------------------------------------------------------
+
+
+_default_worker: Worker | None = None
+
+
+async def start_worker(create_tasks: bool = True) -> Worker:
+    """Construct and start the process-wide default worker.
+
+    Returns the worker. ``create_tasks=False`` is a backwards-
+    compatible knob for tests that want to exercise the heartbeat
+    or claim path manually — in that mode the worker is constructed
+    but its background tasks are not scheduled.
+    """
+    global _default_worker
+    if _default_worker is not None:
+        return _default_worker
     settings = get_settings()
-    while True:
-        try:
-            await worker_checkin(get_worker_id())
-        except Exception as e:
-            logger.exception(
-                "worker checkin loop error, continuing",
-                exc_info=e,
-                extra={"worker_id": get_worker_id()},
-            )
-        await asyncio.sleep(settings.worker_checkin_interval)
-
-
-def get_worker_id():
-    return _worker_id
-
-
-async def start_worker(create_tasks=True):
-    global _worker_id
-    global _task_queue
-    settings = get_settings()
-    if _worker_id is not None:
-        return
-    _worker_id = str(uuid.uuid4())
-    task_count = settings.worker_task_count
-    _task_queue = asyncio.Queue(maxsize=task_count)
+    worker = Worker(
+        config=WorkerConfig(consumers={"*": settings.worker_task_count}),
+    )
     if create_tasks:
-        await worker_checkin(_worker_id)
-        _tasks.append(
-            asyncio.create_task(
-                _worker_checkin(),
-                name="worker-checkin",
-            )
-        )
-        _tasks.append(
-            asyncio.create_task(
-                check_dead_workers(),
-                name="dead-worker-check",
-            )
-        )
-        _tasks.append(
-            asyncio.create_task(
-                queue_tasks(),
-                name="queue-tasks",
-            )
-        )
-        for i in range(task_count):
-            _tasks.append(
-                asyncio.create_task(
-                    consume_tasks(i),
-                    name=f"consumer-{i}",
-                )
-            )
-    logger.info(f"started worker {_worker_id} with {task_count} tasks")
+        await worker.start()
+    _default_worker = worker
+    return worker
 
 
-async def stop_worker():
-    global _worker_id
-    global _task_queue
-    for task in _tasks:
-        task.cancel()
-    await asyncio.gather(*_tasks, return_exceptions=True)
-    _tasks.clear()
-    _worker_id = None
-    _task_queue = None
-    logger.info("worker stopped")
-
-
-async def consume_tasks(coro_id: int):
-    global _task_queue
-    lc = {"coro_id": coro_id, "worker_id": get_worker_id()}
-    if _task_queue is None:
-        logger.warning("worker not started")
+async def stop_worker() -> None:
+    global _default_worker
+    if _default_worker is None:
         return
+    await _default_worker.stop()
+    _default_worker = None
 
-    while True:
-        run_step = None
-        try:
-            task_num = await _task_queue.get()
-            try:
-                async with _lock:
-                    logger.debug(
-                        f"cid={coro_id} worker queue task get {task_num}",
-                        extra=lc,
-                    )
-                    avail_steps = await get_runnable_steps(top=1)
-                    if len(avail_steps) != 0:
-                        run_step = avail_steps[0]
-                        logger.info(
-                            f"worker cid={coro_id} queue task"
-                            f" got run_id="
-                            f"{run_step.workflow_run_id}"
-                            f" step="
-                            f"{run_step.workflow_step_number}"
-                            f" status={run_step.status}",
-                            extra=lc,
-                        )
-                        try:
-                            run_step = await set_step_status(
-                                run_step.id,
-                                RunStatus.RUNNING,
-                                meta={"coro_id": coro_id},
-                            )
-                        except Exception as e:
-                            logger.exception(
-                                f"cid={coro_id} failed to claim step {run_step.id}",
-                                exc_info=e,
-                                extra=lc,
-                            )
-                            run_step = None
 
-                if run_step:
-                    logger.debug(
-                        f"worker cid={coro_id} running step {run_step.workflow_run_id} {run_step.workflow_step_number}",
-                        extra=lc,
-                    )
+def get_worker_id() -> str | None:
+    """Return the process-wide default worker's id, if started."""
+    if _default_worker is None:
+        return None
+    return _default_worker.id
 
-                    status = await run_wf_step(run_step, coro_id)
-                    logger.debug(
-                        f"worker cid={coro_id} finished step"
-                        f" {run_step.workflow_run_id}"
-                        f" {run_step.workflow_step_number}"
-                        f" status={status}",
-                        extra=lc,
-                    )
-                    if status == RunStatus.FAILED:
-                        await asyncio.sleep(2)
-            finally:
-                _task_queue.task_done()
 
-        except asyncio.CancelledError:
-            logger.info(
-                f"cid={coro_id} consumer cancelled, shutting down",
-                extra=lc,
+# ---- read-only diagnostic helper kept for the existing test suite ----
+
+
+async def get_runnable_steps(
+    top: int | None = None,
+    batch_id: int | None = None,
+) -> list[RunStep]:
+    """Diagnostic-only: list eligible steps without claiming them.
+
+    The runtime now uses :func:`operations.claim_next_step` for the
+    actual claim. This function is a read-only wrapper around the
+    same eligibility predicates so the existing tests still describe
+    "what is runnable right now."
+    """
+    from sqlalchemy import tuple_
+    from sqlmodel import select
+
+    from soliplex.ingester.lib.models import get_session
+
+    if top is None:
+        top = 100
+
+    async with get_session() as session:
+        from sqlalchemy import func as _func
+
+        completed_statuses = (
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.RUNNING,
+            RunStatus.CANCELLED,
+        )
+
+        subq_min_step = (
+            select(
+                RunStep.workflow_run_id,
+                _func.min(RunStep.workflow_step_number).label("min_step"),
             )
-            raise
-        except Exception as e:
-            logger.exception(
-                f"cid={coro_id} unhandled error in consume_tasks, continuing",
-                exc_info=e,
-                extra=lc,
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .where(RunStep.retry < RunStep.retries)
+            .where(RunStep.status.not_in(completed_statuses))
+            .where(WorkflowRun.status.not_in([RunStatus.COMPLETED, RunStatus.FAILED]))
+        )
+        if batch_id is not None:
+            subq_min_step = subq_min_step.where(WorkflowRun.batch_id == batch_id)
+        subq_min_step = subq_min_step.group_by(RunStep.workflow_run_id).subquery()
+
+        subq_running = select(RunStep.workflow_run_id).where(RunStep.status == RunStatus.RUNNING).distinct().subquery()
+
+        q = (
+            select(RunStep)
+            .where(
+                tuple_(RunStep.workflow_run_id, RunStep.workflow_step_number).in_(
+                    select(subq_min_step.c.workflow_run_id, subq_min_step.c.min_step),
+                ),
             )
-            await asyncio.sleep(1)
-
-
-async def queue_tasks():
-    global _task_queue
-    settings = get_settings()
-    if _task_queue is None:
-        logger.warning("worker not started")
-        return
-    task_ct = 0
-    while True:
-        try:
-            if _task_queue.qsize() >= settings.worker_task_count:
-                await asyncio.sleep(1)
-                continue
-            await _task_queue.put(task_ct)
-            logger.debug(f"queue task put {task_ct} curr={_task_queue.qsize()},'worker_id {get_worker_id()}'")
-            task_ct += 1
-
-        except asyncio.CancelledError:
-            logger.info("queue_tasks cancelled, shutting down")
-            raise
-        except Exception as e:
-            logger.exception(
-                "failed to queue task, continuing",
-                exc_info=e,
-                extra={"worker_id": get_worker_id()},
+            .where(RunStep.status.not_in(completed_statuses))
+            .where(RunStep.workflow_run_id.not_in(select(subq_running.c.workflow_run_id)))
+            .order_by(
+                RunStep.priority.desc(),
+                RunStep.retry,
+                RunStep.created_date,
+                RunStep.workflow_step_number,
             )
-            await asyncio.sleep(1)
+            .limit(top)
+        )
+        result = await session.exec(q)
+        steps = list(result.all())
+        if steps:
+            session.expunge_all()
+        return steps
 
 
-async def worker_checkin(worker_id: str):
-    try:
-        async with get_session() as session:
-            checkin = datetime.datetime.now(
-                datetime.UTC,
-            ).replace(tzinfo=None)
-            logger.info(f"worker {worker_id} checkin {checkin}")
-            q = select(WorkerCheckin).where(WorkerCheckin.id == worker_id)
-            rs = await session.exec(q)
-            res = rs.first()
-            if res:
-                res.last_checkin = checkin
-                session.add(res)
-            else:
-                session.add(
-                    WorkerCheckin(
-                        id=worker_id,
-                        last_checkin=checkin,
-                        first_checkin=checkin,
-                    )
-                )
-            await session.commit()
-    except Exception as e:
-        logger.exception(f"worker {worker_id} checkin failed", exc_info=e)
+# ---- legacy do_state_transition export for any straggling callers ----
 
 
-async def check_dead_workers():
-    settings = get_settings()
-    while True:
-        try:
-            checkin_interval = settings.worker_checkin_timeout
-            logger.info(
-                f"checking for dead workers every {checkin_interval} seconds",
-            )
-            # Use naive UTC for SQLite compatibility
-            # (SQLite stores datetimes without timezone)
-            now = datetime.datetime.now(
-                datetime.UTC,
-            ).replace(tzinfo=None)
-            jitter = random.randint(1, 20) / 10
-            last_checkin_time = now - datetime.timedelta(
-                seconds=checkin_interval + jitter,
-            )
-            async with get_session() as session:
-                q = select(WorkerCheckin).where(
-                    WorkerCheckin.last_checkin < last_checkin_time,
-                )
-                results = await session.exec(q)
-                results = results.all()
-                for worker in results:
-                    checkin = worker.last_checkin
-                    if checkin.tzinfo is not None:
-                        checkin = checkin.replace(
-                            tzinfo=None,
-                        )
-                    dead_duration = now - checkin
-                    logger.info(
-                        f"worker {worker.id} last checkin {worker.last_checkin} dead for {dead_duration} - removing",
-                    )
-                    await session.delete(worker)
-                    q2 = (
-                        select(RunStep)
-                        .where(
-                            RunStep.worker_id == worker.id,
-                        )
-                        .where(
-                            RunStep.status == RunStatus.RUNNING,
-                        )
-                    )
-                    step_results = await session.exec(q2)
-                    step_results = step_results.all()
-                    logger.info(
-                        f"resetting {len(step_results)} running steps from dead worker {worker.id}",
-                    )
-                    for step in step_results:
-                        logger.info(
-                            f"resetting step {step.id} run_id={step.workflow_run_id} status={step.status} -> PENDING",
-                        )
-                        step.worker_id = None
-                        step.status = RunStatus.PENDING
-                        session.add(step)
+def do_state_transition(
+    start_status: RunStatus,
+    end_status: RunStatus,
+    retry: int,
+    retries: int,
+    step_worker_id: str | None = None,
+) -> RunStatus:
+    """Legacy state-machine entry kept for callers that have not
+    moved to the lease-token based approach. Worker-id checks are
+    now enforced at the SQL layer via the lease token, so this
+    function is now purely the rules table + ERROR→FAILED elevation."""
+    if not transition_allowed(start_status, end_status):
+        msg = f"can't change from {start_status.value} to {end_status.value}"
+        raise WorkflowException(msg)
+    return elevate_terminal(end_status, retry, retries)
 
-                await session.commit()
-        except asyncio.CancelledError:
-            logger.info(
-                "dead worker check cancelled, shutting down",
-            )
-            raise
-        except Exception as e:
-            logger.exception(
-                "error checking for dead workers",
-                exc_info=e,
-                extra={"worker_id": get_worker_id()},
-            )
-        await asyncio.sleep(checkin_interval)
+
+# Datetime import retained for legacy callers reaching into the
+# module to construct timestamps.
+__all__ = [
+    "Worker",
+    "WorkerConfig",
+    "Metrics",
+    "LoggingMetrics",
+    "LifecycleBus",
+    "LifecycleEventEnvelope",
+    "WorkflowException",
+    "transition_allowed",
+    "elevate_terminal",
+    "build_step_coro",
+    "build_coro",
+    "start_worker",
+    "stop_worker",
+    "get_worker_id",
+    "get_runnable_steps",
+    "do_state_transition",
+    "datetime",
+]

@@ -459,6 +459,14 @@ class RunStep(SQLModel, table=True):
     status_message: str = Field(default=None, nullable=True)
     status_meta: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
     worker_id: str = Field(default=None, nullable=True)
+    # New per-claim audit token. Set on claim, cleared on terminal
+    # status. Terminal writes are gated on this matching the holder
+    # so a reaped/stale worker can't double-complete.
+    lease_token: str | None = Field(default=None, nullable=True)
+    # Optional declarative lock key (e.g. "rag:/abs/path"). When set,
+    # the claim layer will only claim this step if the lock is free,
+    # and the worker acquires the lock for the duration of execution.
+    resource_key: str | None = Field(default=None, nullable=True, index=True)
 
     @computed_field
     @property
@@ -473,6 +481,37 @@ class WorkerCheckin(SQLModel, table=True):
     first_checkin: datetime.datetime = Field(default=None)
     last_checkin: datetime.datetime = Field(default=None)
     __table_args__ = (UniqueConstraint("id", name="unq_worker"),)
+
+
+class ResourceLockKind(StrEnum):
+    WORKER = "worker"
+    CLI = "cli"
+    WEB = "web"
+    LIFECYCLE = "lifecycle"
+
+
+class ResourceLock(SQLModel, table=True):
+    """
+    Cross-subsystem lock rendezvous keyed by an opaque
+    *resource_key* (typically a resolved RAG-DB path).
+
+    All RAG-DB writers — workflow ``save_to_rag`` steps, the web
+    vacuum endpoint, the ``si-diag`` CLI, and ``end_group`` lifecycle
+    vacuums — coordinate by acquiring/releasing rows here. Holders
+    refresh ``expires_at`` on a heartbeat; expired rows are swept by
+    a background task and opportunistically by acquirers.
+    """
+
+    resource_key: str = Field(default=None, primary_key=True)
+    holder_id: str = Field(default=None)
+    holder_kind: ResourceLockKind = Field(default=ResourceLockKind.WORKER)
+    step_id: int | None = Field(default=None, nullable=True)
+    acquired_at: datetime.datetime = Field(default=None)
+    expires_at: datetime.datetime = Field(default=None, index=True)
+    holder_meta: dict[str, str] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+    )
 
 
 class StepConfig(SQLModel, table=True):

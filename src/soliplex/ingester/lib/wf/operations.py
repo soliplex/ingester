@@ -11,6 +11,7 @@ from sqlalchemy import extract
 from sqlalchemy import func
 from sqlalchemy import literal_column
 from sqlalchemy import or_
+from sqlalchemy import tuple_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import select
 from sqlmodel import update
@@ -26,10 +27,13 @@ from soliplex.ingester.lib.models import DocumentInfo
 from soliplex.ingester.lib.models import DocumentURI
 from soliplex.ingester.lib.models import LifeCycleEvent
 from soliplex.ingester.lib.models import LifecycleHistory
+from soliplex.ingester.lib.models import ResourceLock
+from soliplex.ingester.lib.models import ResourceLockKind
 from soliplex.ingester.lib.models import RunGroup
 from soliplex.ingester.lib.models import RunStatus
 from soliplex.ingester.lib.models import RunStep
 from soliplex.ingester.lib.models import StepConfig
+from soliplex.ingester.lib.models import WorkerCheckin
 from soliplex.ingester.lib.models import WorkflowRun
 from soliplex.ingester.lib.models import WorkflowRunWithDetails
 from soliplex.ingester.lib.models import WorkflowStepType
@@ -48,6 +52,23 @@ logger = logging.getLogger(__name__)
 
 class NotFoundError(Exception):
     pass
+
+
+async def _rag_resource_key_for_param(param_id: str | None) -> str | None:
+    """Resolve the cross-subsystem ``resource_key`` for the RAG DB
+    targeted by *param_id*. Returns ``None`` when the param set does
+    not declare a store path (no STORE step or no ``data_dir``)."""
+    if param_id is None:
+        return None
+    from soliplex.ingester.lib.rag import resolve_lancedb_path_from_param_config
+    from soliplex.ingester.lib.rag import resource_key_for
+
+    param_set = await get_param_set(param_id)
+    store_cfg = param_set.config.get(WorkflowStepType.STORE, {})
+    if "data_dir" not in store_cfg:
+        return None
+    db_path = resolve_lancedb_path_from_param_config(store_cfg)
+    return resource_key_for(db_path)
 
 
 async def _filter_existing_in_rag(
@@ -619,6 +640,12 @@ async def create_workflow_run(
         "workflow_id": workflow_definition_id,
         "source": batch.source,
     }
+    # Resolve the RAG-DB resource_key once per run-group/param so we
+    # can stamp it on every ``save_to_rag``-style step. The claim
+    # layer uses this to skip steps whose lock is held by another
+    # subsystem (web vacuum, lifecycle, CLI).
+    rag_resource_key = await _rag_resource_key_for_param(param_id)
+
     async with get_session() as session:
         workflow_run = WorkflowRun(
             run_group_id=run_group.id,
@@ -637,6 +664,7 @@ async def create_workflow_run(
         new_steps = []
         idx = 0
         for step_type, evt_handler in workflow_def.item_steps.items():
+            resource_key = rag_resource_key if step_type == WorkflowStepType.STORE else None
             run_step = RunStep(
                 workflow_run_id=workflow_run.id,
                 workflow_step_number=idx + 1,
@@ -648,6 +676,7 @@ async def create_workflow_run(
                 step_type=step_type,
                 step_config_id=parameter_ids[step_type],
                 is_last_step=idx == len(workflow_def.item_steps) - 1,
+                resource_key=resource_key,
             )
             session.add(run_step)
             new_steps.append(run_step)
@@ -1415,11 +1444,7 @@ async def reset_failed(
                 .where(RunStep.status != RunStatus.COMPLETED)
                 .values(**reset_values)
             )
-            q2 = (
-                update(WorkflowRun)
-                .where(WorkflowRun.id.in_(affected_run_ids))
-                .values(status=RunStatus.PENDING)
-            )
+            q2 = update(WorkflowRun).where(WorkflowRun.id.in_(affected_run_ids)).values(status=RunStatus.PENDING)
         elif run_group_id is not None:
             runs_subq = (
                 select(WorkflowRun.id)
@@ -1440,16 +1465,8 @@ async def reset_failed(
                 .values(status=RunStatus.PENDING)
             )
         else:
-            q1 = (
-                update(RunStep)
-                .where(RunStep.status.in_(_SOFT_STEP_STATUSES))
-                .values(**reset_values)
-            )
-            q2 = (
-                update(WorkflowRun)
-                .where(WorkflowRun.status == RunStatus.FAILED)
-                .values(status=RunStatus.PENDING)
-            )
+            q1 = update(RunStep).where(RunStep.status.in_(_SOFT_STEP_STATUSES)).values(**reset_values)
+            q2 = update(WorkflowRun).where(WorkflowRun.status == RunStatus.FAILED).values(status=RunStatus.PENDING)
 
         result1 = await session.exec(q1)
         reset_steps = result1.rowcount  # type: ignore
@@ -1712,3 +1729,661 @@ async def get_workflow_runs_for_group_with_doc_info(
     if status_filter:
         runs = [r for r in runs if r.status.value == status_filter.upper()]
     return await get_document_info_for_workflow_runs(runs)
+
+
+# ====================================================================
+# wf refactor: atomic claim, lease tokens, run-status recompute,
+# resource locks, worker heartbeat / reaping.
+#
+# These functions are the persistence seam for the new Worker
+# orchestrator. All concurrency invariants live here at the SQL
+# layer; runner.py is pure orchestration over these.
+# ====================================================================
+
+
+def _utc_now() -> datetime.datetime:
+    """Naive UTC. SQLite stores datetimes without timezone, so we
+    consistently strip tzinfo at the boundary to keep comparisons
+    well-defined under both backends."""
+    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+
+
+_CLAIMABLE_STEP_STATUSES = (RunStatus.PENDING, RunStatus.ERROR)
+_NONTERMINAL_RUN_STATUSES = (
+    RunStatus.PENDING,
+    RunStatus.RUNNING,
+    RunStatus.ERROR,
+)
+
+
+async def claim_next_step(
+    worker_id: str,
+    lease_token: str,
+    allowed_types: list[WorkflowStepType] | None = None,
+    batch_id: int | None = None,
+) -> RunStep | None:
+    """Atomically claim the next eligible step for *worker_id*.
+
+    Replaces ``get_runnable_steps + set_step_status(RUNNING)`` with
+    a single transaction. The caller mints *lease_token* (UUID4
+    typically); subsequent ``complete_step`` / ``error_step`` /
+    ``release_step`` calls must present the same token, so a worker
+    that was reaped between claim and write cannot finalize the
+    step on top of a fresh claimant.
+
+    Eligibility predicates mirror the original ``get_runnable_steps``
+    plus two additions:
+
+    1. ``allowed_types`` — when non-empty, only steps whose
+       ``step_type`` is in the list are claimable. Used by the
+       per-type consumer pools to bound concurrency for resource-
+       sensitive types like ``parse`` / ``save_to_rag`` without
+       claim-then-release churn.
+    2. ``resource_key`` — when set on the step, the step is only
+       claimable if no live :class:`ResourceLock` row holds that
+       key. Prevents claiming a ``save_to_rag`` step whose RAG-DB
+       is currently being vacuumed by the web/CLI/lifecycle path.
+
+    Returns
+    -------
+    RunStep | None
+        The newly-claimed step (in-memory, expunged from the
+        session), or ``None`` if no work was available.
+    """
+    now = _utc_now()
+    async with get_session() as session:
+        # Subquery 1: minimum step number per eligible workflow run.
+        subq_min_step = (
+            select(
+                RunStep.workflow_run_id,
+                func.min(RunStep.workflow_step_number).label("min_step"),
+            )
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .where(RunStep.retry < RunStep.retries)
+            .where(RunStep.status.in_(_CLAIMABLE_STEP_STATUSES))
+            .where(WorkflowRun.status.in_(_NONTERMINAL_RUN_STATUSES))
+        )
+        if batch_id is not None:
+            subq_min_step = subq_min_step.where(WorkflowRun.batch_id == batch_id)
+        subq_min_step = subq_min_step.group_by(RunStep.workflow_run_id).subquery()
+
+        # Subquery 2: workflow runs that already have a RUNNING step.
+        subq_running = select(RunStep.workflow_run_id).where(RunStep.status == RunStatus.RUNNING).distinct().subquery()
+
+        # Subquery 3: resource_keys currently locked.
+        subq_locked = select(ResourceLock.resource_key).where(ResourceLock.expires_at > now).subquery()
+
+        q = (
+            select(RunStep)
+            .where(
+                tuple_(RunStep.workflow_run_id, RunStep.workflow_step_number).in_(
+                    select(subq_min_step.c.workflow_run_id, subq_min_step.c.min_step),
+                )
+            )
+            .where(RunStep.status.in_(_CLAIMABLE_STEP_STATUSES))
+            .where(RunStep.workflow_run_id.not_in(select(subq_running.c.workflow_run_id)))
+            .where(
+                or_(
+                    RunStep.resource_key.is_(None),
+                    RunStep.resource_key.not_in(select(subq_locked.c.resource_key)),
+                )
+            )
+            .order_by(
+                RunStep.priority.desc(),
+                RunStep.retry,
+                RunStep.created_date,
+                RunStep.workflow_step_number,
+            )
+            .limit(1)
+        )
+        if allowed_types:
+            q = q.where(RunStep.step_type.in_(allowed_types))
+
+        # SKIP LOCKED is honored on Postgres and silently ignored on
+        # SQLite (which serializes writers at the WAL level anyway).
+        q = q.with_for_update(skip_locked=True)
+
+        result = await session.exec(q)
+        step = result.first()
+        if step is None:
+            return None
+
+        step.status = RunStatus.RUNNING
+        step.worker_id = worker_id
+        step.lease_token = lease_token
+        step.start_date = now
+        step.status_date = now
+        step.status_message = None
+        step.status_meta = {}
+        session.add(step)
+        await session.flush()
+
+        # Promote the workflow run to RUNNING if it is still PENDING /
+        # ERROR. We do this in the same transaction as the claim so
+        # there is never a window where a RUNNING step's parent run
+        # looks PENDING.
+        wf_q = select(WorkflowRun).where(WorkflowRun.id == step.workflow_run_id)
+        wf_rs = await session.exec(wf_q)
+        wf = wf_rs.first()
+        if wf is not None and wf.status != RunStatus.RUNNING:
+            wf.status = RunStatus.RUNNING
+            wf.status_date = now
+            session.add(wf)
+            await session.flush()
+
+        # Detach before commit so the caller can read attributes
+        # without tripping SQLAlchemy's expire-on-commit refresh.
+        session.expunge(step)
+        await session.commit()
+        return step
+
+
+async def complete_step(
+    step_id: int,
+    lease_token: str,
+    message: str | None = "success",
+    meta: dict[str, str] | None = None,
+) -> bool:
+    """Mark a step COMPLETED, gated on the lease token.
+
+    Returns True iff the row was updated. False means the lease
+    was lost (worker reaped or step released by another path) —
+    the caller must treat this as "step is not ours anymore" and
+    *not* assume the work succeeded from the system's point of
+    view.
+
+    The matching :class:`ResourceLock` row, if any, is deleted in
+    the same transaction so a follow-on consumer can immediately
+    claim a step that was waiting on this DB.
+    """
+    now = _utc_now()
+    async with get_session() as session:
+        stmt = (
+            update(RunStep)
+            .where(RunStep.id == step_id)
+            .where(RunStep.lease_token == lease_token)
+            .where(RunStep.status == RunStatus.RUNNING)
+            .values(
+                status=RunStatus.COMPLETED,
+                status_date=now,
+                completed_date=now,
+                status_message=message,
+                status_meta=meta or {},
+                lease_token=None,
+            )
+        )
+        result = await session.exec(stmt)
+        rows = result.rowcount  # type: ignore
+        if rows == 0:
+            await session.commit()
+            return False
+
+        # Drop any resource lock this step held.
+        await session.exec(
+            delete(ResourceLock).where(ResourceLock.holder_id == lease_token),
+        )
+        await session.commit()
+        return True
+
+
+async def error_step(
+    step_id: int,
+    lease_token: str,
+    message: str,
+    meta: dict[str, str] | None = None,
+) -> RunStatus | None:
+    """Mark a step ERROR (or FAILED if retries exhausted), gated on
+    the lease token.
+
+    Returns the resulting :class:`RunStatus` (``ERROR`` or
+    ``FAILED``), or ``None`` if the lease was lost. ``FAILED`` also
+    cascades pending sibling steps to ``CANCELLED`` so the rest of
+    the workflow run does not silently sit eligible.
+    """
+    now = _utc_now()
+    async with get_session() as session:
+        q = select(RunStep).where(RunStep.id == step_id)
+        rs = await session.exec(q)
+        step = rs.first()
+        if step is None:
+            return None
+        if step.lease_token != lease_token or step.status != RunStatus.RUNNING:
+            # Lost the lease (e.g. reaped while we ran).
+            return None
+
+        new_retry = step.retry + 1
+        new_status = RunStatus.FAILED if new_retry >= step.retries else RunStatus.ERROR
+
+        step.status = new_status
+        step.retry = new_retry
+        step.status_date = now
+        step.status_message = message
+        step.status_meta = meta or {}
+        step.lease_token = None
+        session.add(step)
+        await session.flush()
+
+        cancelled = 0
+        if new_status == RunStatus.FAILED:
+            cancelled = await cancel_pending_steps(step.workflow_run_id, session)
+
+        await session.exec(
+            delete(ResourceLock).where(ResourceLock.holder_id == lease_token),
+        )
+        await session.commit()
+
+        if cancelled:
+            logger.info(
+                f"cancelled {cancelled} pending steps for run {step.workflow_run_id}",
+            )
+        return new_status
+
+
+async def release_step(step_id: int, lease_token: str) -> bool:
+    """Release a still-RUNNING step back to PENDING, gated on the
+    lease token. Used by graceful shutdown so in-flight work
+    becomes immediately re-claimable instead of waiting for the
+    worker-checkin timeout to elapse.
+
+    Returns True iff the lease still matched. ``retry`` is **not**
+    incremented — this is a cooperative release, not a failure.
+    """
+    now = _utc_now()
+    async with get_session() as session:
+        stmt = (
+            update(RunStep)
+            .where(RunStep.id == step_id)
+            .where(RunStep.lease_token == lease_token)
+            .where(RunStep.status == RunStatus.RUNNING)
+            .values(
+                status=RunStatus.PENDING,
+                worker_id=None,
+                lease_token=None,
+                status_date=now,
+                status_message="released by worker shutdown",
+            )
+        )
+        result = await session.exec(stmt)
+        await session.exec(
+            delete(ResourceLock).where(ResourceLock.holder_id == lease_token),
+        )
+        await session.commit()
+        return result.rowcount > 0  # type: ignore
+
+
+async def recompute_run_status(workflow_run_id: int) -> RunStatus | None:
+    """Recompute ``WorkflowRun.status`` from its steps.
+
+    Idempotent — derives the answer from current step counts rather
+    than applying a delta. Run in its own transaction so a failure
+    here cannot poison the step transition that triggered it.
+
+    Rules:
+
+    * any FAILED step → run FAILED
+    * all steps COMPLETED → run COMPLETED
+    * any RUNNING/ERROR step → run RUNNING
+    * otherwise → run PENDING
+    """
+    async with get_session() as session:
+        q = (
+            select(RunStep.status, func.count(RunStep.id))
+            .where(RunStep.workflow_run_id == workflow_run_id)
+            .group_by(RunStep.status)
+        )
+        rs = await session.exec(q)
+        counts: dict[RunStatus, int] = dict(rs.all())  # type: ignore
+
+        if not counts:
+            return None
+
+        total = sum(counts.values())
+        completed = counts.get(RunStatus.COMPLETED, 0)
+        failed = counts.get(RunStatus.FAILED, 0)
+        cancelled = counts.get(RunStatus.CANCELLED, 0)
+        running = counts.get(RunStatus.RUNNING, 0)
+        errored = counts.get(RunStatus.ERROR, 0)
+
+        if failed > 0:
+            new_status = RunStatus.FAILED
+        elif completed + cancelled == total:
+            new_status = RunStatus.COMPLETED
+        elif running + errored > 0 or completed > 0:
+            new_status = RunStatus.RUNNING
+        else:
+            new_status = RunStatus.PENDING
+
+        wf_q = select(WorkflowRun).where(WorkflowRun.id == workflow_run_id)
+        wf_rs = await session.exec(wf_q)
+        wf = wf_rs.first()
+        if wf is None:
+            return None
+
+        if wf.status == new_status:
+            return new_status
+
+        now = _utc_now()
+        wf.status = new_status
+        wf.status_date = now
+        if new_status in (RunStatus.COMPLETED, RunStatus.FAILED):
+            wf.completed_date = now
+        session.add(wf)
+        await session.commit()
+        return new_status
+
+
+async def try_complete_run_group(run_group_id: int) -> RunStatus | None:
+    """Atomically transition a run group to COMPLETED or FAILED iff
+    no steps in the group are still pending or retryable.
+
+    The transition is keyed on the same predicate that callers use
+    to decide whether to fire ``GROUP_END``, so under concurrency
+    only the worker whose update affected a row should fire the
+    event. Returns the new group status, or ``None`` if the group
+    is not yet finished.
+    """
+    now = _utc_now()
+    async with get_session() as session:
+        # Are there any non-terminal steps left?
+        pending_q = (
+            select(func.count(RunStep.id))
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .where(WorkflowRun.run_group_id == run_group_id)
+            .where(
+                RunStep.status.in_(
+                    (RunStatus.PENDING, RunStatus.RUNNING, RunStatus.ERROR),
+                ),
+            )
+        )
+        pending = (await session.exec(pending_q)).first() or 0
+        if pending > 0:
+            return None
+
+        # Any FAILED steps determine group status.
+        failed_q = (
+            select(func.count(RunStep.id))
+            .join(WorkflowRun, WorkflowRun.id == RunStep.workflow_run_id)
+            .where(WorkflowRun.run_group_id == run_group_id)
+            .where(RunStep.status == RunStatus.FAILED)
+        )
+        failed = (await session.exec(failed_q)).first() or 0
+        new_status = RunStatus.FAILED if failed > 0 else RunStatus.COMPLETED
+
+        stmt = (
+            update(RunGroup)
+            .where(RunGroup.id == run_group_id)
+            .where(
+                RunGroup.status.not_in((RunStatus.COMPLETED, RunStatus.FAILED)),
+            )
+            .values(
+                status=new_status,
+                status_date=now,
+                completed_date=now,
+            )
+        )
+        result = await session.exec(stmt)
+        await session.commit()
+        if result.rowcount == 0:  # type: ignore
+            # Lost the race — another worker fired GROUP_END.
+            return None
+        return new_status
+
+
+# ----- worker heartbeat / reaper --------------------------------------
+
+
+async def worker_heartbeat(worker_id: str) -> None:
+    """Insert or update a worker's checkin row to *now*."""
+    now = _utc_now()
+    async with get_session() as session:
+        q = select(WorkerCheckin).where(WorkerCheckin.id == worker_id)
+        rs = await session.exec(q)
+        res = rs.first()
+        if res is not None:
+            res.last_checkin = now
+            session.add(res)
+        else:
+            session.add(
+                WorkerCheckin(
+                    id=worker_id,
+                    last_checkin=now,
+                    first_checkin=now,
+                ),
+            )
+        await session.commit()
+
+
+async def delete_worker_checkin(worker_id: str) -> None:
+    """Remove a worker's checkin row.
+
+    Called by graceful shutdown so siblings see the departure
+    immediately and don't wait the full ``worker_checkin_timeout``.
+    """
+    async with get_session() as session:
+        await session.exec(
+            delete(WorkerCheckin).where(WorkerCheckin.id == worker_id),
+        )
+        await session.commit()
+
+
+async def reap_dead_workers(
+    my_worker_id: str,
+    threshold_seconds: int,
+) -> tuple[list[str], list[int]]:
+    """Sweep dead workers and reset any RUNNING steps they held.
+
+    *my_worker_id* is **always** excluded from the sweep — a worker
+    can never reap itself, eliminating the self-reaping race where
+    a stalled checkin loop would let the worker mistakenly reset
+    its own in-flight steps.
+
+    Reset semantics:
+
+    * status → ``PENDING``
+    * ``worker_id`` → ``NULL``
+    * ``lease_token`` → ``NULL`` (so any straggling write from the
+      dead worker becomes a no-op via the lease gate)
+    * ``status_message`` → an audit string
+
+    Resource locks held by reaped workers are deleted alongside.
+
+    Returns
+    -------
+    (reaped_worker_ids, reset_step_ids)
+    """
+    cutoff = _utc_now() - datetime.timedelta(seconds=threshold_seconds)
+    reaped: list[str] = []
+    reset_ids: list[int] = []
+    async with get_session() as session:
+        q = select(WorkerCheckin).where(WorkerCheckin.last_checkin < cutoff).where(WorkerCheckin.id != my_worker_id)
+        rs = await session.exec(q)
+        dead = list(rs.all())
+        if not dead:
+            return [], []
+
+        dead_ids = [w.id for w in dead]
+        reaped = list(dead_ids)
+
+        # Find their RUNNING steps so we can record which were reset.
+        steps_q = (
+            select(RunStep.id, RunStep.lease_token)
+            .where(RunStep.worker_id.in_(dead_ids))
+            .where(RunStep.status == RunStatus.RUNNING)
+        )
+        step_rs = await session.exec(steps_q)
+        rows = list(step_rs.all())
+        reset_ids = [r[0] for r in rows]
+        dead_lease_tokens = [r[1] for r in rows if r[1] is not None]
+
+        if reset_ids:
+            await session.exec(
+                update(RunStep)
+                .where(RunStep.id.in_(reset_ids))
+                .values(
+                    status=RunStatus.PENDING,
+                    worker_id=None,
+                    lease_token=None,
+                    status_date=_utc_now(),
+                    status_message="reset by dead-worker reaper",
+                ),
+            )
+
+        if dead_lease_tokens:
+            await session.exec(
+                delete(ResourceLock).where(
+                    ResourceLock.holder_id.in_(dead_lease_tokens),
+                ),
+            )
+
+        # Drop the dead checkin rows.
+        await session.exec(
+            delete(WorkerCheckin).where(WorkerCheckin.id.in_(dead_ids)),
+        )
+        await session.commit()
+    return reaped, reset_ids
+
+
+# ----- ResourceLock ---------------------------------------------------
+
+
+async def acquire_resource_lock(
+    resource_key: str,
+    holder_id: str,
+    holder_kind: ResourceLockKind,
+    step_id: int | None = None,
+    ttl_seconds: int = 300,
+    holder_meta: dict[str, str] | None = None,
+) -> bool:
+    """Try to acquire a named resource lock.
+
+    Returns True iff acquired. Implemented as ``INSERT ... DELETE
+    expired ... INSERT again`` to avoid a hard dependency on
+    ``ON CONFLICT`` semantics: we sweep first, then attempt the
+    insert under the unique primary key. Concurrent acquirers
+    serialize at the row level.
+    """
+    now = _utc_now()
+    expires = now + datetime.timedelta(seconds=ttl_seconds)
+    async with get_session() as session:
+        # Opportunistic sweep: an expired holder shouldn't block.
+        await session.exec(
+            delete(ResourceLock).where(ResourceLock.expires_at < now),
+        )
+        # Is the lock free?
+        q = select(ResourceLock).where(ResourceLock.resource_key == resource_key)
+        rs = await session.exec(q)
+        existing = rs.first()
+        if existing is not None:
+            await session.commit()
+            return False
+        session.add(
+            ResourceLock(
+                resource_key=resource_key,
+                holder_id=holder_id,
+                holder_kind=holder_kind,
+                step_id=step_id,
+                acquired_at=now,
+                expires_at=expires,
+                holder_meta=holder_meta or {},
+            ),
+        )
+        try:
+            await session.commit()
+        except Exception:
+            # Lost the race to a concurrent acquirer.
+            await session.rollback()
+            return False
+        return True
+
+
+async def refresh_resource_lock(
+    resource_key: str,
+    holder_id: str,
+    ttl_seconds: int = 300,
+) -> bool:
+    """Extend the TTL of a held resource lock. Returns True iff the
+    holder still owned it (0 rows updated → lock was lost / swept,
+    holder must abort)."""
+    expires = _utc_now() + datetime.timedelta(seconds=ttl_seconds)
+    async with get_session() as session:
+        stmt = (
+            update(ResourceLock)
+            .where(ResourceLock.resource_key == resource_key)
+            .where(ResourceLock.holder_id == holder_id)
+            .values(expires_at=expires)
+        )
+        result = await session.exec(stmt)
+        await session.commit()
+        return result.rowcount > 0  # type: ignore
+
+
+async def release_resource_lock(
+    resource_key: str,
+    holder_id: str,
+) -> bool:
+    """Release a held resource lock. Idempotent — releasing a lock
+    you don't hold is silently a no-op."""
+    async with get_session() as session:
+        stmt = (
+            delete(ResourceLock).where(ResourceLock.resource_key == resource_key).where(ResourceLock.holder_id == holder_id)
+        )
+        result = await session.exec(stmt)
+        await session.commit()
+        return result.rowcount > 0  # type: ignore
+
+
+async def force_release_resource_lock(resource_key: str) -> bool:
+    """Drop a resource lock regardless of holder. Used by the
+    ``si-diag --force`` path; emits an audit log line."""
+    async with get_session() as session:
+        q = select(ResourceLock).where(ResourceLock.resource_key == resource_key)
+        rs = await session.exec(q)
+        existing = rs.first()
+        if existing is None:
+            return False
+        logger.warning(
+            "force-releasing resource lock %s held by %s/%s since %s",
+            resource_key,
+            existing.holder_id,
+            existing.holder_kind,
+            existing.acquired_at,
+        )
+        await session.exec(
+            delete(ResourceLock).where(ResourceLock.resource_key == resource_key),
+        )
+        await session.commit()
+        return True
+
+
+async def get_resource_lock(resource_key: str) -> ResourceLock | None:
+    """Read the current holder of *resource_key* (or None)."""
+    async with get_session() as session:
+        q = select(ResourceLock).where(ResourceLock.resource_key == resource_key)
+        rs = await session.exec(q)
+        existing = rs.first()
+        if existing is not None:
+            session.expunge(existing)
+        return existing
+
+
+async def sweep_expired_resource_locks() -> int:
+    """Delete every expired lock row. Returns the number deleted."""
+    now = _utc_now()
+    async with get_session() as session:
+        stmt = delete(ResourceLock).where(ResourceLock.expires_at < now)
+        result = await session.exec(stmt)
+        await session.commit()
+        return result.rowcount  # type: ignore
+
+
+# ----- Worker orchestration helpers -----------------------------------
+
+
+async def list_active_resource_locks_for_holder(holder_id: str) -> list[str]:
+    """Return resource keys currently held by *holder_id*."""
+    async with get_session() as session:
+        q = select(ResourceLock.resource_key).where(
+            ResourceLock.holder_id == holder_id,
+        )
+        rs = await session.exec(q)
+        return list(rs.all())

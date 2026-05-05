@@ -181,15 +181,8 @@ async def split_parse_document(
     Returns:
         None
     """
-    from pdf_splitter.processor import BatchProcessor
-    from pdf_splitter.reassembly import merge_from_results
-    from pdf_splitter.segmentation_enhanced import smart_split_to_files
-
     _lc = log_context(doc_hash=doc_hash, batch_id=batch_id, action="split_parse")
     logger.info(f"parse_document started  {source} {batch_id} {doc_hash}", extra=_lc)
-    split_workers = step_config.config_json.get("split_workers", 1)
-    use_serve = step_config.config_json.get("use_serve", True)
-    doc = await doc_ops.get_document(doc_hash)
     doc_uris = await doc_ops.get_document_uris_by_hash(doc_hash)
     if len(doc_uris) == 0:
         msg = f"no uris found for {doc_hash}"
@@ -233,84 +226,36 @@ async def split_parse_document(
         file_bytes = file_bytes_override
     else:
         file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
-    async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
-        tf = Path(temp_dir)
-        outfile = tf / "input.pdf"
-        async with aiofiles.open(outfile, "wb") as f:
-            await f.write(file_bytes)
-        file_size = len(file_bytes)
-        logger.info(f"starting  split_to_files file_Size={file_size}", extra=_lc)
-        del file_bytes
-        split_result = smart_split_to_files(outfile, output_dir=tf, parallel=False)
-
-        if len(split_result) == 2:
-            split_files = split_result[0]
-            logger.info(f"document {doc_hash} size={file_size} split into {len(split_files)} ")
-            if use_serve:
-                logger.info(f"parse_document {doc_hash} using serve")
-
-                # Limit concurrent conversions to avoid holding all
-                # chunk bytes + conversion state in memory at once.
-                _convert_sem = asyncio.Semaphore(2)
-
-                async def _read_and_convert(split_path):
-                    async with _convert_sem:
-                        fb = await read_file(split_path)
-                        result = await docling_convert(
-                            fb,
-                            doc.mime_type,
-                            source_uri=source_uri,
-                            config_dict=step_config.config_json,
-                        )
-                        del fb
-                        return {
-                            "success": True,
-                            "document_dict": json.loads(result["json"].decode("utf-8 ")),
-                        }
-
-                proc_results = await asyncio.gather(*[_read_and_convert(sp) for sp in split_files])
-
-            else:
-                start = time.time()
-                logger.info(f"parse_document {doc_hash} using batch processing workers={split_workers} ")
-                proc = BatchProcessor(max_workers=split_workers, verbose=True)
-                proc_results = proc.execute_parallel(split_files)
-                logger.info(
-                    f"batch processing took {time.time() - start} seconds files={len(split_files)}",
-                    extra=_lc,
-                )
-            logger.info(
-                f"document doc_results {doc_hash} {len(proc_results)}",
-                extra=_lc,
-            )
-            docling_doc = merge_from_results(proc_results)
-            docling_json = docling_doc.model_dump_json()
-            jsop = await _get_op(
-                workflow_run.id,
-                WorkflowStepType.PARSE,
-                ArtifactType.PARSED_JSON,
-            )
-            await jsop.write(doc_hash, docling_json.encode("utf-8"))
-            markdown_txt = docling_doc.export_to_markdown()
-            mdop = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_MD)
-            await mdop.write(doc_hash, markdown_txt.encode("utf-8"))
-            # check for existience of files, in some cases it's missing
-            if not await test_op_json.exists(doc_hash) or not await test_op_md.exists(doc_hash):
-                logger.info(f"document {doc_hash} missing files,retrying write", extra=_lc)
-                await jsop.write(doc_hash, docling_json.encode("utf-8"))
-                await mdop.write(doc_hash, markdown_txt.encode("utf-8"))
-            json_exists = await test_op_json.exists(doc_hash)
-            md_exists = await test_op_md.exists(doc_hash)
-            logger.debug(f"document {doc_hash} json={json_exists} md={md_exists}", extra=_lc)
-            if not json_exists or not md_exists:
-                raise WorkflowException(
-                    f"document {doc_hash} missing files after retrying write json={json_exists} md={md_exists}",
-                )
-
-            await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
-        else:
-            msg = f"split_to_files returned {split_result}.  should return 2 files.  {source_uri} {doc_hash}"
-            raise WorkflowException(msg)
+    file_size = len(file_bytes)
+    logger.info(f"starting split_parse file_size={file_size}", extra=_lc)
+    markdown_bytes, json_bytes = await split_parse_bytes(
+        file_bytes,
+        source_uri,
+        step_config.config_json,
+    )
+    del file_bytes
+    logger.info(f"document {doc_hash} size={file_size} parsed", extra=_lc)
+    jsop = await _get_op(
+        workflow_run.id,
+        WorkflowStepType.PARSE,
+        ArtifactType.PARSED_JSON,
+    )
+    await jsop.write(doc_hash, json_bytes)
+    mdop = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_MD)
+    await mdop.write(doc_hash, markdown_bytes)
+    # check for existence of files, in some cases it's missing
+    if not await test_op_json.exists(doc_hash) or not await test_op_md.exists(doc_hash):
+        logger.info(f"document {doc_hash} missing files, retrying write", extra=_lc)
+        await jsop.write(doc_hash, json_bytes)
+        await mdop.write(doc_hash, markdown_bytes)
+    json_exists = await test_op_json.exists(doc_hash)
+    md_exists = await test_op_md.exists(doc_hash)
+    logger.debug(f"document {doc_hash} json={json_exists} md={md_exists}", extra=_lc)
+    if not json_exists or not md_exists:
+        raise WorkflowException(
+            f"document {doc_hash} missing files after retrying write json={json_exists} md={md_exists}",
+        )
+    await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
     logger.info(f"parse_document completed  {source} {batch_id} {doc_hash}", extra=_lc)
 
 
@@ -366,62 +311,58 @@ async def parse_document(
             file_bytes = file_bytes_override
         # mime_type_override allows overriding mime type by pre-processors such as asciidoc or plantnuml
         mime_type = mime_type_override if mime_type_override is not None else doc.mime_type
-        parsed = await docling_convert(
-            file_bytes,
-            mime_type,
-            source_uri=source_uri,
-            config_dict=step_config.config_json,
-        )
-        if parsed:
-            expected = {"json", "md"}
-            missing = expected - parsed.keys()
-            if missing:
+        try:
+            md_bytes, json_bytes = await parse_bytes(
+                file_bytes,
+                mime_type,
+                source_uri,
+                step_config.config_json,
+            )
+        except WorkflowException:
+            logger.exception(
+                f"parse failed for {doc_hash} {doc.mime_type} {source_uri}",
+                extra=log_context(
+                    doc_hash=doc_hash,
+                    batch_id=batch_id,
+                    action="do_parse",
+                ),
+            )
+            raise
+        if markdown_override is not None:
+            logger.info(f"using markdown override for {mime_type} /{doc_hash}")
+            md_bytes = markdown_override.encode("utf-8") if isinstance(markdown_override, str) else markdown_override
+        for st, content in (
+            (ArtifactType.PARSED_JSON, json_bytes),
+            (ArtifactType.PARSED_MD, md_bytes),
+        ):
+            op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, st)
+            if force:
+                try:
+                    await op.delete(doc_hash)
+                except FileNotFoundError:
+                    pass
+            await op.write(doc_hash, content)
+        for artifact_type in (
+            ArtifactType.PARSED_JSON,
+            ArtifactType.PARSED_MD,
+        ):
+            check_op = await _get_op(
+                workflow_run.id,
+                WorkflowStepType.PARSE,
+                artifact_type,
+            )
+            if not await check_op.exists(doc_hash):
+                msg = f"parse {doc_hash}: artifact {artifact_type} missing after write"
                 logger.error(
-                    f"docling result for {doc_hash} missing formats {missing}: {parsed}",
+                    msg,
                     extra=log_context(
                         doc_hash=doc_hash,
                         batch_id=batch_id,
                         action="do_parse",
                     ),
                 )
-                msg = f"parse {doc_hash} missing expected formats {missing}"
                 raise WorkflowException(msg)
-            for fmt, content in parsed.items():
-                st = ArtifactType.PARSED_JSON if fmt == "json" else ArtifactType.PARSED_MD
-                if st == ArtifactType.PARSED_MD and markdown_override is not None:
-                    logger.info(f"using markdown override for {mime_type} /{doc_hash}")
-                    content = markdown_override
-                op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, st)
-                if force:
-                    try:
-                        await op.delete(doc_hash)
-                    except FileNotFoundError:
-                        pass
-                await op.write(doc_hash, content)
-            for artifact_type in (
-                ArtifactType.PARSED_JSON,
-                ArtifactType.PARSED_MD,
-            ):
-                check_op = await _get_op(
-                    workflow_run.id,
-                    WorkflowStepType.PARSE,
-                    artifact_type,
-                )
-                if not await check_op.exists(doc_hash):
-                    msg = f"parse {doc_hash}: artifact {artifact_type} missing after write"
-                    logger.error(
-                        msg,
-                        extra=log_context(
-                            doc_hash=doc_hash,
-                            batch_id=batch_id,
-                            action="do_parse",
-                        ),
-                    )
-                    raise WorkflowException(msg)
-            await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
-        else:
-            msg = f"failed to parse {doc_hash} {doc.mime_type} {source_uri}"
-            raise WorkflowException(msg)
+        await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
     else:
         logger.info(
             f"skipping parse for doc={doc_hash} exists={exists} force={force}",
@@ -429,6 +370,131 @@ async def parse_document(
         )
 
     logger.info(f"parse_document completed  {source} {batch_id} {doc_hash}")
+
+
+async def parse_bytes(
+    file_bytes: bytes,
+    mime_type: str,
+    source_uri: str,
+    config: dict | None = None,
+) -> tuple[bytes, bytes]:
+    """Convert document bytes via docling. Returns (markdown_bytes, docling_json_bytes).
+
+    Standalone kernel — no storage, workflow, or document-tracking handling.
+    Used by ``parse_document`` and the path-based ``parse_pdf_file`` wrapper.
+    """
+    config = config or {}
+    parsed = await docling_convert(
+        file_bytes,
+        mime_type,
+        source_uri=source_uri,
+        config_dict=config,
+    )
+    if not parsed:
+        msg = f"failed to parse {source_uri} ({mime_type})"
+        raise WorkflowException(msg)
+    missing = {"json", "md"} - parsed.keys()
+    if missing:
+        msg = f"parse {source_uri}: missing expected formats {missing}"
+        raise WorkflowException(msg)
+    md = parsed["md"]
+    js = parsed["json"]
+    if isinstance(md, str):
+        md = md.encode("utf-8")
+    if isinstance(js, str):
+        js = js.encode("utf-8")
+    return md, js
+
+
+async def parse_pdf_file(
+    pdf_path: Path,
+    config: dict | None = None,
+) -> tuple[bytes, bytes]:
+    """Parse a single PDF file via docling. Returns (markdown_bytes, docling_json_bytes).
+
+    Path-based wrapper around ``parse_bytes`` — reads the file then delegates.
+    """
+    file_bytes = await read_file(pdf_path)
+    return await parse_bytes(file_bytes, "application/pdf", str(pdf_path), config)
+
+
+async def split_parse_pdf_file(
+    pdf_path: Path,
+    config: dict | None = None,
+    source_uri: str | None = None,
+) -> tuple[bytes, bytes]:
+    """Split a PDF, parse pieces via docling, and merge. Returns (markdown_bytes, docling_json_bytes).
+
+    Standalone kernel — no storage, workflow, or document-tracking handling.
+    Honors ``split_workers`` and ``use_serve`` keys in ``config``.
+    ``source_uri`` defaults to ``str(pdf_path)`` and is forwarded to docling
+    for source-tracking metadata.
+    """
+    from pdf_splitter.processor import BatchProcessor
+    from pdf_splitter.reassembly import merge_from_results
+    from pdf_splitter.segmentation_enhanced import smart_split_to_files
+
+    config = config or {}
+    if source_uri is None:
+        source_uri = str(pdf_path)
+    split_workers = config.get("split_workers", 1)
+    use_serve = config.get("use_serve", True)
+
+    async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
+        tf = Path(temp_dir)
+        split_result = smart_split_to_files(pdf_path, output_dir=tf, parallel=False)
+        if len(split_result) != 2:
+            msg = f"split_to_files returned {split_result}.  should return 2 items.  {source_uri}"
+            raise WorkflowException(msg)
+        split_files = split_result[0]
+        logger.info(f"split_parse {source_uri} split into {len(split_files)} pieces")
+
+        if use_serve:
+            convert_sem = asyncio.Semaphore(2)
+
+            async def _read_and_convert(split_path):
+                async with convert_sem:
+                    fb = await read_file(split_path)
+                    result = await docling_convert(
+                        fb,
+                        "application/pdf",
+                        source_uri=source_uri,
+                        config_dict=config,
+                    )
+                    return {
+                        "success": True,
+                        "document_dict": json.loads(result["json"].decode("utf-8")),
+                    }
+
+            proc_results = await asyncio.gather(*[_read_and_convert(sp) for sp in split_files])
+        else:
+            start = time.time()
+            proc = BatchProcessor(max_workers=split_workers, verbose=True)
+            proc_results = proc.execute_parallel(split_files)
+            logger.info(f"batch processing took {time.time() - start:.2f}s files={len(split_files)}")
+
+        docling_doc = merge_from_results(proc_results)
+    return (
+        docling_doc.export_to_markdown().encode("utf-8"),
+        docling_doc.model_dump_json().encode("utf-8"),
+    )
+
+
+async def split_parse_bytes(
+    file_bytes: bytes,
+    source_uri: str,
+    config: dict | None = None,
+) -> tuple[bytes, bytes]:
+    """Split PDF bytes, parse pieces via docling, merge. Returns (markdown_bytes, docling_json_bytes).
+
+    Bytes-based wrapper around ``split_parse_pdf_file`` — writes the bytes to
+    a temp file then delegates.
+    """
+    async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
+        outfile = Path(temp_dir) / "input.pdf"
+        async with aiofiles.open(outfile, "wb") as f:
+            await f.write(file_bytes)
+        return await split_parse_pdf_file(outfile, config=config, source_uri=source_uri)
 
 
 async def chunk_document(

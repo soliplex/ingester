@@ -1,8 +1,10 @@
 import base64
+import errno
 import hashlib
 import hmac as hmac_mod
 import logging
 import pathlib
+import shutil
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -355,6 +357,7 @@ class FileStorageOperator:
     """
 
     SHARD_SUFFIX_LENGTH = 2  # Use last N chars of path for subdirectory sharding
+    MIN_FREE_RESERVE_BYTES = 1 * 1024 * 1024  # 1 MiB headroom for FS metadata, sidecars, Fernet expansion
 
     def __init__(self, store_path: str):
         path = pathlib.Path(store_path)
@@ -363,6 +366,15 @@ class FileStorageOperator:
         self.store_path = str(path)
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
+
+    def _ensure_free_space(self, num_bytes: int) -> None:
+        usage = shutil.disk_usage(self.store_path)
+        required = num_bytes + self.MIN_FREE_RESERVE_BYTES
+        if usage.free < required:
+            raise OSError(
+                errno.ENOSPC,
+                f"insufficient disk space at {self.store_path}: need {required} bytes, {usage.free} free",
+            )
 
     def _get_normalized_path(self, path: str) -> pathlib.Path:
         """Get the full filesystem path for a given key, creating shard directory if needed.
@@ -387,9 +399,19 @@ class FileStorageOperator:
         return await aos.path.exists(norm_path)
 
     async def write(self, path: str, data: bytes) -> None:
+        self._ensure_free_space(len(data))
         norm_path = self._get_normalized_path(path)
-        async with aiofiles.open(norm_path, "wb") as f:
-            await f.write(data)
+        write_succeeded = False
+        try:
+            async with aiofiles.open(norm_path, "wb") as f:
+                await f.write(data)
+            write_succeeded = True
+        finally:
+            if not write_succeeded:
+                try:
+                    await aos.unlink(norm_path)
+                except FileNotFoundError:
+                    pass
 
     async def delete(self, path: str) -> None:
         norm_path = self._get_normalized_path(path)

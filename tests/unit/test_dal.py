@@ -1,4 +1,5 @@
 import base64
+import errno
 import logging
 from unittest.mock import AsyncMock
 from unittest.mock import Mock
@@ -312,6 +313,120 @@ async def test_file_storage_operator_get_uri(tmp_path):
     op = dal.FileStorageOperator(str(tmp_path))
     uri = op.get_uri("test_hash_jkl")
     assert uri.startswith("file://")
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_disk_space_ok(tmp_path):
+    """write succeeds when disk_usage reports plenty of free space"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    fake_usage = Mock(total=10**12, used=0, free=10**12)
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ) as mock_du:
+        await op.write("disk_ok_hash", b"payload")
+    mock_du.assert_called_once_with(op.store_path)
+    assert await op.read("disk_ok_hash") == b"payload"
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_disk_space_insufficient(tmp_path):
+    """write raises OSError(ENOSPC) and creates no file when free space is below threshold"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    fake_usage = Mock(total=10**12, used=10**12, free=100)
+    data = b"payload"
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with pytest.raises(OSError, match="insufficient disk space") as exc_info:
+            await op.write("nospace_hash", data)
+    assert exc_info.value.errno == errno.ENOSPC
+    norm_path = op._get_normalized_path("nospace_hash")
+    assert not norm_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_disk_space_exact_data_size_fails(tmp_path):
+    """Reserve is enforced: free == len(data) is not enough"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    data = b"payload"
+    fake_usage = Mock(total=10**12, used=10**12, free=len(data))
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with pytest.raises(OSError, match="insufficient disk space") as exc_info:
+            await op.write("reserve_hash", data)
+    assert exc_info.value.errno == errno.ENOSPC
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_cleans_up_partial_file_on_race(tmp_path):
+    """If a race causes write to fail mid-stream, the partial file is unlinked in finally"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    fake_usage = Mock(total=10**12, used=0, free=10**12)
+    norm_path = op._get_normalized_path("race_hash")
+
+    def fake_open(*args, **kwargs):
+        # Simulate a partial write: file appears on disk, then writer raises.
+        norm_path.write_bytes(b"partial")
+        raise OSError(errno.ENOSPC, "no space left on device")
+
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with patch(
+            "soliplex.ingester.lib.dal.aiofiles.open",
+            side_effect=fake_open,
+        ):
+            with pytest.raises(OSError, match="no space left") as exc_info:
+                await op.write("race_hash", b"data")
+    assert exc_info.value.errno == errno.ENOSPC
+    assert not norm_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_cleanup_handles_missing_file(tmp_path):
+    """Cleanup swallows FileNotFoundError when no partial file was created"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    fake_usage = Mock(total=10**12, used=0, free=10**12)
+    norm_path = op._get_normalized_path("absent_hash")
+
+    def fake_open(*args, **kwargs):
+        # Raise before any file is created on disk.
+        raise OSError(errno.EIO, "i/o error")
+
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with patch(
+            "soliplex.ingester.lib.dal.aiofiles.open",
+            side_effect=fake_open,
+        ):
+            with pytest.raises(OSError, match="i/o error") as exc_info:
+                await op.write("absent_hash", b"data")
+    assert exc_info.value.errno == errno.EIO
+    assert not norm_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_protected_no_sidecar_on_disk_full(tmp_path):
+    """ProtectedStorageOperator(HASH) does not write a sidecar when primary write fails on disk check"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HASH)
+    fake_usage = Mock(total=10**12, used=10**12, free=100)
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with pytest.raises(OSError, match="insufficient disk space") as exc_info:
+            await op.write("protected_hash", b"data")
+    assert exc_info.value.errno == errno.ENOSPC
+    assert not inner._get_normalized_path("protected_hash").exists()
+    assert not inner._get_normalized_path("protected_hash.hash").exists()
 
 
 def test_get_storage_operator_doc_artifact():

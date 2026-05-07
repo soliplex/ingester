@@ -33,8 +33,16 @@ class S3Settings(BaseSettings):
     region: str = "default"
 
 
+_SECRETS_DIR = "/run/secrets"
+_secrets_kwargs: dict = {"secrets_dir": _SECRETS_DIR} if Path(_SECRETS_DIR).is_dir() else {}
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_nested_delimiter="__", env_nested_max_split=1, secrets_dir="/run/secrets")
+    model_config = SettingsConfigDict(
+        env_nested_delimiter="__",
+        env_nested_max_split=1,
+        **_secrets_kwargs,
+    )
     doc_db_url: SecretStr
     doc_db_password: SecretStr | None = None
     docling_server_url: str = "http://localhost:5001/v1"

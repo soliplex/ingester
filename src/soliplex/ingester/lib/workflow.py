@@ -25,6 +25,9 @@ from .wf import operations as wf_ops
 
 logger = logging.getLogger(__name__)
 
+MIN_PDF_PAGES = 10
+MAX_PDF_PAGES = 30
+
 
 class WorkflowException(Exception):
     pass
@@ -442,7 +445,7 @@ async def split_parse_pdf_file(
 
     async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
         tf = Path(temp_dir)
-        split_result = smart_split_to_files(pdf_path, output_dir=tf, parallel=False)
+        split_result = smart_split_to_files(pdf_path, output_dir=tf, parallel=False, max_chunk_pages=30, min_chunk_pages=10)
         if len(split_result) != 2:
             msg = f"split_to_files returned {split_result}.  should return 2 items.  {source_uri}"
             raise WorkflowException(msg)
@@ -450,7 +453,7 @@ async def split_parse_pdf_file(
         logger.info(f"split_parse {source_uri} split into {len(split_files)} pieces")
 
         if use_serve:
-            convert_sem = asyncio.Semaphore(2)
+            convert_sem = asyncio.Semaphore(12)
 
             async def _read_and_convert(split_path):
                 async with convert_sem:

@@ -8,6 +8,8 @@ from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Form
 from fastapi import Request
+from fastapi import Response
+from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
@@ -117,14 +119,15 @@ v1_router = APIRouter(prefix="/api/v1", dependencies=[Depends(get_current_user)]
 
 @v1_router.post("/source-status")
 async def source_status(
+    response: Response,
     source: str = Form(...),
     hashes: str = Form(...),
     delete_stale: bool = Form(False),
 ):
     hashes = json.loads(hashes)
     if not isinstance(hashes, dict):
-        msg = "hashes must be a dictionary"
-        raise TypeError(msg)
+        response.status_code = http_status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": "hashes must be a dictionary"}
     if delete_stale:
         status, deleted_count = await operations.update_doc_status(source, hashes)
         return {"status": status, "deleted_count": deleted_count}

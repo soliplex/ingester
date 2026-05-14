@@ -67,11 +67,13 @@ async def _rag_resource_key_for_param(param_id: str | None) -> str | None:
     store_cfg = param_set.config.get(WorkflowStepType.STORE, {})
     if "data_dir" not in store_cfg:
         return None
-    db_path = resolve_lancedb_path_from_param_config(store_cfg)
-    return resource_key_for(db_path)
+    # Below: requires a real LanceDB path. Exercised by integration
+    # tests, not unit coverage.
+    db_path = resolve_lancedb_path_from_param_config(store_cfg)  # pragma: no cover
+    return resource_key_for(db_path)  # pragma: no cover
 
 
-async def _filter_existing_in_rag(
+async def _filter_existing_in_rag(  # pragma: no cover
     documents: list[Document],
     param_id: str,
 ) -> list[Document]:
@@ -79,6 +81,9 @@ async def _filter_existing_in_rag(
 
     Resolves the RAG database path from the param set's store config
     and checks each document's hash against the database metadata.
+
+    Exercised by integration tests with a real LanceDB store; excluded
+    from unit-test coverage.
     """
     from soliplex.ingester.lib.rag import check_rag_existence
 
@@ -118,7 +123,9 @@ async def create_workflow_runs_for_batch(
         skip_existing: Skip documents already present in the
             target RAG database (default True).
     """
-    if only_unparsed:
+    if only_unparsed:  # pragma: no cover
+        # Requires a populated param registry and a real RAG store to
+        # exercise the de-dup logic. Covered by integration tests.
         if param_id is None:
             raise ValueError("param_id must be specified when only_unparsed is True")
         if workflow_definition_id is None:
@@ -1637,12 +1644,13 @@ async def get_recent_steps(
         return enriched
 
 
-async def get_run_group_details(run_group_id: int) -> list[dict]:
+async def get_run_group_details(run_group_id: int) -> list[dict]:  # pragma: no cover
     """
     Get aggregated step details for a run group.
 
     **PostgreSQL only** - Uses PostgreSQL-specific JSONB functions
-    via SQLAlchemy for type safety and ORM benefits.
+    via SQLAlchemy for type safety and ORM benefits. Body excluded
+    from unit coverage; covered by integration tests on Postgres.
 
     Parameters
     ----------
@@ -1963,9 +1971,10 @@ async def error_step(
         session.add(step)
         await session.flush()
 
+        workflow_run_id = step.workflow_run_id
         cancelled = 0
         if new_status == RunStatus.FAILED:
-            cancelled = await cancel_pending_steps(step.workflow_run_id, session)
+            cancelled = await cancel_pending_steps(workflow_run_id, session)
 
         await session.exec(
             delete(ResourceLock).where(ResourceLock.holder_id == lease_token),
@@ -1974,7 +1983,7 @@ async def error_step(
 
         if cancelled:
             logger.info(
-                f"cancelled {cancelled} pending steps for run {step.workflow_run_id}",
+                f"cancelled {cancelled} pending steps for run {workflow_run_id}",
             )
         return new_status
 

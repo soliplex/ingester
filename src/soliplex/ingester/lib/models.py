@@ -120,12 +120,21 @@ class Database:
     @classmethod
     @asynccontextmanager
     async def session(cls) -> AsyncIterator[AsyncSession]:
-        """Create a database session with automatic transaction management."""
+        """Create a database session with automatic transaction
+        management. ``expire_on_commit=False`` keeps ORM attributes
+        readable after a manual ``session.commit()`` inside the
+        context, so callers don't trip the "Can't operate on closed
+        transaction inside context manager" trap when they touch an
+        object after committing.
+        """
         # Auto-initialize if needed (preserves backwards compatibility)
         if not cls._initialized:
             await cls.initialize()
 
-        async with AsyncSession(cls._engine) as session:
+        async with AsyncSession(
+            cls._engine,
+            expire_on_commit=False,
+        ) as session:
             try:
                 async with session.begin():
                     yield session

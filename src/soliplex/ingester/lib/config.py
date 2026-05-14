@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     file_store_dir: str = "file_store"
     file_protection_level: ProtectionLevel = ProtectionLevel.NONE
     file_secret: SecretStr | None = None
+    file_compression_artifacts: list[str] = []
+    file_compression_level: int = 3
     lancedb_dir: str = "lancedb"
     lancedb_hmac_key: SecretStr | None = None
     document_store_dir: str = "raw"

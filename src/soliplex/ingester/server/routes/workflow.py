@@ -189,6 +189,7 @@ async def get_workflow_def(workflow_id: str, response: Response):
 async def list_params():
     wf = await wf_registry.load_param_registry(force_reload=True)
     res = [{"id": x.id, "name": x.name, "source": x.source} for x in wf.values()]
+    res = sorted(res, key=lambda x: x["id"], reverse=False)
     return res
 
 

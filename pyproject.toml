@@ -1,6 +1,6 @@
 [project]
 name = "soliplex-ingester"
-version = "0.7.2"
+version = "0.8.0"
 description = "ingestion workflow manager for soliplex"
 authors = [{ name = "Enfold Systems", email = "info@enfoldsystems.net" }]
 readme = "README.md"
@@ -45,6 +45,7 @@ dependencies = [
     "cryptography>=44.0.0",
     "sqlalchemy>=2.0.46",
     "pydantic>=2.12.5",
+    "zstandard>=0.23.0",
 ]
 
 [dependency-groups]

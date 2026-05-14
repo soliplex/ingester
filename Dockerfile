@@ -12,7 +12,7 @@ FROM base AS builder
 
 RUN apt-get update && apt-get -y upgrade
 RUN apt-get update && apt-get install -y git
-COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.14 /uv /uvx /bin/
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \

@@ -282,12 +282,10 @@ async def test_save_to_rag():
         # Setup the async context manager for HaikuRAG
         mock_client = MagicMock()
         mock_client.import_document = AsyncMock(return_value=mock_new_doc)
-        # _find_docs_by_hash chain: await tbl.search() → query;
-        # await query.where(...).to_pydantic(...) → list[DocumentRecord].
-        mock_query = MagicMock()
-        mock_query.where.return_value.to_pydantic = AsyncMock(return_value=[])
-        mock_client.document_repository.store.documents_table.search = AsyncMock(
-            return_value=mock_query,
+        # _find_docs_by_hash chain: tbl.query().where(...) (sync builder)
+        # then await .to_pydantic(...) → list[DocumentRecord].
+        mock_client.document_repository.store.documents_table.query.return_value.where.return_value.to_pydantic = AsyncMock(
+            return_value=[],
         )
         mock_haiku_rag.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_haiku_rag.return_value.__aexit__ = AsyncMock(return_value=None)

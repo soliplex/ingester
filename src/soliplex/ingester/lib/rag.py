@@ -235,10 +235,11 @@ def resolve_lancedb_path_from_param_config(
 
 
 async def _find_docs_by_hash(doc_hash: str, tbl) -> list[DocumentRecord]:
-    # LanceDB's AsyncTable returns coroutines from both search() and
-    # to_pydantic() — chain awaits accordingly.
-    query = await tbl.search()
-    return await query.where(f"metadata like '%{doc_hash}%'").to_pydantic(DocumentRecord)
+    # Use ``query()`` (filter-only) rather than ``search()`` — the
+    # latter expects a vector and trips an UnboundLocalError inside
+    # lancedb when called with no args. ``query()`` is a sync builder;
+    # only the terminal ``to_pydantic()`` returns a coroutine.
+    return await tbl.query().where(f"metadata like '%{doc_hash}%'").to_pydantic(DocumentRecord)
 
 
 async def check_rag_existence(
@@ -285,8 +286,7 @@ async def check_rag_existence(
         tbl = await conn.open_table("documents")
         found: set[str] = set()
         for h in doc_hashes:
-            query = await tbl.search()
-            arrow = await query.where(f"metadata like '%{h}%'").limit(1).to_arrow()
+            arrow = await tbl.query().where(f"metadata like '%{h}%'").limit(1).to_arrow()
             if arrow.num_rows > 0:
                 found.add(h)
     finally:

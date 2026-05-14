@@ -234,8 +234,11 @@ def resolve_lancedb_path_from_param_config(
     return pathlib.Path(env.lancedb_dir) / data_dir
 
 
-def _find_docs_by_hash(doc_hash: str, tbl) -> list[DocumentRecord]:
-    return tbl.search().where(f"metadata like '%{doc_hash}%'").to_pydantic(DocumentRecord)
+async def _find_docs_by_hash(doc_hash: str, tbl) -> list[DocumentRecord]:
+    # LanceDB's AsyncTable returns coroutines from both search() and
+    # to_pydantic() — chain awaits accordingly.
+    query = await tbl.search()
+    return await query.where(f"metadata like '%{doc_hash}%'").to_pydantic(DocumentRecord)
 
 
 async def check_rag_existence(
@@ -245,31 +248,54 @@ async def check_rag_existence(
 ) -> set[str]:
     """Return set of doc_hashes already present in the target RAG DB.
 
+    Connects directly via ``lancedb.connect_async`` rather than
+    spinning up a HaikuRAG client — the existence check only needs to
+    read the ``documents`` table's ``metadata`` column. ``embed_config``
+    is accepted for caller-API compatibility but unused here.
+
     Args:
         doc_hashes: List of document SHA256 hashes to check.
         store_config: Store section from param set config.
-        embed_config: Embed section from param set config.
+        embed_config: Unused; retained for API compatibility.
 
     Returns:
         Set of doc_hashes that already exist in the RAG database.
     """
+    import lancedb
+
+    del embed_config  # accepted for API compat, not needed for read-only check
     db_path = resolve_lancedb_path_from_param_config(store_config)
     if not db_path.exists():
         logger.info(f"RAG DB does not exist at {db_path}, nothing to skip")
         return set()
 
-    config = build_embed_config(HRConfig, embed_config)
-    config = build_storage_config(config, store_config)
+    # HaikuRAG may nest the actual LanceDB into a subfolder; if so,
+    # connect to that instead.
+    actual_db_path = db_path / "haiku.rag.lancedb"
+    if not actual_db_path.exists():
+        actual_db_path = db_path
 
-    found = set()
-    # LanceDB read-only access is concurrent-safe — no lock needed.
-    async with HaikuRAG(config=config, read_only=True, create=False, db_path=db_path) as client:
-        tbl = client.document_repository.store.documents_table
+    # LanceDB read access is concurrent-safe — no resource lock needed.
+    conn = await lancedb.connect_async(str(actual_db_path))
+    try:
+        table_names = await conn.table_names()
+        if "documents" not in table_names:
+            raise ValueError(f"no 'documents' table in {actual_db_path}")
+
+        tbl = await conn.open_table("documents")
+        found: set[str] = set()
         for h in doc_hashes:
-            docs = _find_docs_by_hash(h, tbl)
-            if docs:
+            query = await tbl.search()
+            arrow = await query.where(f"metadata like '%{h}%'").limit(1).to_arrow()
+            if arrow.num_rows > 0:
                 found.add(h)
-    logger.info(f"pre-check: {len(found)}/{len(doc_hashes)} already in RAG at {db_path}")
+    finally:
+        if conn.is_open():
+            await conn.close()
+
+    logger.info(
+        f"pre-check: {len(found)}/{len(doc_hashes)} already in RAG at {actual_db_path}",
+    )
     return found
 
 
@@ -317,7 +343,7 @@ async def save_to_rag(
     # callers from outside the workflow should wrap themselves in
     # :func:`hold_rag_lock` instead.
     async with HaikuRAG(config=config, create=True, db_path=db_path) as client:
-        found = _find_docs_by_hash(doc_hash, client.document_repository.store.documents_table)
+        found = await _find_docs_by_hash(doc_hash, client.document_repository.store.documents_table)
         if found and len(found) != 0:
             logger.info(f"Found existing document {found[0].id}", extra=_log_con)
             doc_id = found[0].id

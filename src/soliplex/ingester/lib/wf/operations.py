@@ -609,7 +609,7 @@ async def create_single_workflow_run(
             param_id=param_id,
         )
         return await create_workflow_run(run_group, doc_id, priority=priority)
-    else:
+    else:  # pragma: no cover - defensive; get_document already raises
         raise DocumentNotFoundError(doc_id)
 
 

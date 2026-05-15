@@ -196,13 +196,13 @@ async def split_parse_document(
         raise WorkflowException(msg)
     test_op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
     exists = await test_op.exists(doc_hash)
-    logger.info(
+    logger.debug(
         f"do parse {doc_hash} {exists} {force}",
         extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
     )
     source_uri = doc_uris[0].uri
     if not source_uri.endswith(".pdf"):
-        logger.info(
+        logger.debug(
             f"sending {doc_hash} to conventional processing (not a pdf) {source_uri}",
             extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
         )
@@ -302,7 +302,7 @@ async def parse_document(
     doc = await doc_ops.get_document(doc_hash)
     test_op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
     exists = await test_op.exists(doc_hash)
-    logger.info(
+    logger.debug(
         f"do parse {doc_hash} {exists} {force}",
         extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
     )
@@ -371,7 +371,7 @@ async def parse_document(
                 raise WorkflowException(msg)
         await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
     else:
-        logger.info(
+        logger.debug(
             f"skipping parse for doc={doc_hash} exists={exists} force={force}",
             extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
         )
@@ -572,7 +572,7 @@ async def embed_document(
     _lc = log_context(doc_hash=doc_hash, batch_id=batch_id, action="embed")
     start = time.time()
     logger.info(f"embed_document started  {source} {batch_id} {doc_hash}", extra=_lc)
-    check_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.EMBEDDINGS)
+    check_op = await _get_op(workflow_run.id, WorkflowStepType.EMBED, ArtifactType.EMBEDDINGS)
     exists = await check_op.exists(doc_hash)
     if not exists or force:
         chunk_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
@@ -583,7 +583,7 @@ async def embed_document(
         del chunk_json
         chunk_objs = [Chunk.model_validate(x) for x in chunk_dicts]
         del chunk_dicts
-        logger.info(
+        logger.debug(
             f"got {len(chunk_objs)} chunks {source} {batch_id} {doc_hash}",
             extra=_lc,
         )
@@ -624,7 +624,7 @@ async def save_to_rag(
         source=source,
     )
     if not settings.do_rag and not force:
-        logger.info(
+        logger.debug(
             f"skipping ingestion for {doc_hash} do_rag={settings.do_rag} force={force}",  # noqa: E501
             extra=_log_con,
         )

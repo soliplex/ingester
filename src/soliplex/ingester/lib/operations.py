@@ -104,7 +104,7 @@ async def update_doc_meta(doc_hash: str, meta: dict[str, str]):
 
 
 async def find_document_uri(uri: str, source: str) -> models.DocumentURI:
-    logger.info(
+    logger.debug(
         f"find document {uri} {source} ",
         extra=log_context(source=source, uri=uri, action="find_document_uri"),
     )

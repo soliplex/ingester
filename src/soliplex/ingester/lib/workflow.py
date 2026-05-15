@@ -553,7 +553,7 @@ async def chunk_document(
                 ),
             )
             raise WorkflowException(msg)
-        await doc_ops.add_history_for_hash(doc_hash, "chunked", batch_id=batch_id)
+    await doc_ops.add_history_for_hash(doc_hash, "chunked", batch_id=batch_id)
 
     logger.info(
         f"chunk_document completed  {source} {batch_id} {doc_hash} took {time.time() - start:.2f}s",
@@ -572,30 +572,33 @@ async def embed_document(
     _lc = log_context(doc_hash=doc_hash, batch_id=batch_id, action="embed")
     start = time.time()
     logger.info(f"embed_document started  {source} {batch_id} {doc_hash}", extra=_lc)
-    chunk_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
-    chunk_bytes = await chunk_op.read(doc_hash)
-    chunk_json = chunk_bytes.decode("utf-8")
-    del chunk_bytes
-    chunk_dicts = json.loads(chunk_json)
-    del chunk_json
-    chunk_objs = [Chunk.model_validate(x) for x in chunk_dicts]
-    del chunk_dicts
-    logger.info(
-        f"got {len(chunk_objs)} chunks {source} {batch_id} {doc_hash}",
-        extra=_lc,
-    )
-    embed_chunks = await rag.embed(chunk_objs, step_config.config_json, doc_hash=doc_hash)
-    del chunk_objs
-    embed_op = await _get_op(workflow_run.id, WorkflowStepType.EMBED, ArtifactType.EMBEDDINGS)
-    embed_json = json.dumps([x.model_dump() for x in embed_chunks])
-    del embed_chunks
-    embed_bytes = embed_json.encode("utf-8")
-    del embed_json
-    await embed_op.write(doc_hash, embed_bytes)
-    if not await embed_op.exists(doc_hash):
-        msg = f"embed {doc_hash}: artifact {ArtifactType.EMBEDDINGS} missing after write"
-        logger.error(msg, extra=_lc)
-        raise WorkflowException(msg)
+    check_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.EMBEDDINGS)
+    exists = await check_op.exists(doc_hash)
+    if not exists or force:
+        chunk_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
+        chunk_bytes = await chunk_op.read(doc_hash)
+        chunk_json = chunk_bytes.decode("utf-8")
+        del chunk_bytes
+        chunk_dicts = json.loads(chunk_json)
+        del chunk_json
+        chunk_objs = [Chunk.model_validate(x) for x in chunk_dicts]
+        del chunk_dicts
+        logger.info(
+            f"got {len(chunk_objs)} chunks {source} {batch_id} {doc_hash}",
+            extra=_lc,
+        )
+        embed_chunks = await rag.embed(chunk_objs, step_config.config_json, doc_hash=doc_hash)
+        del chunk_objs
+        embed_op = await _get_op(workflow_run.id, WorkflowStepType.EMBED, ArtifactType.EMBEDDINGS)
+        embed_json = json.dumps([x.model_dump() for x in embed_chunks])
+        del embed_chunks
+        embed_bytes = embed_json.encode("utf-8")
+        del embed_json
+        await embed_op.write(doc_hash, embed_bytes)
+        if not await embed_op.exists(doc_hash):
+            msg = f"embed {doc_hash}: artifact {ArtifactType.EMBEDDINGS} missing after write"
+            logger.error(msg, extra=_lc)
+            raise WorkflowException(msg)
 
     await doc_ops.add_history_for_hash(doc_hash, "embedded", batch_id=batch_id)
 

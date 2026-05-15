@@ -262,7 +262,7 @@ async def read_s3_url(input_url: str):
     parsed = urlparse(input_url)
     bucket = parsed.netloc
     key = parsed.path.lstrip("/")
-    logger.info(f"reading s3 bucket={bucket} key={key}")
+    logger.debug(f"reading s3 bucket={bucket} key={key}")
     settings = get_settings()
     if bucket != settings.input_s3.bucket:
         raise ValueError(f"bucket {bucket} does not match configured bucket {settings.input_s3.bucket}")

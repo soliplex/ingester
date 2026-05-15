@@ -150,7 +150,7 @@ def build_storage_config(start_config: AppConfig, config_dict: dict[str, str | i
     for k, v in config_dict.items():
         setattr(config.storage, k, v)
     storage_dir = config_dict["data_dir"]
-    logger.info(f"param storage_dir: {storage_dir}")
+    logger.debug(f"param storage_dir: {storage_dir}")
     if storage_dir.startswith("s3://"):
         config.lancedb.uri = storage_dir
         config.lancedb.api_key = "xxx"  # these just need to be filled in, environment variables have the real value
@@ -213,7 +213,7 @@ async def embed(
     # don't use gather to avoid overloading ollama
     for batch in itertools.batched(chunks, n=env.embed_batch_size, strict=False):
         batch_chunks = await embed_chunks(batch, config)
-        logger.info(f"{doc_hash}embedded {len(batch_chunks)} chunks of {len(chunks)} total")
+        logger.debug(f"{doc_hash}embedded {len(batch_chunks)} chunks of {len(chunks)} total")
         ret.extend(batch_chunks)
     return ret
 
@@ -267,7 +267,7 @@ async def check_rag_existence(
     del embed_config  # accepted for API compat, not needed for read-only check
     db_path = resolve_lancedb_path_from_param_config(store_config)
     if not db_path.exists():
-        logger.info(f"RAG DB does not exist at {db_path}, nothing to skip")
+        logger.debug(f"RAG DB does not exist at {db_path}, nothing to skip")
         return set()
 
     # HaikuRAG may nest the actual LanceDB into a subfolder; if so,
@@ -336,7 +336,7 @@ async def save_to_rag(
     db_path = resolve_lancedb_path(step_config)
 
     meta["source"] = source
-    logger.info(f"bytes docling={len(docling_json)}", extra=_log_con)
+    logger.debug(f"bytes docling={len(docling_json)}", extra=_log_con)
     # Per-DB serialization is enforced by the workflow's claim layer
     # via the resource_key on the step (operations.claim_next_step
     # holds a ResourceLock for the duration of execution). Direct
@@ -451,7 +451,7 @@ def _resolve_db_path(db_name: str) -> pathlib.Path:
     db_path = pathlib.Path(env.lancedb_dir) / db_name
     subdir = db_path / "haiku.rag.lancedb"
     if subdir.exists():
-        logger.info(f"found haiku.rag.lancedb subfolder in {db_path}")
+        logger.debug(f"found haiku.rag.lancedb subfolder in {db_path}")
         db_path = subdir
     if not db_path.exists():
         raise FileNotFoundError(f"Database does not exist at {db_path}")
@@ -502,7 +502,7 @@ async def vacuum_db(
         try:
             await app.vacuum()
         except MigrationRequiredError:
-            logger.info(f"migration required for {db_path}, running migrate first")
+            logger.warning(f"migration required for {db_path}, running migrate first")
             applied = app.migrate()
             for desc in applied:
                 logger.info(f"applied migration: {desc}")

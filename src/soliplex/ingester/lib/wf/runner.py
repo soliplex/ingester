@@ -192,8 +192,12 @@ class WorkerConfig:
     poll_interval: float = 1.0
     """Sleep between empty claim attempts."""
 
-    poll_backoff_max: float = 5.0
-    """Upper bound on exponential backoff for an idle consumer."""
+    poll_backoff_max: float = 3.0
+    """Upper bound on exponential backoff for an idle consumer or a
+    consumer that just lost a resource-key race. Tuned for the
+    common case where the contended work (a LanceDB write) takes a
+    few seconds — capping here keeps wake-up latency low once the
+    lock clears."""
 
     checkin_interval: int | None = None
     """Override settings.worker_checkin_interval."""
@@ -358,11 +362,26 @@ class Worker:
                 await asyncio.sleep(min(backoff, self._config.poll_backoff_max))
                 backoff = min(backoff * 2, self._config.poll_backoff_max)
                 continue
-            backoff = self._config.poll_interval
             self._metrics.incr("claim_success", pool=step_type)
-            await self._run_step(step, lease, coro_id)
+            raced = await self._run_step(step, lease, coro_id)
+            if raced:
+                # Lost the resource-key race after claim. The claim
+                # filter normally excludes contended keys (see
+                # claim_next_step's subq_running_rk), so this is the
+                # narrow window between two claims committing
+                # concurrently. Apply idle-style backoff so we don't
+                # spin until the holder finishes.
+                self._metrics.incr("claim_lost_race", pool=step_type)
+                await asyncio.sleep(min(backoff, self._config.poll_backoff_max))
+                backoff = min(backoff * 2, self._config.poll_backoff_max)
+            else:
+                backoff = self._config.poll_interval
 
-    async def _run_step(self, run_step: RunStep, lease: str, coro_id: int) -> None:
+    async def _run_step(self, run_step: RunStep, lease: str, coro_id: int) -> bool:
+        """Run one claimed step. Returns True iff the step was
+        race-released because its resource_key was held by another
+        holder; the consumer loop uses that to apply backoff so it
+        doesn't spin-claim until the holder finishes."""
         lc = {"worker_id": self._worker_id, "coro_id": coro_id, "step_id": run_step.id}
         inflight = _InFlight(step_id=run_step.id, lease=lease, resource_key=run_step.resource_key)
         self._inflight[run_step.id] = inflight
@@ -402,7 +421,7 @@ class Worker:
                         extra=lc,
                     )
                     await operations.release_step(run_step.id, lease)
-                    return
+                    return True
 
             logger.info(
                 "running step %s (%s) in %s priority=%d attempt=%d/%d",
@@ -456,7 +475,7 @@ class Worker:
             if not ok:
                 self._metrics.incr("lease_lost", phase="complete")
                 logger.warning("lease lost on completion of step %s", run_step.id, extra=lc)
-                return
+                return False
             self._metrics.incr("step_completed")
             await operations.recompute_run_status(run_step.workflow_run_id)
             await self._lifecycle.publish(
@@ -501,7 +520,7 @@ class Worker:
                 )
                 if new_status is None:
                     self._metrics.incr("lease_lost", phase="error")
-                    return
+                    return False
                 if new_status == RunStatus.FAILED:
                     self._metrics.incr("step_failed")
                 else:
@@ -523,6 +542,7 @@ class Worker:
         finally:
             self._inflight.pop(run_step.id, None)
             self._metrics.observe("step_duration", time.monotonic() - t0)
+        return False
 
     # ----- background loops -------------------------------------------
 

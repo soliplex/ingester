@@ -463,6 +463,13 @@ si-cli vacuum DB_NAME [OPTIONS]
 - Automatically runs pending migrations before vacuuming if required
 - Sets `vacuum_retention_seconds` to 0 to ensure all deleted data is reclaimed
 - Will not create a new database — errors if the path does not exist
+- Holds the cross-subsystem `ResourceLock` (holder_kind=`cli`)
+  for the duration of the operation. Workflow `save_to_rag` steps
+  for the same DB are blocked from claim until the lock is
+  released, so the vacuum cannot race a writer.
+- Default behaviour waits forever for the lock; if you need fail-fast
+  semantics, prefer `si-diag lancedb vacuum` which uses `max_wait=0`
+  and offers `--force`.
 
 **Examples:**
 
@@ -928,6 +935,7 @@ The `si-diag` CLI provides read-only access to system state for debugging and mo
 | `run-group` | List and inspect run groups |
 | `workflow` | List and inspect workflow runs and steps |
 | `status` | View running steps, recent activity, and aggregated details |
+| `lancedb` | Vacuum, vacuum-all, and verify HMAC of LanceDB databases (with `--force` to break a stuck lock) |
 
 ---
 
@@ -1178,6 +1186,81 @@ si-diag status details 1
 **Output columns:** batch_name, param_def_id, step_type, status, count, pages
 
 **Note:** This command uses PostgreSQL-specific JSONB functions and will return an error on SQLite.
+
+---
+
+### lancedb vacuum
+
+Vacuum a single LanceDB database. Fails fast (exit code 2) if the
+cross-subsystem `ResourceLock` is held by another writer.
+
+```bash
+si-diag lancedb vacuum my_database
+si-diag lancedb vacuum my_database --sign
+si-diag lancedb vacuum my_database --force
+```
+
+**Arguments:**
+
+- `DB_NAME` (str, required) - Name of the database directory under `LANCEDB_DIR`
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--sign` | bool | False | Write an HMAC-SHA512 signature after vacuuming (requires `LANCEDB_HMAC_KEY`) |
+| `--force` | bool | False | Audit-log + drop the `ResourceLock` row before retrying (use when a holder has crashed) |
+
+**Exit Codes:**
+
+- `0` - Vacuum completed
+- `1` - Database not found (used with `--force` resolution)
+- `2` - Lock held by another writer; pass `--force` to break
+
+**Notes:**
+
+- Acquires the `ResourceLock` with `holder_kind=cli`, `max_wait=0`
+- `--force` calls `force_release_resource_lock`, which emits a
+  warning log line containing the previous holder for audit
+
+---
+
+### lancedb vacuum-all
+
+Vacuum every database under `LANCEDB_DIR`. DBs whose lock is held
+by another writer are skipped with a printed message; processing
+continues with the remaining databases.
+
+```bash
+si-diag lancedb vacuum-all
+si-diag lancedb vacuum-all --sign
+```
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--sign` | bool | False | HMAC-sign each database after vacuuming |
+
+---
+
+### lancedb verify
+
+Verify the HMAC-SHA512 signature of a LanceDB database against
+its `.hmac` sidecar. Requires `LANCEDB_HMAC_KEY`.
+
+```bash
+si-diag lancedb verify my_database
+```
+
+**Arguments:**
+
+- `DB_NAME` (str, required) - Name of the database directory under `LANCEDB_DIR`
+
+**Exit Codes:**
+
+- `0` - HMAC verification passed
+- `1` - Verification failed or sidecar missing
 
 ---
 

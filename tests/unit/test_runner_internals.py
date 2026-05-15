@@ -240,7 +240,7 @@ class TestWorkerConfig:
     def test_defaults(self):
         cfg = WorkerConfig(consumers={"*": 1})
         assert cfg.poll_interval == 1.0
-        assert cfg.poll_backoff_max == 5.0
+        assert cfg.poll_backoff_max == 3.0
         assert cfg.checkin_interval is None
         assert cfg.checkin_timeout is None
         assert cfg.resource_lock_ttl == 300
@@ -520,9 +520,10 @@ async def test_run_step_releases_when_resource_lock_lost(caplog):
         _patch_op("complete_step") as complete,
     ):
         with caplog.at_level(logging.WARNING, logger="soliplex.ingester.lib.wf.runner"):
-            await w._run_step(rs, "lease-1", 0)
+            raced = await w._run_step(rs, "lease-1", 0)
         release.assert_awaited_once_with(1, "lease-1")
         complete.assert_not_called()
+    assert raced is True
     assert any("race on resource_key" in r.message for r in caplog.records)
 
 
@@ -793,6 +794,45 @@ async def test_consumer_loop_runs_step_when_claim_returns_one():
     ):
         await asyncio.wait_for(w._consumer_loop("*", 0), timeout=2.0)
     run_step.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consumer_loop_backs_off_after_race_release():
+    """When ``_run_step`` returns True (race-release), the consumer
+    should treat it like an idle claim: emit ``claim_lost_race``
+    and apply backoff so it doesn't spin-claim until the lock
+    holder finishes."""
+    metrics = MagicMock()
+    w = Worker(
+        config=WorkerConfig(
+            consumers={"*": 1},
+            poll_interval=0.0,
+            poll_backoff_max=0.0,
+        ),
+        metrics=metrics,
+    )
+    rs = _make_run_step(resource_key="rag:/tmp/db")
+
+    call_count = 0
+
+    async def fake_claim(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return rs
+        w._stop_event.set()
+        return None
+
+    async def fake_run_step(*args, **kwargs):
+        return True  # signal race-release
+
+    with (
+        patch("soliplex.ingester.lib.wf.runner.operations.claim_next_step", new=fake_claim),
+        patch.object(w, "_run_step", new=fake_run_step),
+    ):
+        await asyncio.wait_for(w._consumer_loop("*", 0), timeout=2.0)
+
+    metrics.incr.assert_any_call("claim_lost_race", pool="*")
 
 
 @pytest.mark.asyncio

@@ -132,6 +132,62 @@ async def test_claim_skips_step_with_locked_resource(db):
 
 
 @pytest.mark.asyncio
+async def test_claim_skips_running_resource_key_without_lock_row(db):
+    """Regression: closes the race window between a claim
+    transaction committing (step → RUNNING) and the worker's
+    separate acquire_resource_lock transaction committing. The
+    claim filter must look at RUNNING-step resource_keys, not
+    just rows in ``resourcelock``.
+    """
+    rk = "rag:/tmp/sharedDB"
+    rg_id, run_ids, step_ids = await _scaffold(
+        n_runs=2,
+        steps_per_run=1,
+        resource_keys=[rk, rk],
+    )
+
+    # First worker claims; no ResourceLock row is inserted by the
+    # test (we're simulating the race window where claim has
+    # committed RUNNING but the worker hasn't yet run
+    # ``acquire_resource_lock``).
+    a = await ops.claim_next_step("A", "lease-A")
+    assert a is not None
+    assert a.id == step_ids[0][0]
+    assert a.status == RunStatus.RUNNING
+
+    # Second worker's claim must skip the other step that shares
+    # the same resource_key, even though no ResourceLock row
+    # exists yet.
+    b = await ops.claim_next_step("B", "lease-B")
+    assert b is None
+
+
+@pytest.mark.asyncio
+async def test_claim_picks_step_with_different_resource_key(db):
+    """Distinct resource_keys can be claimed in parallel — the
+    in-flight filter is per-key, not per-pool."""
+    rk1 = "rag:/tmp/dbA"
+    rk2 = "rag:/tmp/dbB"
+    rg_id, run_ids, step_ids = await _scaffold(
+        n_runs=2,
+        steps_per_run=1,
+        resource_keys=[rk1, rk2],
+    )
+
+    a = await ops.claim_next_step("A", "lease-A")
+    assert a is not None
+    assert a.id == step_ids[0][0]
+    assert a.resource_key == rk1
+
+    # Second worker can still claim the other step because its
+    # resource_key is different.
+    b = await ops.claim_next_step("B", "lease-B")
+    assert b is not None
+    assert b.id == step_ids[1][0]
+    assert b.resource_key == rk2
+
+
+@pytest.mark.asyncio
 async def test_two_workers_never_claim_same_step(db):
     rg_id, run_ids, step_ids = await _scaffold(n_runs=1, steps_per_run=1)
     # Issue claims sequentially (SQLite serializes writers anyway,

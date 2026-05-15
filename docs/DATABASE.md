@@ -378,6 +378,18 @@ Represents one step within a workflow run.
 - `status_message` (str, nullable) - Status description
 - `status_meta` (dict[str, str]) - JSON metadata
 - `worker_id` (str, nullable) - Worker processing this step
+- `lease_token` (str, nullable) - Per-claim audit token (UUID).
+  Set by `claim_next_step`, cleared on terminal status. All
+  terminal writes (`complete_step` / `error_step` / `release_step`)
+  are gated on this matching the holder, so a worker reaped
+  between claim and write cannot double-finalize a step that has
+  already been re-claimed.
+- `resource_key` (str, nullable, indexed) - Optional declarative
+  cross-subsystem lock key (typically `rag:<abs-db-path>`).
+  Stamped on STORE-type steps at run-creation time. The claim
+  layer skips a step whose key is held by a live `ResourceLock`
+  row, and the worker acquires the lock for the duration of
+  execution.
 
 **Computed Fields:**
 
@@ -559,6 +571,66 @@ Tracks worker health and activity.
 }
 ```
 
+**Notes:**
+
+- A worker that calls `Worker.stop()` deletes its own row so peers
+  see the departure without waiting `WORKER_CHECKIN_TIMEOUT`
+- `reap_dead_workers(my_id, threshold)` deletes rows older than
+  the threshold, always excluding the caller to prevent the
+  self-reaping race
+
+---
+
+### ResourceLock
+
+Cross-subsystem lock rendezvous keyed by an opaque `resource_key`
+(typically a resolved RAG-DB path). All RAG-DB writers — workflow
+`save_to_rag` steps, the web vacuum endpoint, the `si-diag` CLI,
+and `end_group` lifecycle vacuums — coordinate by acquiring rows
+here.
+
+**Table:** `resourcelock`
+
+**Fields:**
+
+- `resource_key` (str, primary key) - Opaque key (e.g. `rag:/abs/path/to/db`)
+- `holder_id` (str) - Holder identity (lease token for workers,
+  `{kind}:{uuid}` for direct callers)
+- `holder_kind` (ResourceLockKind) - `worker`, `cli`, `web`, or `lifecycle`
+- `step_id` (int, nullable) - Set when held by a worker on behalf of a step
+- `acquired_at` (datetime) - When the lock was acquired
+- `expires_at` (datetime, indexed) - TTL boundary; refreshed by holder heartbeats
+- `holder_meta` (dict[str, str]) - JSON metadata
+
+**Lifecycle:**
+
+- Acquired via `operations.acquire_resource_lock(...)` — opportunistically
+  sweeps expired rows before attempting insert under the unique primary key
+- TTL-refreshed via `refresh_resource_lock(...)` (workers refresh on
+  heartbeat at half the TTL)
+- Released via `release_resource_lock(...)` (idempotent) or
+  `force_release_resource_lock(...)` (audit-logged, used by
+  `si-diag vacuum --force`)
+- Dropped automatically by `complete_step` / `error_step` /
+  `release_step` in the same transaction as the step terminal
+  write
+- Expired rows are swept by `sweep_expired_resource_locks()` on a
+  60-second loop in each worker
+
+**Example:**
+
+```json
+{
+  "resource_key": "rag:/var/lib/soliplex/lancedb/default",
+  "holder_id": "f1c2b3a4-...",
+  "holder_kind": "worker",
+  "step_id": 1234,
+  "acquired_at": "2026-04-29T10:00:00",
+  "expires_at": "2026-04-29T10:05:00",
+  "holder_meta": {"worker_id": "ab7c..."}
+}
+```
+
 ---
 
 ## Enums
@@ -574,6 +646,7 @@ class RunStatus(str, Enum):
     COMPLETED = "COMPLETED"  # Finished successfully
     ERROR = "ERROR"          # Failed but still retrying
     FAILED = "FAILED"        # Permanently failed
+    CANCELLED = "CANCELLED"  # Cascaded from a sibling step's FAILED
 ```
 
 ### WorkflowStepType
@@ -620,6 +693,18 @@ class LifeCycleEvent(str, Enum):
     STEP_START = "step_start"
     STEP_END = "step_end"
     STEP_FAILED = "step_failed"
+```
+
+### ResourceLockKind
+
+Identifies the caller holding a `ResourceLock` row.
+
+```python
+class ResourceLockKind(str, Enum):
+    WORKER = "worker"        # Held by a workflow worker for a step
+    CLI = "cli"              # Held by si-cli / si-diag vacuum
+    WEB = "web"              # Held by the /api/v1/lancedb/vacuum endpoint
+    LIFECYCLE = "lifecycle"  # Held by an end_group lifecycle vacuum
 ```
 
 ---
@@ -898,7 +983,15 @@ alembic downgrade -1
 
 ## Indexes
 
-Consider adding these indexes for production:
+The following indexes are created by migrations:
+
+- `ix_runstep_resource_key` on `runstep(resource_key)` — used by the
+  claim-layer subquery that excludes locked resource keys
+- `ix_resourcelock_expires_at` on `resourcelock(expires_at)` —
+  used by `sweep_expired_resource_locks` and the opportunistic
+  sweep in `acquire_resource_lock`
+
+Consider adding these additional indexes for production:
 
 ```sql
 -- Workflow processing queries

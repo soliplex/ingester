@@ -5,6 +5,7 @@ import logging
 import opendal
 import yaml
 from sqlalchemy import Integer
+from sqlalchemy import and_
 from sqlalchemy import cast
 from sqlalchemy import delete
 from sqlalchemy import extract
@@ -1821,6 +1822,22 @@ async def claim_next_step(
         # Subquery 3: resource_keys currently locked.
         subq_locked = select(ResourceLock.resource_key).where(ResourceLock.expires_at > now).subquery()
 
+        # Subquery 4: resource_keys already held by a currently-RUNNING
+        # step. Closes the race window between a claim transaction
+        # committing (step → RUNNING) and the worker's separate
+        # ``acquire_resource_lock`` transaction committing: as soon as
+        # worker A's claim commits with status=RUNNING and
+        # resource_key=X, any concurrent claim from another consumer
+        # sees A here and excludes other resource_key=X candidates,
+        # so they don't get claimed-then-released.
+        subq_running_rk = (
+            select(RunStep.resource_key)
+            .where(RunStep.status == RunStatus.RUNNING)
+            .where(RunStep.resource_key.is_not(None))
+            .distinct()
+            .subquery()
+        )
+
         q = (
             select(RunStep)
             .where(
@@ -1833,7 +1850,10 @@ async def claim_next_step(
             .where(
                 or_(
                     RunStep.resource_key.is_(None),
-                    RunStep.resource_key.not_in(select(subq_locked.c.resource_key)),
+                    and_(
+                        RunStep.resource_key.not_in(select(subq_locked.c.resource_key)),
+                        RunStep.resource_key.not_in(select(subq_running_rk.c.resource_key)),
+                    ),
                 )
             )
             .order_by(

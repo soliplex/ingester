@@ -211,16 +211,43 @@ curl -X POST "http://localhost:8000/api/v1/workflow/" \
 
 ### Worker Processing
 
-Workers continuously poll for pending steps:
+A `Worker` runs a set of typed consumer pools. Each consumer claims
+work via an atomic SQL-layer claim:
 
-1. Query database for PENDING steps with highest priority
-2. Lock step with `FOR UPDATE` to prevent duplicate processing
-3. Transition status: PENDING → RUNNING
-4. Execute handler method
-5. Store artifacts in file system
-6. Update step status: RUNNING → COMPLETED/ERROR
-7. Update parent run status based on step results
-8. Repeat
+1. Consumer mints a fresh UUID lease token
+2. `claim_next_step(worker_id, lease_token, allowed_types=...)` runs
+   an atomic `UPDATE-FROM-SELECT-FOR-UPDATE-SKIP-LOCKED`:
+   - Eligibility filters: lowest unfinished step number per
+     workflow run, status `PENDING` or `ERROR`, `retry < retries`,
+     no sibling `RUNNING` step
+   - Per-type filter: `step_type IN allowed_types` (each consumer
+     pool only claims its types)
+   - Resource-key filter: skip steps whose `resource_key` is
+     currently held by a non-expired `ResourceLock` row
+3. The claimed row is stamped `status=RUNNING`, `worker_id=…`,
+   `lease_token=…` in the same transaction
+4. If the step declared a `resource_key`, the worker acquires the
+   `ResourceLock` row (heartbeat-refreshed)
+5. Handler executes; artifacts are written to file storage
+6. Terminal writes are lease-gated:
+   - `complete_step(step_id, lease)` → COMPLETED if the lease still
+     matches; deletes any `ResourceLock` held by that lease in the
+     same transaction
+   - `error_step(step_id, lease, message)` → increments retry,
+     returns `ERROR` (retries remain) or `FAILED` (exhausted).
+     `FAILED` cascades pending siblings to `CANCELLED`.
+   - `release_step(step_id, lease)` → back to `PENDING` without
+     incrementing retry (cooperative release used on graceful
+     shutdown)
+7. `recompute_run_status` derives the run's status from current
+   step counts; `try_complete_run_group` atomically transitions
+   the group and fires `GROUP_END` exactly once across workers
+
+A reaped worker (checkin timestamp older than
+`WORKER_CHECKIN_TIMEOUT`) has its `RUNNING` steps reset to
+`PENDING` and its `lease_token` / resource locks cleared by another
+worker's reaper loop. The reaper always skips the caller, so a
+worker can never reap itself.
 
 Start a worker:
 
@@ -228,24 +255,83 @@ Start a worker:
 si-cli worker
 ```
 
-Or via server (starts worker automatically):
+Or via server (the FastAPI lifespan constructs a `Worker` on
+startup and calls `Worker.stop(timeout=30s)` on shutdown):
 
 ```bash
 si-cli serve
 ```
 
+### Consumer Pools
+
+The server lifespan and `si-cli worker` build a default pool layout
+from settings:
+
+| Pool      | Concurrency                           | Source                         |
+|-----------|---------------------------------------|--------------------------------|
+| `parse`   | `DOCLING_CONCURRENCY` (default 3)     | parse steps only               |
+| `store`   | `WORKER_TASK_COUNT` (default 5)       | save_to_rag / STORE steps only |
+| `*`       | `WORKER_TASK_COUNT` (default 5)       | catch-all for other step types |
+
+The `"*"` pool auto-excludes any step type explicitly pinned to a
+named pool, so a parse step never gets picked up by the catch-all.
+Custom layouts can be passed directly:
+
+```python
+from soliplex.ingester.lib.wf.runner import Worker, WorkerConfig
+
+worker = Worker(WorkerConfig(consumers={
+    "parse": 8,
+    "store": 4,
+    "*": 2,
+}))
+await worker.start()
+# ... do work ...
+await worker.stop(timeout=30.0)
+```
+
+Per-type concurrency is bounded at the database level — a `parse`
+consumer only claims `parse` steps, so we never claim a step just
+to release it because of a local rate limit. The module-level
+HTTP semaphore that previously serialized Docling requests has
+been removed; set `consumers["parse"]` to the desired Docling
+concurrency instead.
+
+### Graceful Shutdown
+
+`Worker.stop(timeout=30.0)`:
+
+1. Signals consumers to stop claiming new work
+2. Waits up to *timeout* for in-flight steps to finish
+3. Cancels any consumer still mid-step; the `CancelledError`
+   handler calls `release_step` so the row comes back to `PENDING`
+   immediately, gated on the lease so it can never bounce a
+   fresh claimant
+4. Drains lifecycle subscribers
+5. Deletes the worker's `WorkerCheckin` row so siblings see the
+   departure without waiting the full `WORKER_CHECKIN_TIMEOUT`
+
+The FastAPI lifespan calls this on shutdown; `si-cli worker`
+handles SIGINT/SIGTERM the same way. Restart-recovery latency
+drops from `WORKER_CHECKIN_TIMEOUT` to the in-flight step's
+remaining duration.
+
 ### Status Transitions
 
 **Valid Transitions:**
-- PENDING → RUNNING
-- RUNNING → COMPLETED
-- RUNNING → ERROR
-- ERROR → RUNNING (retry)
+- PENDING → RUNNING (claim)
+- RUNNING → COMPLETED (success)
+- RUNNING → ERROR (failure, retries remain)
+- RUNNING → PENDING (cooperative release on shutdown)
+- ERROR → RUNNING (retry claim)
 - ERROR → FAILED (after max retries)
+- PENDING → CANCELLED (cascaded by a sibling step's FAILED)
 
 **Invalid Transitions:**
 - COMPLETED → RUNNING (no re-running completed steps)
-- FAILED → RUNNING (use retry endpoint instead)
+- FAILED → RUNNING (use the retry endpoint to reset to PENDING)
+- A terminal write whose lease token no longer matches is silently
+  ignored — the row is owned by a fresh claimant
 
 ## Lifecycle Events
 
@@ -329,6 +415,30 @@ curl "http://localhost:8000/api/v1/lancedb/vacuum?db=my_database"
 ```
 
 **Note:** LanceDB `auto_vacuum` is explicitly disabled in the HaikuRAG storage configuration because it caused reliability issues. Use the vacuum lifecycle event or the API endpoint instead for controlled compaction.
+
+All RAG-DB writers — workflow `save_to_rag` steps, the web vacuum
+endpoint, the `si-diag` CLI, and `end_group` lifecycle vacuums —
+coordinate via the cross-subsystem `ResourceLock` table. STORE-type
+steps stamp a `resource_key` (e.g. `rag:/abs/path/to/db`) at run
+creation; the claim layer skips the step while the lock is held, so
+a `save_to_rag` step is never claimed while its DB is being
+vacuumed.
+
+Direct-from-Python writers (CLI vacuum, lifecycle vacuum) can use
+the `hold_rag_lock` context manager:
+
+```python
+from soliplex.ingester.lib.rag import hold_rag_lock
+from soliplex.ingester.lib.models import ResourceLockKind
+
+async with hold_rag_lock(
+    db_path,
+    holder_kind=ResourceLockKind.LIFECYCLE,
+    max_wait=60,  # seconds; None = wait forever; 0 = fail fast
+):
+    # do exclusive work on the DB
+    ...
+```
 
 ---
 
@@ -450,12 +560,49 @@ async def custom_handler(
 
 ### Environment Variables
 
-- `INGEST_WORKER_CONCURRENCY` - Max concurrent workflow steps (default: 10)
-- `INGEST_QUEUE_CONCURRENCY` - Max concurrent queue operations (default: 20)
-- `DOCLING_CONCURRENCY` - Max concurrent Docling requests (default: 3)
-- `WORKER_TASK_COUNT` - Steps to fetch per query (default: 5)
-- `WORKER_CHECKIN_INTERVAL` - Heartbeat interval in seconds (default: 120)
-- `WORKER_CHECKIN_TIMEOUT` - Worker timeout in seconds (default: 600)
+- `DOCLING_CONCURRENCY` - Size of the dedicated `parse` consumer
+  pool (default: 3). Replaces the previous in-process HTTP
+  semaphore.
+- `WORKER_TASK_COUNT` - Size of the `store` pool and the catch-all
+  `"*"` pool (default: 5)
+- `INGEST_WORKER_CONCURRENCY` - Legacy ceiling, retained for
+  reference; current code derives pool sizes from
+  `DOCLING_CONCURRENCY` and `WORKER_TASK_COUNT`
+- `INGEST_QUEUE_CONCURRENCY` - Max concurrent queue operations
+  (default: 20)
+- `WORKER_CHECKIN_INTERVAL` - Heartbeat interval in seconds
+  (default: 120). Also drives `ResourceLock` TTL refresh cadence.
+- `WORKER_CHECKIN_TIMEOUT` - Worker timeout in seconds (default:
+  600). The reaper considers a worker dead at this threshold.
+
+### Metrics
+
+The `Worker` accepts a `metrics: Metrics` argument implementing
+the protocol `incr(name, value=1, **labels)` /
+`observe(name, value, **labels)`. The default `LoggingMetrics`
+emits at DEBUG; wire a Prometheus or OpenTelemetry adapter for
+production:
+
+| Counter                | When emitted                                            |
+|------------------------|---------------------------------------------------------|
+| `claim_attempts`       | Each claim attempt (labelled by `pool`)                 |
+| `claim_success`        | A step was claimed                                      |
+| `claim_idle`           | No work was available                                   |
+| `claim_error`          | The claim query raised                                  |
+| `claim_lost_race`      | Step's `resource_key` was held between claim and acquire|
+| `step_completed`       | Successful terminal write                               |
+| `step_error`           | Retryable failure                                       |
+| `step_failed`          | Retries exhausted                                       |
+| `step_released`        | Cooperative release on shutdown                         |
+| `step_reset_by_reaper` | A dead worker's step was reset to PENDING               |
+| `worker_reaped`        | A peer worker was reaped                                |
+| `lease_lost`           | Terminal write found a non-matching lease (labelled `phase`) |
+| `resource_lock_swept`  | Expired `ResourceLock` rows were swept                  |
+
+| Histogram         | Description                          |
+|-------------------|--------------------------------------|
+| `claim_duration`  | Wall time of `claim_next_step`       |
+| `step_duration`   | Wall time of the full step handler   |
 
 ### Multiple Workers
 
@@ -472,7 +619,13 @@ si-cli worker
 si-cli worker
 ```
 
-Database locking ensures no duplicate processing.
+Database-level coordination prevents duplicate processing:
+
+- Atomic claim with `FOR UPDATE SKIP LOCKED` (PostgreSQL) or
+  WAL-serialized writes (SQLite)
+- Lease tokens ensure stale workers can't double-finalize
+- `ResourceLock` serializes RAG-DB writers across workers and
+  out-of-band callers (CLI, web)
 
 ## Artifact Storage
 
@@ -547,7 +700,27 @@ Configure via `FILE_STORE_TARGET`:
 1. Check worker logs for exceptions
 2. Query stuck steps: `SELECT * FROM runstep WHERE status='RUNNING' AND start_date < NOW() - INTERVAL '1 hour'`
 3. Check worker heartbeat: `SELECT * FROM workercheckin`
-4. Restart workers if stale
+4. Restart workers if stale — `Worker.stop()` releases in-flight
+   steps to PENDING immediately; the reaper handles ungraceful
+   exits after `WORKER_CHECKIN_TIMEOUT`
+
+### Steps Stuck Behind a Resource Lock
+
+**Symptom:** STORE-type steps stay PENDING; a `ResourceLock` row
+points at a holder that no longer exists.
+
+**Solution:**
+1. Inspect the lock: `SELECT * FROM resourcelock WHERE resource_key='rag:/path/to/db'`
+2. The background `sweep_expired_resource_locks` loop clears
+   expired holders every 60s; if the row is genuinely stuck,
+   break it from the CLI:
+
+   ```bash
+   si-diag lancedb vacuum my_database --force
+   ```
+
+   `--force` calls `force_release_resource_lock` (audit-logged)
+   before retrying.
 
 ### Failed Steps
 

@@ -347,6 +347,8 @@ class Worker:
                     self._worker_id,
                     lease,
                     allowed_types=allowed,
+                    resource_lock_ttl=self._config.resource_lock_ttl,
+                    holder_meta={"worker_id": self._worker_id},
                 )
             except asyncio.CancelledError:
                 raise
@@ -464,7 +466,7 @@ class Worker:
                 batch,
                 run_group,
             )
-            logger.info("step %s returned %s", run_step.workflow_step_number, res, extra=lc)
+            logger.debug("step %s returned %s", run_step.workflow_step_number, res, extra=lc)
 
             ok = await operations.complete_step(
                 run_step.id,

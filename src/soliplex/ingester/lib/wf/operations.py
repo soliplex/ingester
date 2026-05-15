@@ -14,6 +14,7 @@ from sqlalchemy import literal_column
 from sqlalchemy import or_
 from sqlalchemy import tuple_
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel import update
 
@@ -1770,6 +1771,8 @@ async def claim_next_step(
     lease_token: str,
     allowed_types: list[WorkflowStepType] | None = None,
     batch_id: int | None = None,
+    resource_lock_ttl: int = 300,
+    holder_meta: dict[str, str] | None = None,
 ) -> RunStep | None:
     """Atomically claim the next eligible step for *worker_id*.
 
@@ -1793,13 +1796,27 @@ async def claim_next_step(
        key. Prevents claiming a ``save_to_rag`` step whose RAG-DB
        is currently being vacuumed by the web/CLI/lifecycle path.
 
+    When the claimed step has a ``resource_key``, the corresponding
+    :class:`ResourceLock` row is INSERTed in the **same transaction**
+    as the claim. Two concurrent claims targeting the same
+    ``resource_key`` (e.g. STORE steps from different workflow runs
+    pointing at the same LanceDB) serialize at the unique-PK
+    constraint on ``resourcelock.resource_key``: the loser gets
+    ``IntegrityError``, the whole claim rolls back, and ``None`` is
+    returned so the consumer can pick a different candidate next
+    poll. This closes the claim/acquire race that READ COMMITTED
+    isolation leaves open between two ``UPDATE-FROM-SELECT``
+    transactions.
+
     Returns
     -------
     RunStep | None
         The newly-claimed step (in-memory, expunged from the
-        session), or ``None`` if no work was available.
+        session), or ``None`` if no work was available or the
+        atomic resource-lock insert lost a race.
     """
     now = _utc_now()
+    expires = now + datetime.timedelta(seconds=resource_lock_ttl)
     async with get_session() as session:
         # Subquery 1: minimum step number per eligible workflow run.
         subq_min_step = (
@@ -1885,6 +1902,39 @@ async def claim_next_step(
         step.status_meta = {}
         session.add(step)
         await session.flush()
+
+        # Atomically take the cross-subsystem resource lock in the
+        # SAME transaction as the claim. The unique constraint on
+        # ``resourcelock.resource_key`` serializes concurrent claims
+        # for the same key: the loser gets IntegrityError → rollback
+        # → return None so the consumer can pick a different
+        # candidate or back off. The opportunistic sweep is in line
+        # with what ``acquire_resource_lock`` does — keeps the table
+        # bounded under churn.
+        if step.resource_key:
+            await session.exec(
+                delete(ResourceLock).where(ResourceLock.expires_at < now),
+            )
+            session.add(
+                ResourceLock(
+                    resource_key=step.resource_key,
+                    holder_id=lease_token,
+                    holder_kind=ResourceLockKind.WORKER,
+                    step_id=step.id,
+                    acquired_at=now,
+                    expires_at=expires,
+                    holder_meta=holder_meta or {"worker_id": worker_id},
+                ),
+            )
+            try:
+                await session.flush()
+            except IntegrityError:
+                # Another claim won the race to insert the lock. Roll
+                # the whole transaction back so the step stays
+                # PENDING; let the caller treat this as ``no work
+                # available`` and back off.
+                await session.rollback()
+                return None
 
         # Promote the workflow run to RUNNING if it is still PENDING /
         # ERROR. We do this in the same transaction as the claim so
@@ -2290,6 +2340,13 @@ async def acquire_resource_lock(
     ``ON CONFLICT`` semantics: we sweep first, then attempt the
     insert under the unique primary key. Concurrent acquirers
     serialize at the row level.
+
+    Idempotent for the current holder: calling with a ``holder_id``
+    that already owns the lock refreshes the TTL and returns True.
+    Workers that took the lock atomically at claim time can pass
+    through their ``_run_step`` acquire path as a defensive
+    refresh without needing to special-case the "already mine"
+    state.
     """
     now = _utc_now()
     expires = now + datetime.timedelta(seconds=ttl_seconds)
@@ -2303,6 +2360,12 @@ async def acquire_resource_lock(
         rs = await session.exec(q)
         existing = rs.first()
         if existing is not None:
+            if existing.holder_id == holder_id:
+                # We already hold the lock — refresh TTL and succeed.
+                existing.expires_at = expires
+                session.add(existing)
+                await session.commit()
+                return True
             await session.commit()
             return False
         session.add(

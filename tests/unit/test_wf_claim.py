@@ -163,6 +163,114 @@ async def test_claim_skips_running_resource_key_without_lock_row(db):
 
 
 @pytest.mark.asyncio
+async def test_claim_atomically_inserts_resource_lock(db):
+    """A successful claim with a resource_key writes the matching
+    :class:`ResourceLock` row in the same transaction as the
+    status=RUNNING update."""
+    from sqlmodel import select
+
+    rk = "rag:/tmp/atomic"
+    rg_id, run_ids, step_ids = await _scaffold(
+        n_runs=1,
+        steps_per_run=1,
+        resource_keys=[rk],
+    )
+
+    step = await ops.claim_next_step("worker-A", "lease-A")
+    assert step is not None
+    assert step.resource_key == rk
+
+    async with get_session() as session:
+        rs = await session.exec(select(ResourceLock).where(ResourceLock.resource_key == rk))
+        lock = rs.first()
+        assert lock is not None
+        assert lock.holder_id == "lease-A"
+        assert lock.holder_kind == ResourceLockKind.WORKER
+        assert lock.step_id == step.id
+
+
+@pytest.mark.asyncio
+async def test_claim_returns_none_when_lock_already_held(db):
+    """If another holder already owns the resource_key lock, the
+    second claim must return None (and leave the second step
+    PENDING) rather than mutating it to RUNNING."""
+    from sqlmodel import select
+
+    rk = "rag:/tmp/external"
+    rg_id, run_ids, step_ids = await _scaffold(
+        n_runs=1,
+        steps_per_run=1,
+        resource_keys=[rk],
+    )
+
+    # External holder already owns the lock.
+    got = await ops.acquire_resource_lock(
+        rk,
+        holder_id="external",
+        holder_kind=ResourceLockKind.WEB,
+        ttl_seconds=60,
+    )
+    assert got is True
+
+    step = await ops.claim_next_step("worker-A", "lease-A")
+    assert step is None
+
+    # The step must still be PENDING.
+    async with get_session() as session:
+        rs = await session.exec(select(RunStep).where(RunStep.id == step_ids[0][0]))
+        row = rs.first()
+        assert row.status == RunStatus.PENDING
+        assert row.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_acquire_resource_lock_refreshes_for_same_holder(db):
+    """``acquire_resource_lock`` is idempotent for the current
+    holder: a second call with the same ``holder_id`` refreshes
+    the TTL and returns True instead of failing. This lets the
+    worker's defensive ``_run_step`` acquire path remain a no-op
+    refresh after the atomic claim-time insert."""
+    from sqlmodel import select
+
+    rk = "rag:/tmp/refresh"
+
+    got = await ops.acquire_resource_lock(
+        rk,
+        holder_id="lease-A",
+        holder_kind=ResourceLockKind.WORKER,
+        ttl_seconds=10,
+    )
+    assert got is True
+
+    async with get_session() as session:
+        rs = await session.exec(select(ResourceLock).where(ResourceLock.resource_key == rk))
+        first_expires = rs.first().expires_at
+
+    # Same holder calls acquire again: should succeed and bump TTL.
+    got2 = await ops.acquire_resource_lock(
+        rk,
+        holder_id="lease-A",
+        holder_kind=ResourceLockKind.WORKER,
+        ttl_seconds=60,
+    )
+    assert got2 is True
+
+    async with get_session() as session:
+        rs = await session.exec(select(ResourceLock).where(ResourceLock.resource_key == rk))
+        second_expires = rs.first().expires_at
+    assert second_expires > first_expires
+
+    # A different holder still fails.
+    got3 = await ops.acquire_resource_lock(
+        rk,
+        holder_id="lease-B",
+        holder_kind=ResourceLockKind.WORKER,
+        ttl_seconds=60,
+    )
+    assert got3 is False
+
+
+@pytest.mark.asyncio
 async def test_claim_picks_step_with_different_resource_key(db):
     """Distinct resource_keys can be claimed in parallel — the
     in-flight filter is per-key, not per-pool."""

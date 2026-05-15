@@ -105,10 +105,11 @@ async def validate_document(
     """
     basic checks
     """
+    start = time.time()
     logger.info(f"validate_document started  source={source} batch_id={batch_id} doc_hash={doc_hash}")
     doc = await doc_ops.get_document(doc_hash)
     if doc:
-        logger.info(f"validate_document found  source={source} batch_id={batch_id} doc_hash={doc_hash}")
+        logger.debug(f"validate_document found  source={source} batch_id={batch_id} doc_hash={doc_hash}")
     else:
         raise doc_ops.DocumentNotFoundError(doc_hash)
     meta = doc.doc_meta
@@ -143,7 +144,9 @@ async def validate_document(
         msg = f"{doc_hash} invalid: {meta['invalid_reason']}"
         raise doc_ops.DocumentInvalidError(msg)
 
-    logger.info(f"validate_document found valid  source={source} batch_id={batch_id} doc_hash={doc_hash}")
+    logger.info(
+        f"validate_document found valid  source={source} batch_id={batch_id} doc_hash={doc_hash} took {time.time() - start}"
+    )
     return
 
 
@@ -185,6 +188,7 @@ async def split_parse_document(
         None
     """
     _lc = log_context(doc_hash=doc_hash, batch_id=batch_id, action="split_parse")
+    start = time.time()
     logger.info(f"parse_document started  {source} {batch_id} {doc_hash}", extra=_lc)
     doc_uris = await doc_ops.get_document_uris_by_hash(doc_hash)
     if len(doc_uris) == 0:
@@ -259,7 +263,7 @@ async def split_parse_document(
             f"document {doc_hash} missing files after retrying write json={json_exists} md={md_exists}",
         )
     await doc_ops.add_history_for_hash(doc_hash, "parsed", batch_id=batch_id)
-    logger.info(f"parse_document completed  {source} {batch_id} {doc_hash}", extra=_lc)
+    logger.info(f"parse_document completed  {source} {batch_id} {doc_hash} took {time.time() - start}", extra=_lc)
 
 
 async def parse_document(
@@ -294,7 +298,7 @@ async def parse_document(
         None
     """
     logger.info(f"parse_document started  {source} {batch_id} {doc_hash}")
-
+    start = time.time()
     doc = await doc_ops.get_document(doc_hash)
     test_op = await _get_op(workflow_run.id, WorkflowStepType.PARSE, ArtifactType.PARSED_JSON)
     exists = await test_op.exists(doc_hash)
@@ -372,7 +376,7 @@ async def parse_document(
             extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="do_parse"),
         )
 
-    logger.info(f"parse_document completed  {source} {batch_id} {doc_hash}")
+    logger.info(f"parse_document completed  {source} {batch_id} {doc_hash} took{time.time() - start:.2f}s")
 
 
 async def parse_bytes(
@@ -471,10 +475,10 @@ async def split_parse_pdf_file(
 
             proc_results = await asyncio.gather(*[_read_and_convert(sp) for sp in split_files])
         else:
-            start = time.time()
+            start1 = time.time()
             proc = BatchProcessor(max_workers=split_workers, verbose=True)
             proc_results = proc.execute_parallel(split_files)
-            logger.info(f"batch processing took {time.time() - start:.2f}s files={len(split_files)}")
+            logger.info(f"batch processing took {time.time() - start1:.2f}s files={len(split_files)}")
 
         docling_doc = merge_from_results(proc_results)
     return (
@@ -509,7 +513,7 @@ async def chunk_document(
     workflow_run: models.WorkflowRun = None,
 ):
     logger.info(f"chunk_document started  {source} {batch_id} {doc_hash}")
-
+    start = time.time()
     op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
     exists = await op.exists(doc_hash)
     if not exists or force:
@@ -551,7 +555,10 @@ async def chunk_document(
             raise WorkflowException(msg)
         await doc_ops.add_history_for_hash(doc_hash, "chunked", batch_id=batch_id)
 
-    logger.info(f"chunk_document completed  {source} {batch_id} {doc_hash}")
+    logger.info(
+        f"chunk_document completed  {source} {batch_id} {doc_hash} took {time.time() - start:.2f}s",
+        extra=log_context(doc_hash=doc_hash, batch_id=batch_id, action="chunk"),
+    )
 
 
 async def embed_document(
@@ -563,6 +570,7 @@ async def embed_document(
     workflow_run: models.WorkflowRun = None,
 ):
     _lc = log_context(doc_hash=doc_hash, batch_id=batch_id, action="embed")
+    start = time.time()
     logger.info(f"embed_document started  {source} {batch_id} {doc_hash}", extra=_lc)
     chunk_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
     chunk_bytes = await chunk_op.read(doc_hash)
@@ -591,7 +599,7 @@ async def embed_document(
 
     await doc_ops.add_history_for_hash(doc_hash, "embedded", batch_id=batch_id)
 
-    logger.info(f"embed_document completed  {source} {batch_id} {doc_hash}", extra=_lc)
+    logger.info(f"embed_document completed  {source} {batch_id} {doc_hash} took {time.time() - start:.2f}s", extra=_lc)
 
 
 async def save_to_rag(
@@ -602,6 +610,7 @@ async def save_to_rag(
     step_config: StepConfig = None,
     workflow_run: models.WorkflowRun = None,
 ):
+    start = time.time()
     logger.info(f"save_to_rag started  {source} {batch_id} {doc_hash}")
     settings = get_settings()
     doc = await doc_ops.get_document(doc_hash)
@@ -623,10 +632,10 @@ async def save_to_rag(
     embed_exists = await embed_op.exists(doc_hash)
     if embed_exists:
         chunk_bytes = await embed_op.read(doc_hash)
-        logger.info(f"got embeddings for {doc_hash}", extra=_log_con)
+        logger.debug(f"got embeddings for {doc_hash}", extra=_log_con)
     else:
         chunk_bytes = await chunk_op.read(doc_hash)
-        logger.info(f"got just chunks for {doc_hash}", extra=_log_con)
+        logger.debug(f"got just chunks for {doc_hash}", extra=_log_con)
 
     chunk_json = chunk_bytes.decode("utf-8")
     chunk_dicts = json.loads(chunk_json)
@@ -672,8 +681,8 @@ async def save_to_rag(
         )
         return
     source_uri = doc_uris[0]
-    logger.info(
-        f"ingesting {doc_hash} batch={batch_id}  file_size={file_size} uri={source_uri}",  # noqa: E501
+    logger.debug(
+        f"saving to rag: {doc_hash} batch={batch_id}  file_size={file_size} uri={source_uri}",  # noqa: E501
         extra=_log_con,
     )
     rag_id = await rag.save_to_rag(
@@ -686,7 +695,7 @@ async def save_to_rag(
         _log_con,
     )
     await doc_ops.add_history_for_hash(doc_hash, "ingested", hist_meta={"haiku_id": rag_id}, batch_id=batch_id)
-    logger.info(f"save_to_rag completed  {source} {batch_id} {doc_hash}")
+    logger.info(f"save_to_rag completed  {source} {batch_id} {doc_hash} took {time.time() - start:.2f}s", extra=_log_con)
 
 
 async def route_document(

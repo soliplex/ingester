@@ -947,6 +947,124 @@ async def test_reset_failed_soft_ignores_non_failed(db):
         assert run.status == RunStatus.RUNNING
 
 
+@pytest.mark.asyncio
+async def test_reset_failed_soft_resets_cancelled_steps(db):
+    """Soft reset also resets CANCELLED siblings of failed steps and clears worker_id."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/cancelled_reset.pdf",
+        "test_source",
+        "application/pdf",
+        b"cancelled reset content",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+
+    # Step 0: FAILED, Step 1: CANCELLED (cascaded). Both carry worker_id.
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        for i, status in enumerate([RunStatus.FAILED, RunStatus.CANCELLED]):
+            q = select(RunStep).where(RunStep.id == steps[i].id)
+            result = await session.exec(q)
+            s = result.first()
+            s.status = status
+            s.worker_id = "worker-abc"
+            s.retry = 2
+            session.add(s)
+
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run.id)
+        result = await session.exec(q)
+        run = result.first()
+        run.status = RunStatus.FAILED
+        session.add(run)
+        await session.commit()
+
+    await wf_ops.reset_failed(run_group_id=run_group.id, hard=False)
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        for i in (0, 1):
+            q = select(RunStep).where(RunStep.id == steps[i].id)
+            result = await session.exec(q)
+            s = result.first()
+            assert s.status == RunStatus.PENDING
+            assert s.worker_id is None
+            assert s.retry == 0
+
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run.id)
+        result = await session.exec(q)
+        run = result.first()
+        assert run.status == RunStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_reset_failed_soft_global_resets_cancelled_steps(db):
+    """Soft reset without run_group_id also covers CANCELLED steps."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/cancelled_global.pdf",
+        "test_source",
+        "application/pdf",
+        b"cancelled global content",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        q = select(RunStep).where(RunStep.id == steps[0].id)
+        s = (await session.exec(q)).first()
+        s.status = RunStatus.CANCELLED
+        s.worker_id = "stale-worker"
+        session.add(s)
+
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run.id)
+        run = (await session.exec(q)).first()
+        run.status = RunStatus.FAILED
+        session.add(run)
+        await session.commit()
+
+    await wf_ops.reset_failed(hard=False)
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+
+        q = select(RunStep).where(RunStep.id == steps[0].id)
+        s = (await session.exec(q)).first()
+        assert s.status == RunStatus.PENDING
+        assert s.worker_id is None
+
+
 # ============================================================================
 # Tests for get_run_group_stats() - Additional edge cases
 # ============================================================================

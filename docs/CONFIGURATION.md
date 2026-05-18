@@ -143,6 +143,53 @@ OLLAMA_BASE_URL_DOCLING="http://ollama-chunker.internal.company.com:11434"
 - If not set, defaults to the same URL as `OLLAMA_BASE_URL`
 - Useful when running separate Ollama instances to distribute model loading across servers
 
+#### OPENAI_API_KEY
+
+API key used by the OpenAI-backed embedding provider (via haiku.rag).
+
+**Default:** None
+
+**Example:**
+
+```bash
+OPENAI_API_KEY=sk-...
+```
+
+**Notes:**
+
+- Required only when a param set selects the `openai` embedding provider; otherwise unused
+- Treated as a secret (stored via `SecretStr`, supports `/run/secrets` directory — e.g. mount as `/run/secrets/openai_api_key`)
+- When loaded, the value is exported to the `OPENAI_API_KEY` process environment variable at startup so the OpenAI SDK / haiku.rag can pick it up
+- If `OPENAI_API_KEY` is already set in the environment, the existing value wins and the secret file is ignored
+- Keep this value secure - do not commit to version control
+
+#### EMBED_LLM_URL
+
+Base URL for the OpenAI-compatible embeddings endpoint.
+
+**Default:** None
+
+**Examples:**
+
+```bash
+# Real OpenAI API
+EMBED_LLM_URL=https://api.openai.com/v1
+
+# Self-hosted vLLM (append /v1)
+EMBED_LLM_URL=http://vllm.internal.company.com:8000/v1
+
+# Any OpenAI-compatible gateway
+EMBED_LLM_URL=http://llm-proxy.internal.company.com/v1
+```
+
+**Notes:**
+
+- **Required** when a param set selects the `openai` embedding provider; startup embedding will fail with `embed_llm_url is not set` otherwise
+- Ignored when the `ollama` provider is used (Ollama uses `OLLAMA_BASE_URL` instead)
+- Must include the `/v1` suffix for vLLM and most OpenAI-compatible backends (haiku.rag does not append it automatically)
+- Use this to point at self-hosted OpenAI-compatible servers (vLLM, text-embeddings-inference, LiteLLM, etc.) without touching param set YAML
+- Paired with `OPENAI_API_KEY` for authentication; self-hosted backends that don't require auth still need the key set to any non-empty value
+
 ---
 
 ### Logging

@@ -34,6 +34,7 @@ export const load: PageLoad = async () => {
 			(w) => w.status === RunStatus.FAILED || w.status === RunStatus.ERROR
 		).length;
 		const activeWorkflows = workflows.filter((w) => w.status === RunStatus.RUNNING).length;
+		const cancelledWorkflows = workflows.filter((w) => w.status === RunStatus.CANCELLED).length;
 
 		const successRate =
 			totalWorkflows > 0 ? Math.round((completedWorkflows / totalWorkflows) * 100) : 0;
@@ -54,6 +55,7 @@ export const load: PageLoad = async () => {
 				completedWorkflows,
 				failedWorkflows,
 				activeWorkflows,
+				cancelledWorkflows,
 				successRate,
 				avgDuration
 			},
@@ -67,6 +69,7 @@ export const load: PageLoad = async () => {
 				completedWorkflows: 0,
 				failedWorkflows: 0,
 				activeWorkflows: 0,
+				cancelledWorkflows: 0,
 				successRate: 0,
 				avgDuration: 0
 			},

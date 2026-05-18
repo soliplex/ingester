@@ -28,8 +28,7 @@ repos:
       - id: pip-audit
         name: pip-audit
 
-        #ignore  due to cooldown
-        entry: uv run --with pip-audit pip-audit   --ignore-vuln CVE-2026-40347 --ignore-vuln CVE-2026-40260 --ignore-vuln GHSA-jj6c-8h6c-hppx --ignore-vuln  CVE-2026-44431 --ignore-vuln CVE-2026-44432
+        entry: uv audit --no-dev --frozen
         language: system
         pass_filenames: false
         files: (^pyproject\.toml$|^uv\.lock$)

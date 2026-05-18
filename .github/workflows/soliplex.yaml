@@ -70,16 +70,15 @@ jobs:
         run: uv run ruff check
 
   security:
-    needs: paths-filter
-    if: needs.paths-filter.outputs.should_test == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: pypa/gh-action-pip-audit@v1.1.0
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          inputs: .
-
+          enable-cache: true
+      - name: Run dependency audit
+        run: uv audit
   # This job always runs and provides a status for branch protection
   # It succeeds if checks passed OR if checks were skipped (no relevant changes)
   # Named "test-soliplex" to match existing branch protection rule

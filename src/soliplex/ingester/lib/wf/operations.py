@@ -1422,6 +1422,11 @@ async def reset_failed(
         If True, reset every non-COMPLETED step and the runs containing
         them.
     """
+    # Soft mode resets both FAILED steps and the CANCELLED siblings that
+    # were marked by cancel_pending_steps — otherwise restarted runs hit
+    # "can't change from CANCELLED to RUNNING". The CANCELLED siblings
+    # set is captured in the module-level ``_SOFT_STEP_STATUSES``
+    # tuple used below.
     async with get_session() as session:
         reset_values = {
             "status": RunStatus.PENDING,

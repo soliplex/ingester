@@ -1,13 +1,17 @@
+import asyncio
 import base64
+import errno
 import hashlib
 import hmac as hmac_mod
 import logging
 import pathlib
+import shutil
 from typing import Protocol
 from typing import runtime_checkable
 
 import aiofiles
 import opendal
+import zstandard
 from aiofiles import os as aos
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -258,7 +262,7 @@ async def read_s3_url(input_url: str):
     parsed = urlparse(input_url)
     bucket = parsed.netloc
     key = parsed.path.lstrip("/")
-    logger.info(f"reading s3 bucket={bucket} key={key}")
+    logger.debug(f"reading s3 bucket={bucket} key={key}")
     settings = get_settings()
     if bucket != settings.input_s3.bucket:
         raise ValueError(f"bucket {bucket} does not match configured bucket {settings.input_s3.bucket}")
@@ -355,14 +359,35 @@ class FileStorageOperator:
     """
 
     SHARD_SUFFIX_LENGTH = 2  # Use last N chars of path for subdirectory sharding
+    MIN_FREE_RESERVE_BYTES = 1 * 1024 * 1024  # 1 MiB headroom for FS metadata, sidecars, Fernet expansion
+    COMPRESSION_SUFFIX = ".zst"
+    # Below this size, compression overhead (zstd header + framing) typically inflates the file,
+    # so we write plain. This also keeps integrity sidecars (.hash, .hmac, ~128 bytes) uncompressed.
+    COMPRESS_MIN_BYTES = 1024
 
-    def __init__(self, store_path: str):
+    def __init__(
+        self,
+        store_path: str,
+        compress: bool = False,
+        compress_level: int = 3,
+    ):
         path = pathlib.Path(store_path)
         if not path.is_absolute():
             path = pathlib.Path.cwd() / store_path
         self.store_path = str(path)
+        self.compress = compress
+        self.compress_level = compress_level
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
+
+    def _ensure_free_space(self, num_bytes: int) -> None:
+        usage = shutil.disk_usage(self.store_path)
+        required = num_bytes + self.MIN_FREE_RESERVE_BYTES
+        if usage.free < required:
+            raise OSError(
+                errno.ENOSPC,
+                f"insufficient disk space at {self.store_path}: need {required} bytes, {usage.free} free",
+            )
 
     def _get_normalized_path(self, path: str) -> pathlib.Path:
         """Get the full filesystem path for a given key, creating shard directory if needed.
@@ -378,29 +403,91 @@ class FileStorageOperator:
         return shard_dir / path
 
     async def read(self, path: str) -> bytes:
+        zst_path = self._get_normalized_path(path + self.COMPRESSION_SUFFIX)
+        if await aos.path.exists(zst_path):
+            return await asyncio.to_thread(self._read_compressed_sync, zst_path)
         norm_path = self._get_normalized_path(path)
         async with aiofiles.open(norm_path, "rb") as f:
             return await f.read()
 
     async def exists(self, path: str) -> bool:
+        zst_path = self._get_normalized_path(path + self.COMPRESSION_SUFFIX)
+        if await aos.path.exists(zst_path):
+            return True
         norm_path = self._get_normalized_path(path)
         return await aos.path.exists(norm_path)
 
     async def write(self, path: str, data: bytes) -> None:
-        norm_path = self._get_normalized_path(path)
-        async with aiofiles.open(norm_path, "wb") as f:
-            await f.write(data)
+        # Conservative: plaintext size is an upper bound on compressed-on-disk size,
+        # so checking against plaintext keeps the guarantee even when compressing.
+        self._ensure_free_space(len(data))
+        if self.compress and len(data) >= self.COMPRESS_MIN_BYTES:
+            target = self._get_normalized_path(path + self.COMPRESSION_SUFFIX)
+            write_succeeded = False
+            try:
+                await asyncio.to_thread(self._write_compressed_sync, target, data)
+                write_succeeded = True
+            finally:
+                if not write_succeeded:
+                    try:
+                        await aos.unlink(target)
+                    except FileNotFoundError:
+                        pass
+        else:
+            norm_path = self._get_normalized_path(path)
+            write_succeeded = False
+            try:
+                async with aiofiles.open(norm_path, "wb") as f:
+                    await f.write(data)
+                write_succeeded = True
+            finally:
+                if not write_succeeded:
+                    try:
+                        await aos.unlink(norm_path)
+                    except FileNotFoundError:
+                        pass
+
+    def _write_compressed_sync(self, target: pathlib.Path, data: bytes) -> None:
+        cctx = zstandard.ZstdCompressor(level=self.compress_level)
+        with open(target, "wb") as f:
+            with cctx.stream_writer(f) as writer:
+                writer.write(data)
+
+    def _read_compressed_sync(self, target: pathlib.Path) -> bytes:
+        dctx = zstandard.ZstdDecompressor()
+        with open(target, "rb") as f:
+            with dctx.stream_reader(f) as reader:
+                return reader.read()
 
     async def delete(self, path: str) -> None:
+        zst_path = self._get_normalized_path(path + self.COMPRESSION_SUFFIX)
         norm_path = self._get_normalized_path(path)
-        await aos.unlink(norm_path)
+        zst_exists = await aos.path.exists(zst_path)
+        plain_exists = await aos.path.exists(norm_path)
+        if not zst_exists and not plain_exists:
+            raise FileNotFoundError(path)
+        if zst_exists:
+            await aos.unlink(zst_path)
+        if plain_exists:
+            await aos.unlink(norm_path)
 
     async def list(self, prefix: str) -> list[str]:
         base_path = pathlib.Path(self.store_path)
         files = await recursive_listdir(base_path)
-        return [f.name for f in files]
+        seen: set[str] = set()
+        result: list[str] = []
+        for f in files:
+            name = f.name
+            logical = name.removesuffix(self.COMPRESSION_SUFFIX) if name.endswith(self.COMPRESSION_SUFFIX) else name
+            if logical not in seen:
+                seen.add(logical)
+                result.append(logical)
+        return result
 
     def get_uri(self, path: str) -> str:
+        zst_path = self._get_normalized_path(path + self.COMPRESSION_SUFFIX)
+        if zst_path.exists():
+            return zst_path.as_uri()
         norm_path = self._get_normalized_path(path)
         return norm_path.as_uri()
 
@@ -477,7 +564,12 @@ def get_storage_operator(
         return OpenDALAdapter(raw_op, root)
     elif target == "fs":
         fs_root = f"{settings.file_store_dir}/{getattr(settings, f'{st}_store_dir')}/{root}"
-        op: StorageOperator = FileStorageOperator(fs_root)
+        compress = artifact_type.value in settings.file_compression_artifacts
+        op: StorageOperator = FileStorageOperator(
+            fs_root,
+            compress=compress,
+            compress_level=settings.file_compression_level,
+        )
         if settings.file_protection_level != ProtectionLevel.NONE:
             secret = settings.file_secret.get_secret_value() if settings.file_secret else None
             op = ProtectedStorageOperator(op, settings.file_protection_level, secret)

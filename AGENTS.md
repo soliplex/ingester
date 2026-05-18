@@ -41,8 +41,9 @@ src/soliplex/ingester/
     ├── rag.py          # HaikuRAG integration
     ├── processing.py   # Document processing utilities
     └── wf/             # Workflow execution engine
-        ├── runner.py   # Async worker
-        ├── operations.py
+        ├── runner.py   # `Worker` class, lifecycle bus, metrics
+        ├── operations.py  # Persistence: atomic claim, lease tokens,
+        │                  # ResourceLock, group-completion
         └── registry.py # Workflow/param loading from YAML
 
 config/
@@ -132,8 +133,10 @@ DOC_DB_URL="postgresql+psycopg://user:pass@host:5432/soliplex"
 | Document | Unique documents by SHA256 hash |
 | DocumentURI | Maps URIs to documents |
 | WorkflowRun | Single workflow execution |
-| RunStep | Individual step in workflow |
+| RunStep | Individual step; carries `lease_token` and `resource_key` for the claim layer |
 | RunGroup | Groups workflow runs for a batch |
+| WorkerCheckin | Worker heartbeat (driven by `Worker.start/stop`) |
+| ResourceLock | Cross-subsystem rendezvous for RAG-DB writers |
 | SyncState | Incremental sync tracking |
 
 ## API Routes

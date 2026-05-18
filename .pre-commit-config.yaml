@@ -28,7 +28,6 @@ repos:
       - id: pip-audit
         name: pip-audit
 
-        #ignore  due to cooldown
         entry: uv audit --no-dev --frozen
         language: system
         pass_filenames: false

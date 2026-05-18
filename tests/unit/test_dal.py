@@ -1,10 +1,13 @@
+import asyncio
 import base64
+import errno
 import logging
 from unittest.mock import AsyncMock
 from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
+import zstandard
 from cryptography.fernet import InvalidToken
 
 from soliplex.ingester.lib import dal
@@ -314,6 +317,366 @@ async def test_file_storage_operator_get_uri(tmp_path):
     assert uri.startswith("file://")
 
 
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_disk_space_ok(tmp_path):
+    """write succeeds when disk_usage reports plenty of free space"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    fake_usage = Mock(total=10**12, used=0, free=10**12)
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ) as mock_du:
+        await op.write("disk_ok_hash", b"payload")
+    mock_du.assert_called_once_with(op.store_path)
+    assert await op.read("disk_ok_hash") == b"payload"
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_disk_space_insufficient(tmp_path):
+    """write raises OSError(ENOSPC) and creates no file when free space is below threshold"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    fake_usage = Mock(total=10**12, used=10**12, free=100)
+    data = b"payload"
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with pytest.raises(OSError, match="insufficient disk space") as exc_info:
+            await op.write("nospace_hash", data)
+    assert exc_info.value.errno == errno.ENOSPC
+    norm_path = op._get_normalized_path("nospace_hash")
+    assert not norm_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_disk_space_exact_data_size_fails(tmp_path):
+    """Reserve is enforced: free == len(data) is not enough"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    data = b"payload"
+    fake_usage = Mock(total=10**12, used=10**12, free=len(data))
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with pytest.raises(OSError, match="insufficient disk space") as exc_info:
+            await op.write("reserve_hash", data)
+    assert exc_info.value.errno == errno.ENOSPC
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_cleans_up_partial_file_on_race(tmp_path):
+    """If a race causes write to fail mid-stream, the partial file is unlinked in finally"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    fake_usage = Mock(total=10**12, used=0, free=10**12)
+    norm_path = op._get_normalized_path("race_hash")
+
+    def fake_open(*args, **kwargs):
+        # Simulate a partial write: file appears on disk, then writer raises.
+        norm_path.write_bytes(b"partial")
+        raise OSError(errno.ENOSPC, "no space left on device")
+
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with patch(
+            "soliplex.ingester.lib.dal.aiofiles.open",
+            side_effect=fake_open,
+        ):
+            with pytest.raises(OSError, match="no space left") as exc_info:
+                await op.write("race_hash", b"data")
+    assert exc_info.value.errno == errno.ENOSPC
+    assert not norm_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_cleanup_handles_missing_file(tmp_path):
+    """Cleanup swallows FileNotFoundError when no partial file was created"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    fake_usage = Mock(total=10**12, used=0, free=10**12)
+    norm_path = op._get_normalized_path("absent_hash")
+
+    def fake_open(*args, **kwargs):
+        # Raise before any file is created on disk.
+        raise OSError(errno.EIO, "i/o error")
+
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with patch(
+            "soliplex.ingester.lib.dal.aiofiles.open",
+            side_effect=fake_open,
+        ):
+            with pytest.raises(OSError, match="i/o error") as exc_info:
+                await op.write("absent_hash", b"data")
+    assert exc_info.value.errno == errno.EIO
+    assert not norm_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_write_protected_no_sidecar_on_disk_full(tmp_path):
+    """ProtectedStorageOperator(HASH) does not write a sidecar when primary write fails on disk check"""
+    inner = dal.FileStorageOperator(str(tmp_path))
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HASH)
+    fake_usage = Mock(total=10**12, used=10**12, free=100)
+    with patch(
+        "soliplex.ingester.lib.dal.shutil.disk_usage",
+        return_value=fake_usage,
+    ):
+        with pytest.raises(OSError, match="insufficient disk space") as exc_info:
+            await op.write("protected_hash", b"data")
+    assert exc_info.value.errno == errno.ENOSPC
+    assert not inner._get_normalized_path("protected_hash").exists()
+    assert not inner._get_normalized_path("protected_hash.hash").exists()
+
+
+def test_file_storage_operator_compression_off_by_default(tmp_path):
+    """Compression is off when not explicitly enabled"""
+    op = dal.FileStorageOperator(str(tmp_path))
+    assert op.compress is False
+    assert op.compress_level == 3
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_compress_round_trip(tmp_path):
+    """Compressed write produces a .zst file on disk; read decompresses transparently"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True)
+    payload = b'{"k": "v"}\n' * 200_000  # ~2 MB, easily compressible
+    await op.write("compressed_hash_aa", payload)
+
+    zst_path = op._get_normalized_path("compressed_hash_aa.zst")
+    plain_path = op._get_normalized_path("compressed_hash_aa")
+    assert zst_path.exists()
+    assert not plain_path.exists()
+    # zstd magic bytes: 0x28 0xB5 0x2F 0xFD
+    on_disk = zst_path.read_bytes()
+    assert on_disk[:4] == b"\x28\xb5\x2f\xfd"
+    assert len(on_disk) < len(payload) // 2  # JSON should compress well
+
+    assert await op.read("compressed_hash_aa") == payload
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_compress_skips_small_payloads(tmp_path):
+    """Payloads under COMPRESS_MIN_BYTES are written plain even when compress=True"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True)
+    small = b"x" * 100  # well below COMPRESS_MIN_BYTES (1024)
+    await op.write("small_hash_bb", small)
+
+    zst_path = op._get_normalized_path("small_hash_bb.zst")
+    plain_path = op._get_normalized_path("small_hash_bb")
+    assert plain_path.exists()
+    assert not zst_path.exists()
+    assert await op.read("small_hash_bb") == small
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_read_falls_back_to_plain(tmp_path):
+    """Pre-existing plain files are readable when compression is enabled (mixed-format support)"""
+    plain_op = dal.FileStorageOperator(str(tmp_path))
+    payload = b'{"legacy": true}' * 500
+    await plain_op.write("legacy_hash_cc", payload)
+
+    compressing_op = dal.FileStorageOperator(str(tmp_path), compress=True)
+    assert await compressing_op.read("legacy_hash_cc") == payload
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_exists_handles_both_forms(tmp_path):
+    """exists() returns True whether the file is .zst or plain"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True)
+
+    plain_op = dal.FileStorageOperator(str(tmp_path))
+    await plain_op.write("legacy_hash_dd", b"plain")
+    assert await op.exists("legacy_hash_dd")
+
+    payload = b"y" * 4096
+    await op.write("compressed_hash_ee", payload)
+    assert await op.exists("compressed_hash_ee")
+
+    assert not await op.exists("missing_hash_ff")
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_delete_removes_both_forms(tmp_path):
+    """delete() removes whichever forms exist; raises FileNotFoundError when neither does"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True)
+    payload = b"z" * 4096
+    await op.write("dual_hash_gg", payload)
+    # Manually write a plain copy to simulate a leftover from a pre-compression write.
+    plain_path = op._get_normalized_path("dual_hash_gg")
+    plain_path.write_bytes(b"stale plain")
+
+    await op.delete("dual_hash_gg")
+    assert not op._get_normalized_path("dual_hash_gg.zst").exists()
+    assert not plain_path.exists()
+
+    with pytest.raises(FileNotFoundError):
+        await op.delete("never_existed_hh")
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_list_dedupes_compressed_and_plain(tmp_path):
+    """list() returns logical names with .zst stripped and dedupes against any plain twin"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True)
+    await op.write("listme_hash_ii", b"big payload" * 1000)
+
+    # Drop a plain twin in the same shard dir (simulates partial migration state).
+    plain_path = op._get_normalized_path("listme_hash_ii")
+    plain_path.write_bytes(b"plain twin")
+
+    # And a separate plain-only entry.
+    other_op = dal.FileStorageOperator(str(tmp_path))
+    await other_op.write("plainonly_hash_jj", b"hi")
+
+    listing = await op.list("")
+    assert "listme_hash_ii" in listing
+    assert "plainonly_hash_jj" in listing
+    assert "listme_hash_ii.zst" not in listing
+    assert listing.count("listme_hash_ii") == 1
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_get_uri_prefers_zst(tmp_path):
+    """get_uri returns the .zst URI when compressed file exists, else plain URI"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True)
+    await op.write("uri_hash_kk", b"q" * 4096)
+    uri = op.get_uri("uri_hash_kk")
+    assert uri.endswith(".zst")
+
+    other = dal.FileStorageOperator(str(tmp_path))
+    await other.write("uri_plain_ll", b"plain")
+    assert not op.get_uri("uri_plain_ll").endswith(".zst")
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_compress_runs_off_event_loop(tmp_path):
+    """Compression and decompression are dispatched via asyncio.to_thread"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True)
+    payload = b"e" * 4096
+
+    real_to_thread = asyncio.to_thread
+    with patch(
+        "soliplex.ingester.lib.dal.asyncio.to_thread",
+        side_effect=real_to_thread,
+    ) as mock_to_thread:
+        await op.write("offload_hash_mm", payload)
+        assert mock_to_thread.call_count == 1
+        assert mock_to_thread.call_args.args[0] == op._write_compressed_sync
+
+        mock_to_thread.reset_mock()
+        result = await op.read("offload_hash_mm")
+        assert result == payload
+        assert mock_to_thread.call_count == 1
+        assert mock_to_thread.call_args.args[0] == op._read_compressed_sync
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_compress_level_propagates(tmp_path):
+    """compress_level is passed through to ZstdCompressor"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True, compress_level=9)
+
+    real_compressor = zstandard.ZstdCompressor
+    with patch(
+        "soliplex.ingester.lib.dal.zstandard.ZstdCompressor",
+        side_effect=real_compressor,
+    ) as mock_cls:
+        await op.write("level_hash_nn", b"r" * 4096)
+    mock_cls.assert_called_once_with(level=9)
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_compress_cleans_up_on_failure(tmp_path):
+    """If streaming compression fails mid-write, the partial .zst file is cleaned up"""
+    op = dal.FileStorageOperator(str(tmp_path), compress=True)
+    payload = b"f" * 4096
+    target = op._get_normalized_path("race_zst_oo.zst")
+
+    def fake_compress_sync(path, data):
+        path.write_bytes(b"\x28\xb5partial")  # leave a bogus partial file
+        raise OSError(errno.ENOSPC, "no space left on device")
+
+    with patch.object(op, "_write_compressed_sync", side_effect=fake_compress_sync):
+        with pytest.raises(OSError, match="no space left"):
+            await op.write("race_zst_oo", payload)
+    assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_compress_with_protected_hash(tmp_path):
+    """Protection wraps compression: payload goes to .zst; integrity sidecar stays plain"""
+    inner = dal.FileStorageOperator(str(tmp_path), compress=True)
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.HASH)
+    payload = b'{"big": true}' * 1000
+    await op.write("protected_zst_pp", payload)
+
+    assert inner._get_normalized_path("protected_zst_pp.zst").exists()
+    assert not inner._get_normalized_path("protected_zst_pp").exists()
+    # Sidecar is below COMPRESS_MIN_BYTES so it's stored plain (not .zst.zst).
+    assert inner._get_normalized_path("protected_zst_pp.hash").exists()
+    assert not inner._get_normalized_path("protected_zst_pp.hash.zst").exists()
+
+    assert await op.read("protected_zst_pp") == payload
+
+
+@pytest.mark.asyncio
+async def test_file_storage_operator_compress_with_protected_encrypt(tmp_path):
+    """Protection(ENCRYPT) over compressed FileStorageOperator round-trips cleanly"""
+    inner = dal.FileStorageOperator(str(tmp_path), compress=True)
+    op = dal.ProtectedStorageOperator(inner, ProtectionLevel.ENCRYPT, secret=TEST_SECRET)
+    payload = b'{"secret": "json"}' * 1000
+
+    await op.write("encrypted_zst_qq", payload)
+    # ENCRYPT writes <key>.enc through the inner; with compression, that's <key>.enc.zst.
+    assert inner._get_normalized_path("encrypted_zst_qq.enc.zst").exists()
+    assert await op.read("encrypted_zst_qq") == payload
+
+
+def test_get_storage_operator_compresses_listed_artifact_type(tmp_path):
+    """get_storage_operator turns on compression for artifact types listed in settings"""
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings_obj = Mock()
+        mock_settings_obj.file_store_target = "fs"
+        mock_settings_obj.file_store_dir = str(tmp_path)
+        mock_settings_obj.document_store_dir = "docs"
+        mock_settings_obj.parsed_json_store_dir = "json"
+        mock_settings_obj.file_protection_level = ProtectionLevel.NONE
+        mock_settings_obj.file_compression_artifacts = ["parsed_json"]
+        mock_settings_obj.file_compression_level = 5
+        mock_settings.return_value = mock_settings_obj
+
+        step_config = Mock()
+        step_config.id = 1
+        step_config.step_type = models.WorkflowStepType.PARSE
+        op = dal.get_storage_operator(models.ArtifactType.PARSED_JSON, step_config)
+        assert isinstance(op, dal.FileStorageOperator)
+        assert op.compress is True
+        assert op.compress_level == 5
+
+
+def test_get_storage_operator_skips_compression_for_unlisted_artifact_type(tmp_path):
+    """Artifact types not in file_compression_artifacts get an uncompressed FileStorageOperator"""
+    with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
+        mock_settings_obj = Mock()
+        mock_settings_obj.file_store_target = "fs"
+        mock_settings_obj.file_store_dir = str(tmp_path)
+        mock_settings_obj.document_store_dir = "docs"
+        mock_settings_obj.parsed_json_store_dir = "json"
+        mock_settings_obj.embeddings_store_dir = "embeddings"
+        mock_settings_obj.file_protection_level = ProtectionLevel.NONE
+        mock_settings_obj.file_compression_artifacts = ["parsed_json"]
+        mock_settings_obj.file_compression_level = 3
+        mock_settings.return_value = mock_settings_obj
+
+        step_config = Mock()
+        step_config.id = 1
+        step_config.step_type = models.WorkflowStepType.EMBED
+        op = dal.get_storage_operator(models.ArtifactType.EMBEDDINGS, step_config)
+        assert isinstance(op, dal.FileStorageOperator)
+        assert op.compress is False
+
+
 def test_get_storage_operator_doc_artifact():
     """Test get_storage_operator with DOC artifact type"""
     with patch("soliplex.ingester.lib.dal.get_settings") as mock_settings:
@@ -334,10 +697,13 @@ def test_get_storage_operator_fs_target(tmp_path):
         mock_settings_obj.file_store_dir = str(tmp_path)
         mock_settings_obj.document_store_dir = "docs"
         mock_settings_obj.file_protection_level = ProtectionLevel.NONE
+        mock_settings_obj.file_compression_artifacts = []
+        mock_settings_obj.file_compression_level = 3
         mock_settings.return_value = mock_settings_obj
 
         op = dal.get_storage_operator(models.ArtifactType.DOC)
         assert isinstance(op, dal.FileStorageOperator)
+        assert op.compress is False
 
 
 def test_get_storage_operator_s3_target():
@@ -850,6 +1216,8 @@ def test_get_storage_operator_fs_with_protection(tmp_path):
         mock_settings_obj.document_store_dir = "docs"
         mock_settings_obj.file_protection_level = ProtectionLevel.HASH
         mock_settings_obj.file_secret = None
+        mock_settings_obj.file_compression_artifacts = []
+        mock_settings_obj.file_compression_level = 3
         mock_settings.return_value = mock_settings_obj
 
         op = dal.get_storage_operator(models.ArtifactType.DOC)

@@ -20,7 +20,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.14 /uv /uvx /bin/
 
 RUN groupadd -g ${APP_GID} appuser && \
     useradd -u ${APP_UID} -g ${APP_GID} -m -s /bin/bash appuser

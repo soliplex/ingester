@@ -803,6 +803,78 @@ async def test_reset_failed_hard_preserves_completed(db):
 
 
 @pytest.mark.asyncio
+async def test_reset_failed_hard_recovers_spurious_completed_run(db):
+    """Hard reset must also flip back runs that were prematurely
+    promoted to COMPLETED while siblings remained non-COMPLETED."""
+    batch_id = await doc_ops.new_batch("test_source", "Test Batch")
+    run_group = await wf_ops.create_run_group(
+        workflow_definition_id="batch",
+        batch_id=batch_id,
+        param_id="test_base",
+    )
+    uri, doc = await doc_ops.create_document_from_uri(
+        "/tmp/spurious_completed.pdf",
+        "test_source",
+        "application/pdf",
+        b"spurious content",
+        batch_id=batch_id,
+    )
+    workflow_run, steps = await wf_ops.create_workflow_run(
+        run_group=run_group,
+        doc_id=doc.hash,
+    )
+    assert len(steps) >= 2, "fixture must provide at least 2 steps"
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        # First step finished cleanly; second step is still PENDING.
+        q = select(RunStep).where(RunStep.id == steps[0].id)
+        s0 = (await session.exec(q)).first()
+        s0.status = RunStatus.COMPLETED
+        session.add(s0)
+
+        q = select(RunStep).where(RunStep.id == steps[1].id)
+        s1 = (await session.exec(q)).first()
+        s1.status = RunStatus.PENDING
+        s1.retry = 1
+        s1.worker_id = "stale-worker"
+        session.add(s1)
+
+        # Run was incorrectly promoted to COMPLETED while s1 is pending.
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run.id)
+        run = (await session.exec(q)).first()
+        run.status = RunStatus.COMPLETED
+        session.add(run)
+        await session.commit()
+
+    await wf_ops.reset_failed(run_group_id=run_group.id, hard=True)
+
+    async with get_session() as session:
+        from sqlmodel import select
+
+        from soliplex.ingester.lib.models import RunStep
+        from soliplex.ingester.lib.models import WorkflowRun
+
+        q = select(RunStep).where(RunStep.id == steps[0].id)
+        s0 = (await session.exec(q)).first()
+        assert s0.status == RunStatus.COMPLETED
+
+        q = select(RunStep).where(RunStep.id == steps[1].id)
+        s1 = (await session.exec(q)).first()
+        assert s1.status == RunStatus.PENDING
+        assert s1.retry == 0
+        assert s1.worker_id is None
+
+        q = select(WorkflowRun).where(WorkflowRun.id == workflow_run.id)
+        run = (await session.exec(q)).first()
+        assert run.status == RunStatus.PENDING
+
+
+@pytest.mark.asyncio
 async def test_reset_failed_soft_ignores_non_failed(db):
     """Default (soft) reset only touches FAILED, not RUNNING/ERROR."""
     batch_id = await doc_ops.new_batch("test_source", "Test Batch")

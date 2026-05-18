@@ -10,7 +10,6 @@ from fastapi import status
 from soliplex.ingester.lib import workflow as workflow
 from soliplex.ingester.lib.auth import get_current_user
 from soliplex.ingester.lib.models import PaginatedResponse
-from soliplex.ingester.lib.models import RunGroup
 from soliplex.ingester.lib.models import WorkflowParams
 from soliplex.ingester.lib.models import WorkflowRun
 from soliplex.ingester.lib.models import WorkflowRunWithDetails
@@ -189,6 +188,7 @@ async def get_workflow_def(workflow_id: str, response: Response):
 async def list_params():
     wf = await wf_registry.load_param_registry(force_reload=True)
     res = [{"id": x.id, "name": x.name, "source": x.source} for x in wf.values()]
+    res = sorted(res, key=lambda x: x["id"], reverse=False)
     return res
 
 
@@ -330,7 +330,7 @@ async def get_workflow_status(status: wf_ops.RunStatus):
     status_code=status.HTTP_200_OK,
     summary="get workflow run groups by batch_id(optional)",
 )
-async def get_workflow_run_groups(response: Response, batch_id: int | None = None) -> list[RunGroup]:
+async def get_workflow_run_groups(response: Response, batch_id: int | None = None):
     try:
         return await wf_ops.get_run_groups_for_batch(batch_id)
     except Exception as e:

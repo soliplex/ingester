@@ -337,6 +337,47 @@ FILE_SECRET=my-strong-secret-key
 - Changing protection level does not retroactively modify existing files
 - `hash` mode detects accidental corruption; `hmac` mode detects tampering; `encrypt` mode provides confidentiality
 
+#### FILE_COMPRESSION_ARTIFACTS
+
+Artifact types to compress at rest (filesystem storage only).
+
+**Default:** `[]` (no compression)
+
+**Example:**
+
+```bash
+FILE_COMPRESSION_ARTIFACTS=parsed_markdown,parsed_json,chunks
+```
+
+**Notes:**
+
+- Comma-separated list of `ArtifactType` values:
+  `document`, `parsed_markdown`, `parsed_json`, `chunks`,
+  `embeddings`
+- Only applies when `FILE_STORE_TARGET=fs`
+- Stacks with `FILE_PROTECTION_LEVEL` — compressed artifacts can
+  also be HMAC-signed or encrypted
+- Existing uncompressed artifacts are not retroactively compressed
+
+#### FILE_COMPRESSION_LEVEL
+
+Compression level used when an artifact type is listed in
+`FILE_COMPRESSION_ARTIFACTS`.
+
+**Default:** `3`
+
+**Example:**
+
+```bash
+FILE_COMPRESSION_LEVEL=6
+```
+
+**Notes:**
+
+- Range and semantics depend on the underlying compressor (zstd)
+- Higher values trade CPU for smaller files
+- Defaults are chosen for good ratio with low CPU cost
+
 #### FILE_SECRET
 
 Master secret used for HMAC and encryption operations.
@@ -429,7 +470,7 @@ INGEST_QUEUE_CONCURRENCY=50
 
 #### INGEST_WORKER_CONCURRENCY
 
-Maximum concurrent workflow steps per worker.
+Legacy ceiling for total concurrent workflow steps per worker.
 
 **Default:** `10`
 
@@ -441,13 +482,16 @@ INGEST_WORKER_CONCURRENCY=20
 
 **Notes:**
 
-- Primary throughput control
-- Balance against CPU and external service limits
-- Monitor resource usage when tuning
+- Retained for reference; the current `Worker` derives its
+  consumer-pool layout from `DOCLING_CONCURRENCY` (parse pool) and
+  `WORKER_TASK_COUNT` (store + catch-all pools)
+- To set a global hard cap, construct a `Worker` directly with
+  `WorkerConfig(consumers={"*": N})`
 
 #### DOCLING_CONCURRENCY
 
-Maximum concurrent Docling requests.
+Size of the dedicated `parse` consumer pool. Bounds concurrent
+Docling requests at the database-claim layer.
 
 **Default:** `3`
 
@@ -459,13 +503,16 @@ DOCLING_CONCURRENCY=5
 
 **Notes:**
 
-- Prevents overwhelming Docling service
+- Each consumer in the pool only claims `parse` steps, so
+  Docling cannot be over-issued even under burst load
+- Replaces the previous in-process HTTP semaphore in `lib/docling.py`
 - Coordinate with Docling server capacity
-- Increase if Docling can handle load
+- Set to `0` to disable the dedicated pool (parse steps fall back
+  to the catch-all `"*"` pool)
 
 #### WORKER_TASK_COUNT
 
-Number of workflow steps to fetch per query.
+Size of the `store` consumer pool and the catch-all `"*"` pool.
 
 **Default:** `5`
 
@@ -477,9 +524,12 @@ WORKER_TASK_COUNT=10
 
 **Notes:**
 
-- Batch size for step queries
-- Higher values reduce database round-trips
-- Lower values improve fairness across workers
+- Bounds concurrent `save_to_rag` (STORE) steps separately from
+  Docling and the rest of the pipeline
+- The `"*"` pool picks up step types that are not explicitly pinned
+  (validate, chunk, embed, enrich, route)
+- Higher values increase parallelism but also increase contention
+  on the database claim path
 
 #### WORKER_CHECKIN_INTERVAL
 
@@ -1118,10 +1168,12 @@ env:
 | `EMBEDDINGS_STORE_DIR` | str | No | `embeddings` | Embeddings subdir |
 | `FILE_PROTECTION_LEVEL` | str | No | `none` | File protection level (none/hash/hmac/encrypt) |
 | `FILE_SECRET` | str | Conditional | - | Master secret for HMAC/encryption (required if protection is hmac or encrypt) |
+| `FILE_COMPRESSION_ARTIFACTS` | list[str] | No | `[]` | Artifact types to compress at rest (filesystem only) |
+| `FILE_COMPRESSION_LEVEL` | int | No | `3` | zstd compression level for compressed artifacts |
 | `INGEST_QUEUE_CONCURRENCY` | int | No | `20` | Queue concurrency |
-| `INGEST_WORKER_CONCURRENCY` | int | No | `10` | Worker concurrency |
-| `DOCLING_CONCURRENCY` | int | No | `3` | Docling concurrency |
-| `WORKER_TASK_COUNT` | int | No | `5` | Steps per query |
+| `INGEST_WORKER_CONCURRENCY` | int | No | `10` | Legacy global concurrency ceiling |
+| `DOCLING_CONCURRENCY` | int | No | `3` | Size of the dedicated `parse` consumer pool |
+| `WORKER_TASK_COUNT` | int | No | `5` | Size of the `store` pool and catch-all `*` pool |
 | `WORKER_CHECKIN_INTERVAL` | int | No | `120` | Heartbeat interval (sec) |
 | `WORKER_CHECKIN_TIMEOUT` | int | No | `600` | Worker timeout (sec) |
 | `EMBED_BATCH_SIZE` | int | No | `1000` | Embedding batch size |

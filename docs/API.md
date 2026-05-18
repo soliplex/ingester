@@ -1030,14 +1030,36 @@ Optimize and clean up database tables to reduce disk usage.
 **Response:**
 
 - `200 OK` - Vacuum completed successfully
-- `500 Internal Server Error` - Vacuum failed
+- `404 Not Found` - Database does not exist at the resolved path
+- `409 Conflict` - The DB's `ResourceLock` is held by another
+  writer (workflow worker, CLI vacuum, lifecycle vacuum). The
+  endpoint uses `max_wait=0` for fail-fast behaviour.
+- `500 Internal Server Error` - Vacuum failed for any other reason
 
-**Response Body:**
+**Response Bodies:**
+
+`200 OK`:
 
 ```json
-{
-  "status": "ok"
-}
+{ "status": "ok" }
+```
+
+`404 Not Found`:
+
+```json
+{ "status": "not_found", "error": "Database does not exist at ..." }
+```
+
+`409 Conflict`:
+
+```json
+{ "status": "locked", "error": "RAG DB locked by worker:<lease> since ..." }
+```
+
+`500 Internal Server Error`:
+
+```json
+{ "status": "error", "error": "Failed to vacuum database: ..." }
 ```
 
 **Example:**
@@ -1046,7 +1068,17 @@ Optimize and clean up database tables to reduce disk usage.
 curl "http://localhost:8000/api/v1/lancedb/vacuum?db=default"
 ```
 
-**Note:** Vacuum removes deleted rows and compacts table files. Run periodically after bulk deletions.
+**Notes:**
+
+- Vacuum holds the cross-subsystem `ResourceLock` (holder_kind=`web`)
+  for the duration of the operation, so it cannot race workflow
+  `save_to_rag` steps, CLI vacuums, or lifecycle vacuums.
+- Returns 409 immediately if the lock cannot be acquired — retry
+  later, or break the lock from the CLI with
+  `si-diag lancedb vacuum <db> --force`.
+- Run periodically after bulk deletions, or wire the
+  `batch_split_vacuum` workflow to vacuum at the end of every
+  run group.
 
 ---
 

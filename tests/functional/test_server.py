@@ -89,10 +89,13 @@ def test_create_batch(test_client):
 
 def test_start_workflows_success(test_client):
     """Test start workflows endpoint"""
+    from soliplex.ingester.lib.models import RunGroup
+    from soliplex.ingester.lib.models import WorkflowRun
+
     with patch("soliplex.ingester.server.routes.batch.wf_ops.create_workflow_runs_for_batch") as mock_create:
-        mock_run_group = Mock()
-        mock_runs = [Mock(), Mock()]
-        mock_create.return_value = (mock_run_group, mock_runs)
+        run_group = RunGroup(id=1, batch_id=1, workflow_definition_id="wf1", param_definition_id="p1")
+        runs = [WorkflowRun(id=1), WorkflowRun(id=2)]
+        mock_create.return_value = (run_group, runs)
         response = test_client.post("/api/v1/batch/start-workflows", data={"batch_id": 1})
         assert response.status_code == 201
         assert response.json()["workflows"] == 2
@@ -118,11 +121,14 @@ def test_start_workflows_error(test_client):
 
 def test_batch_status_success(test_client):
     """Test batch status endpoint"""
+    from soliplex.ingester.lib.models import DocumentBatch
+    from soliplex.ingester.lib.models import RunStatus
+    from soliplex.ingester.lib.models import WorkflowRun
+
     with patch("soliplex.ingester.server.routes.batch.operations.get_batch") as mock_get_batch:
         with patch("soliplex.ingester.server.routes.batch.operations.get_documents_in_batch") as mock_get_docs:
             with patch("soliplex.ingester.server.routes.batch.wf_ops.get_workflows") as mock_get_wf:
-                mock_batch = Mock()
-                mock_get_batch.return_value = mock_batch
+                mock_get_batch.return_value = DocumentBatch(id=1, name="test", source="test")
 
                 mock_doc1 = Mock()
                 mock_doc1.rag_id = "rag1"
@@ -130,9 +136,8 @@ def test_batch_status_success(test_client):
                 mock_doc2.rag_id = None
                 mock_get_docs.return_value = [mock_doc1, mock_doc2]
 
-                mock_wf = Mock()
-                mock_wf.status.value = "completed"
-                mock_get_wf.return_value = [mock_wf]
+                wf = WorkflowRun(id=1, status=RunStatus.COMPLETED)
+                mock_get_wf.return_value = ([wf], 1)
 
                 response = test_client.get("/api/v1/batch/status?batch_id=1")
                 assert response.status_code == 200
@@ -176,12 +181,13 @@ def test_get_docs_no_params(test_client):
 
 def test_ingest_document_success(test_client):
     """Test ingest document endpoint"""
+    from soliplex.ingester.lib.models import Document
+    from soliplex.ingester.lib.models import DocumentURI
+
     with patch("soliplex.ingester.server.routes.document.workflow.initial_load") as mock_load:
-        mock_uri = Mock()
-        mock_uri.id = 1
-        mock_doc = Mock()
-        mock_doc.hash = "hash123"
-        mock_load.return_value = (mock_uri, mock_doc)
+        doc_uri = DocumentURI(id=1, uri="/test.pdf", source="test", batch_id=1, doc_hash="hash123")
+        doc = Document(hash="hash123", mime_type="application/pdf")
+        mock_load.return_value = (doc_uri, doc)
 
         response = test_client.post(
             "/api/v1/document/ingest-document",
@@ -292,7 +298,7 @@ def test_get_run_group_step_stats_error(test_client):
 def test_get_workflows(test_client):
     """Test get workflows endpoint"""
     with patch("soliplex.ingester.server.routes.workflow.wf_ops.get_workflows") as mock_get:
-        mock_get.return_value = []
+        mock_get.return_value = ([], 0)
         response = test_client.get("/api/v1/workflow/")
         assert response.status_code == 200
 
@@ -300,14 +306,14 @@ def test_get_workflows(test_client):
 def test_get_workflows_for_status(test_client):
     """Test get workflows by status endpoint"""
     with patch("soliplex.ingester.server.routes.workflow.wf_ops.get_workflows_for_status") as mock_get:
-        mock_get.return_value = []
-        response = test_client.get("/api/v1/workflow/by-status?status=completed")
+        mock_get.return_value = ([], 0)
+        response = test_client.get("/api/v1/workflow/by-status?status=COMPLETED")
         assert response.status_code == 200
 
 
 def test_list_workflows_definitions(test_client):
     """Test list workflow definitions endpoint"""
-    with patch("soliplex.ingester.server.routes.workflow.wf_registry.load_registry") as mock_load:
+    with patch("soliplex.ingester.server.routes.workflow.wf_registry.load_workflow_registry") as mock_load:
         mock_wf1 = Mock()
         mock_wf1.id = "wf1"
         mock_wf1.name = "Workflow 1"
@@ -319,17 +325,16 @@ def test_list_workflows_definitions(test_client):
 
 def test_get_workflow_def_success(test_client):
     """Test get workflow definition by id"""
-    with patch("soliplex.ingester.server.routes.workflow.wf_registry.load_workflow_registry") as mock_load:
-        mock_wf = Mock()
-        mock_load.return_value = {"wf1": mock_wf}
+    with patch("soliplex.ingester.server.routes.workflow.wf_registry.get_workflow_definition_yaml_content") as mock_get:
+        mock_get.return_value = "id: wf1\nname: Workflow 1\n"
         response = test_client.get("/api/v1/workflow/definitions/wf1")
         assert response.status_code == 200
 
 
 def test_get_workflow_def_not_found(test_client):
     """Test get workflow definition not found"""
-    with patch("soliplex.ingester.server.routes.workflow.wf_registry.load_workflow_registry") as mock_load:
-        mock_load.return_value = {}
+    with patch("soliplex.ingester.server.routes.workflow.wf_registry.get_workflow_definition_yaml_content") as mock_get:
+        mock_get.return_value = None
         response = test_client.get("/api/v1/workflow/definitions/nonexistent")
         assert response.status_code == 404
 
@@ -340,6 +345,7 @@ def test_list_params(test_client):
         mock_param = Mock()
         mock_param.id = "p1"
         mock_param.name = "Params 1"
+        mock_param.source = "user"
         mock_load.return_value = {"p1": mock_param}
         response = test_client.get("/api/v1/workflow/param-sets")
         assert response.status_code == 200
@@ -348,17 +354,16 @@ def test_list_params(test_client):
 
 def test_get_param_set_success(test_client):
     """Test get param set by id"""
-    with patch("soliplex.ingester.server.routes.workflow.wf_registry.load_param_registry") as mock_load:
-        mock_param = Mock()
-        mock_load.return_value = {"p1": mock_param}
+    with patch("soliplex.ingester.server.routes.workflow.wf_registry.get_param_set_yaml_content") as mock_get:
+        mock_get.return_value = "id: p1\nname: P1\n"
         response = test_client.get("/api/v1/workflow/param-sets/p1")
         assert response.status_code == 200
 
 
 def test_get_param_set_not_found(test_client):
     """Test get param set not found"""
-    with patch("soliplex.ingester.server.routes.workflow.wf_registry.load_param_registry") as mock_load:
-        mock_load.return_value = {}
+    with patch("soliplex.ingester.server.routes.workflow.wf_registry.get_param_set_yaml_content") as mock_get:
+        mock_get.return_value = None
         response = test_client.get("/api/v1/workflow/param-sets/nonexistent")
         assert response.status_code == 404
 
@@ -379,7 +384,7 @@ def test_get_workflow_status(test_client):
     """Test get workflow status endpoint"""
     with patch("soliplex.ingester.server.routes.workflow.wf_ops.get_run_steps") as mock_get:
         mock_get.return_value = []
-        response = test_client.get("/api/v1/workflow/steps?status=completed")
+        response = test_client.get("/api/v1/workflow/steps?status=COMPLETED")
         assert response.status_code == 200
 
 
@@ -387,7 +392,7 @@ def test_get_workflow_status_error(test_client):
     """Test get workflow status with error"""
     with patch("soliplex.ingester.server.routes.workflow.wf_ops.get_run_steps") as mock_get:
         mock_get.side_effect = Exception("test error")
-        response = test_client.get("/api/v1/workflow/steps?status=completed")
+        response = test_client.get("/api/v1/workflow/steps?status=COMPLETED")
         assert response.status_code == 200
         assert "error" in response.json()
 

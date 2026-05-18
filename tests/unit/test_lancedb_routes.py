@@ -594,38 +594,56 @@ class TestVacuum:
         test_client, settings = client
         settings.lancedb_dir = str(tmp_path)
 
-        mock_app = MagicMock()
-        mock_app.vacuum = AsyncMock(return_value=None)
-
-        with (
-            patch("soliplex.ingester.server.routes.lancedb.get_settings", return_value=settings),
-            patch("soliplex.ingester.server.routes.lancedb.create_app", return_value=mock_app),
-        ):
+        mock_vacuum = AsyncMock(return_value=None)
+        with patch("soliplex.ingester.lib.rag.vacuum_db", mock_vacuum):
             response = test_client.get("/api/v1/lancedb/vacuum", params={"db": "testdb"})
 
             assert response.status_code == 200
             data = response.json()
             assert data["status"] == "ok"
-            mock_app.vacuum.assert_called_once()
+            mock_vacuum.assert_called_once()
 
     def test_vacuum_error(self, client, tmp_path):
-        """Test vacuum endpoint handles errors."""
+        """Test vacuum endpoint handles unexpected errors."""
         test_client, settings = client
         settings.lancedb_dir = str(tmp_path)
 
-        mock_app = MagicMock()
-        mock_app.vacuum = AsyncMock(side_effect=Exception("Vacuum failed"))
-
-        with (
-            patch("soliplex.ingester.server.routes.lancedb.get_settings", return_value=settings),
-            patch("soliplex.ingester.server.routes.lancedb.create_app", return_value=mock_app),
-        ):
+        mock_vacuum = AsyncMock(side_effect=RuntimeError("Vacuum failed"))
+        with patch("soliplex.ingester.lib.rag.vacuum_db", mock_vacuum):
             response = test_client.get("/api/v1/lancedb/vacuum", params={"db": "testdb"})
 
             assert response.status_code == 500
             data = response.json()
             assert data["status"] == "error"
             assert "Vacuum failed" in data["error"]
+
+    def test_vacuum_locked(self, client, tmp_path):
+        """The endpoint returns 409 when the cross-subsystem
+        :class:`ResourceLock` is held by another writer."""
+        test_client, settings = client
+        settings.lancedb_dir = str(tmp_path)
+
+        mock_vacuum = AsyncMock(side_effect=TimeoutError("RAG DB locked by web:abc"))
+        with patch("soliplex.ingester.lib.rag.vacuum_db", mock_vacuum):
+            response = test_client.get("/api/v1/lancedb/vacuum", params={"db": "testdb"})
+
+        assert response.status_code == 409
+        data = response.json()
+        assert data["status"] == "locked"
+        assert "locked" in data["error"].lower()
+
+    def test_vacuum_not_found(self, client, tmp_path):
+        """The endpoint returns 404 when the DB does not exist."""
+        test_client, settings = client
+        settings.lancedb_dir = str(tmp_path)
+
+        mock_vacuum = AsyncMock(side_effect=FileNotFoundError("Database does not exist"))
+        with patch("soliplex.ingester.lib.rag.vacuum_db", mock_vacuum):
+            response = test_client.get("/api/v1/lancedb/vacuum", params={"db": "testdb"})
+
+        assert response.status_code == 404
+        data = response.json()
+        assert data["status"] == "not_found"
 
     def test_vacuum_requires_auth(self):
         """Test that vacuum endpoint requires authentication."""

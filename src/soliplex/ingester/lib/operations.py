@@ -104,7 +104,7 @@ async def update_doc_meta(doc_hash: str, meta: dict[str, str]):
 
 
 async def find_document_uri(uri: str, source: str) -> models.DocumentURI:
-    logger.info(
+    logger.debug(
         f"find document {uri} {source} ",
         extra=log_context(source=source, uri=uri, action="find_document_uri"),
     )
@@ -414,6 +414,7 @@ async def update_doc_status(source: str, uri_hashes: dict[str, str]):
             if uri:
                 await delete_document_uri(uri.id, session)
                 deleted_count += 1
+        await session.commit()
     return status, deleted_count
 
 
@@ -780,6 +781,7 @@ async def update_sync_state(
         await session.flush()
         await session.refresh(state)
         session.expunge(state)
+        await session.commit()
         return state
 
 
@@ -803,6 +805,7 @@ async def delete_sync_state(source_id: str) -> None:
 
         await session.delete(state)
         await session.flush()
+        await session.commit()
 
 
 class DocumentURINotFoundError(ValueError):

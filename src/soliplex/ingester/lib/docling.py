@@ -1,4 +1,3 @@
-import asyncio
 import http.cookiejar as cj
 import json
 import logging
@@ -27,7 +26,6 @@ DESC_DEFAULTS = {
     "timeout": 90,
     "max_tokens": 200,
 }
-_http_sem = None
 
 
 def do_repl(data):
@@ -52,116 +50,120 @@ async def docling_convert(
     config_dict: dict[str, str | int | bool],
     output_formats: list[str] = ("json", "md"),
 ) -> dict:
-    global _http_sem
+    """Convert a document via the docling-serve HTTP backend.
+
+    Concurrency for ``parse`` steps is now bounded at the worker
+    level by the ``parse`` consumer pool count
+    (``Worker(consumers={"parse": N, ...})``); the library does no
+    rate-limiting of its own. To preserve the previous default,
+    operators should set ``consumers["parse"]`` equal to
+    ``settings.docling_concurrency``.
+    """
     env = get_settings()
-    if _http_sem is None:
-        _http_sem = asyncio.Semaphore(env.docling_concurrency)
-
-    async with _http_sem:
-        local_jar = cj.CookieJar()
-        async_url = f"{env.docling_server_url}/convert/file/async"
-        parameters = {
-            "from_formats": [
-                "docx",
-                "pptx",
-                "html",
-                "image",
-                "pdf",
-                "asciidoc",
-                "md",
-                "xlsx",
-            ],
-            "to_formats": list(output_formats),
-            "abort_on_error": True,
+    local_jar = cj.CookieJar()
+    async_url = f"{env.docling_server_url}/convert/file/async"
+    parameters = {
+        "from_formats": [
+            "docx",
+            "pptx",
+            "html",
+            "image",
+            "pdf",
+            "asciidoc",
+            "md",
+            "xlsx",
+        ],
+        "to_formats": list(output_formats),
+        "abort_on_error": True,
+    }
+    if "ocr_lang" in config_dict and isinstance(config_dict["ocr_lang"], str):
+        config_dict = config_dict.copy()
+        # this param needs to be a list
+        config_dict["ocr_lang"] = [config_dict["ocr_lang"]]
+    parameters.update(config_dict)
+    # remove picture description
+    for k in list(parameters.keys()):
+        if k.startswith("picture_description_"):
+            del parameters[k]
+    if "do_picture_description" in config_dict and config_dict["do_picture_description"] is True:
+        parameters["do_picture_description"] = True
+        prompt = config_dict.get("picture_description_prompt", DESC_DEFAULTS["prompt"])
+        model = config_dict.get("picture_description_model", DESC_DEFAULTS["model"])
+        picture_description_api = {
+            "params": {
+                "model": model,
+                "max_completion_tokens": config_dict.get("picture_description_max_tokens", DESC_DEFAULTS["max_tokens"]),
+            },
+            "prompt": prompt,
+            "timeout": DESC_DEFAULTS["timeout"],
         }
-        if "ocr_lang" in config_dict and isinstance(config_dict["ocr_lang"], str):
-            config_dict = config_dict.copy()
-            # this param needs to be a list
-            config_dict["ocr_lang"] = [config_dict["ocr_lang"]]
-        parameters.update(config_dict)
-        # remove picture description
-        for k in list(parameters.keys()):
-            if k.startswith("picture_description_"):
-                del parameters[k]
-        if "do_picture_description" in config_dict and config_dict["do_picture_description"] is True:
-            parameters["do_picture_description"] = True
-            prompt = config_dict.get("picture_description_prompt", DESC_DEFAULTS["prompt"])
-            model = config_dict.get("picture_description_model", DESC_DEFAULTS["model"])
-            picture_description_api = {
-                "params": {
-                    "model": model,
-                    "max_completion_tokens": config_dict.get("picture_description_max_tokens", DESC_DEFAULTS["max_tokens"]),
-                },
-                "prompt": prompt,
-                "timeout": DESC_DEFAULTS["timeout"],
-            }
-            parameters["picture_description_api"] = json.dumps(picture_description_api)
-        else:
-            parameters["do_picture_description"] = False
+        parameters["picture_description_api"] = json.dumps(picture_description_api)
+    else:
+        parameters["do_picture_description"] = False
 
-        file_name = source_uri.split("/")[-1]
+    file_name = source_uri.split("/")[-1]
 
-        if mime_type and "markdown" in mime_type and not file_name.endswith(".md"):
-            file_name = file_name + ".md"
-        # docling requires some special handling for html
-        if is_html(file_bytes):
-            parameters["from_formats"] = ["html"]
-            file_name = file_name + ".html"
+    if mime_type and "markdown" in mime_type and not file_name.endswith(".md"):
+        file_name = file_name + ".md"
+    # docling requires some special handling for html
+    if is_html(file_bytes):
+        parameters["from_formats"] = ["html"]
+        file_name = file_name + ".html"
 
-        f = BytesIO(file_bytes)
-        try:
-            files = {
-                "files": (file_name, f, mime_type),
-            }
-            logger.debug(f"using {parameters} on {file_name}")
-            async with httpx.AsyncClient(timeout=env.docling_http_timeout, cookies=local_jar) as _async_client:
-                response = await _async_client.post(async_url, files=files, data=parameters)
-                async_res = response.json()
-                logger.debug(async_res)
-                if "task_id" not in async_res:
-                    raise ValueError(f"no task_id in response: {async_res}")
-                task_id = async_res["task_id"]
-                async with aiohttp.ClientSession(cookies=response.cookies) as session:
-                    ws_url = f"{env.docling_server_url.replace('http', 'ws')}/status/ws/{task_id}"
-                    async with session.ws_connect(ws_url) as ws:
-                        async for msg in ws:
-                            if msg.type == aiohttp.WSMsgType.TEXT:
-                                payload = msg.json()
-                                if payload["message"] == "error":
-                                    break
-                                if payload["message"] == "update" and payload["task"]["task_status"] in (
-                                    "success",
-                                    "failure",
-                                ):
-                                    break
-                if "task" in payload and "task_status" in payload["task"] and payload["task"]["task_status"] == "failure":
-                    if "errors" in payload["task"]:
-                        logger.error(f"errors: {payload['task']['errors']}")
-                    else:
-                        logger.error(f"no errors in response: {payload}")
-                result_url = f"{env.docling_server_url}/result/{task_id}"
-                response = await _async_client.get(result_url)
-                res = response.json()
-        finally:
-            f.close()
-        if "status" not in res:
-            raise ValueError(f"no status in response: {res}")
-        logger.info(f"{task_id} result={res['status']} processing time={res['processing_time']}")
-
-        if res["status"] == "success":
-            parsed = {}
-            for output_format in output_formats:
-                output_content = res["document"][f"{output_format}_content"]
-                if output_format == "json":
-                    if "image_export_mode" in parameters and parameters["image_export_mode"] == "placeholder":
-                        logger.info(f" doing placeholder replacement for {source_uri}")
-                        output_content = do_repl(output_content)
-                    parsed[output_format] = json.dumps(output_content).encode("utf-8")
+    f = BytesIO(file_bytes)
+    try:
+        files = {
+            "files": (file_name, f, mime_type),
+        }
+        logger.debug(f"using {parameters} on {file_name}")
+        async with httpx.AsyncClient(timeout=env.docling_http_timeout, cookies=local_jar) as _async_client:
+            response = await _async_client.post(async_url, files=files, data=parameters)
+            async_res = response.json()
+            logger.debug(async_res)
+            if "task_id" not in async_res:
+                raise ValueError(f"no task_id in response: {async_res}")
+            task_id = async_res["task_id"]
+            async with aiohttp.ClientSession(cookies=response.cookies) as session:
+                ws_url = f"{env.docling_server_url.replace('http', 'ws')}/status/ws/{task_id}"
+                async with session.ws_connect(ws_url) as ws:
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            payload = msg.json()
+                            if payload["message"] == "error":
+                                break
+                            if payload["message"] == "update" and payload["task"]["task_status"] in (
+                                "success",
+                                "failure",
+                            ):
+                                break
+            if "task" in payload and "task_status" in payload["task"] and payload["task"]["task_status"] == "failure":
+                if "errors" in payload["task"]:
+                    logger.error(f"errors: {payload['task']['errors']}")
                 else:
-                    parsed[output_format] = str(output_content).encode("utf-8")
-            return parsed
-        else:
-            raise ValueError(str(res["errors"]))
+                    logger.error(f"no errors in response: {payload}")
+            result_url = f"{env.docling_server_url}/result/{task_id}"
+            response = await _async_client.get(result_url)
+            res = response.json()
+    finally:
+        f.close()
+    if "status" not in res:
+        raise ValueError(f"no status in response: {res}")
+    logger.info(f"{task_id} result={res['status']} processing time={res['processing_time']}")
+
+    if res["status"] == "success":
+        parsed = {}
+        for output_format in output_formats:
+            output_content = res["document"][f"{output_format}_content"]
+            if output_format == "json":
+                if "image_export_mode" in parameters and parameters["image_export_mode"] == "placeholder":
+                    logger.info(f" doing placeholder replacement for {source_uri}")
+                    output_content = do_repl(output_content)
+                parsed[output_format] = json.dumps(output_content).encode("utf-8")
+            else:
+                parsed[output_format] = str(output_content).encode("utf-8")
+        return parsed
+    else:
+        raise ValueError(str(res["errors"]))
 
 
 def get_docling_schema_version() -> str:

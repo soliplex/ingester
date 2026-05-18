@@ -8,6 +8,8 @@ from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Form
 from fastapi import Request
+from fastapi import Response
+from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
@@ -46,12 +48,28 @@ async def lifespan(app: FastAPI):
     # Initialize database before starting worker
     await Database.initialize()
 
-    import soliplex.ingester.lib.wf.runner as runner
+    from soliplex.ingester.lib.wf.runner import Worker
+    from soliplex.ingester.lib.wf.runner import WorkerConfig
 
-    await runner.start_worker()
+    # Build the consumer pool layout. ``parse`` and ``store`` get
+    # dedicated pools so we can bound their concurrency independently
+    # of the catch-all pool. Tune via settings.docling_concurrency
+    # for parse and worker_task_count for the rest.
+    consumers: dict[str, int] = {}
+    if settings.docling_concurrency:
+        consumers["parse"] = settings.docling_concurrency
+    consumers["store"] = max(1, settings.worker_task_count)
+    consumers["*"] = max(1, settings.worker_task_count)
+    worker = Worker(config=WorkerConfig(consumers=consumers))
+    await worker.start()
+    app.state.wf_worker = worker
     yield
 
     # Cleanup
+    try:
+        await worker.stop(timeout=30.0)
+    except Exception:
+        logger.exception("worker shutdown failed")
     await Database.close()
     logger.info("soliplex-ingester stopped")
 
@@ -101,14 +119,15 @@ v1_router = APIRouter(prefix="/api/v1", dependencies=[Depends(get_current_user)]
 
 @v1_router.post("/source-status")
 async def source_status(
+    response: Response,
     source: str = Form(...),
     hashes: str = Form(...),
     delete_stale: bool = Form(False),
 ):
     hashes = json.loads(hashes)
     if not isinstance(hashes, dict):
-        msg = "hashes must be a dictionary"
-        raise TypeError(msg)
+        response.status_code = http_status.HTTP_500_INTERNAL_SERVER_ERROR
+        return {"error": "hashes must be a dictionary"}
     if delete_stale:
         status, deleted_count = await operations.update_doc_status(source, hashes)
         return {"status": status, "deleted_count": deleted_count}

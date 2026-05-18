@@ -324,6 +324,11 @@ async def test_save_to_rag():
         # Setup the async context manager for HaikuRAG
         mock_client = MagicMock()
         mock_client.import_document = AsyncMock(return_value=mock_new_doc)
+        # _find_docs_by_hash chain: tbl.query().where(...) (sync builder)
+        # then await .to_pydantic(...) → list[DocumentRecord].
+        mock_client.document_repository.store.documents_table.query.return_value.where.return_value.to_pydantic = AsyncMock(
+            return_value=[],
+        )
         mock_haiku_rag.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_haiku_rag.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -568,28 +573,46 @@ async def test_check_rag_existence_missing_db(mock_settings, tmp_path):
 
 @pytest.mark.asyncio
 async def test_check_rag_existence_finds_some(mock_settings, tmp_path):
-    """check_rag_existence returns hashes that exist in the store"""
+    """check_rag_existence returns hashes that exist in the store.
+
+    ``check_rag_existence`` now connects via ``lancedb.connect_async``
+    directly (no HaikuRAG client) and queries the ``documents``
+    table's ``metadata`` column for each hash.
+    """
     db_dir = tmp_path / "store-a"
     db_dir.mkdir()
     mock_settings.lancedb_dir = str(tmp_path)
 
-    # Simulate _find_docs_by_hash: h1 found, h2 not found
-    def fake_find(h, tbl):
-        return [MagicMock()] if h == "h1" else []
+    # Arrow returned by ``to_arrow``: num_rows is 1 for h1, 0 for h2.
+    def fake_to_arrow_for_hash(h):
+        arrow = MagicMock()
+        arrow.num_rows = 1 if h == "h1" else 0
+        return arrow
 
-    mock_client = MagicMock()
-    mock_client.document_repository.store.documents_table = MagicMock()
+    def make_query_builder(hash_value):
+        builder = MagicMock()
+        # query().where(...).limit(...).to_arrow() chain
+        builder.where.return_value.limit.return_value.to_arrow = AsyncMock(
+            return_value=fake_to_arrow_for_hash(hash_value),
+        )
+        return builder
+
+    # The test iterates over [h1, h2] and calls tbl.query() once per
+    # hash; return a per-call builder so each gets its own arrow.
+    query_results = iter([make_query_builder("h1"), make_query_builder("h2")])
+    mock_tbl = MagicMock()
+    mock_tbl.query.side_effect = lambda: next(query_results)
+
+    mock_conn = MagicMock()
+    mock_conn.table_names = AsyncMock(return_value=["documents"])
+    mock_conn.open_table = AsyncMock(return_value=mock_tbl)
+    mock_conn.is_open = MagicMock(return_value=True)
+    mock_conn.close = AsyncMock(return_value=None)
 
     with (
         patch("soliplex.ingester.lib.rag.get_settings", return_value=mock_settings),
-        patch("soliplex.ingester.lib.rag.build_embed_config", return_value=MagicMock()),
-        patch("soliplex.ingester.lib.rag.build_storage_config", return_value=MagicMock()),
-        patch("soliplex.ingester.lib.rag.HaikuRAG") as mock_haiku_rag,
-        patch("soliplex.ingester.lib.rag._find_docs_by_hash", side_effect=fake_find),
+        patch("lancedb.connect_async", AsyncMock(return_value=mock_conn)),
     ):
-        mock_haiku_rag.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_haiku_rag.return_value.__aexit__ = AsyncMock(return_value=None)
-
         result = await rag.check_rag_existence(
             doc_hashes=["h1", "h2"],
             store_config={"data_dir": "store-a"},

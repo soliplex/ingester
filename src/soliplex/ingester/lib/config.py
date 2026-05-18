@@ -39,8 +39,16 @@ class S3Settings(BaseSettings):
     region: str = "default"
 
 
+_SECRETS_DIR = "/run/secrets"
+_secrets_kwargs: dict = {"secrets_dir": _SECRETS_DIR} if Path(_SECRETS_DIR).is_dir() else {}
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_nested_delimiter="__", env_nested_max_split=1, secrets_dir="/run/secrets")
+    model_config = SettingsConfigDict(
+        env_nested_delimiter="__",
+        env_nested_max_split=1,
+        **_secrets_kwargs,
+    )
     doc_db_url: SecretStr
     doc_db_password: SecretStr | None = None
     docling_server_url: str = "http://localhost:5001/v1"
@@ -65,6 +73,8 @@ class Settings(BaseSettings):
     file_store_dir: str = "file_store"
     file_protection_level: ProtectionLevel = ProtectionLevel.NONE
     file_secret: SecretStr | None = None
+    file_compression_artifacts: list[str] = []
+    file_compression_level: int = 3
     lancedb_dir: str = "lancedb"
     lancedb_hmac_key: SecretStr | None = None
     document_store_dir: str = "raw"

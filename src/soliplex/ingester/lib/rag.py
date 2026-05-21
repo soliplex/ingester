@@ -360,7 +360,7 @@ async def save_to_rag(
             logger.info(f"Found existing document {found[0].id}", extra=_log_con)
             doc_id = found[0].id
             await client.delete_document(doc_id)
-            logger.debug(f"deleted existing document {found[0].id}", extra=_log_con)
+            logger.info(f"deleted existing document {found[0].id}", extra=_log_con)
 
         new_doc = await client.import_document(
             chunks=chunks,

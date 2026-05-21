@@ -599,23 +599,26 @@ here.
 - `holder_kind` (ResourceLockKind) - `worker`, `cli`, `web`, or `lifecycle`
 - `step_id` (int, nullable) - Set when held by a worker on behalf of a step
 - `acquired_at` (datetime) - When the lock was acquired
-- `expires_at` (datetime, indexed) - TTL boundary; refreshed by holder heartbeats
+- `expires_at` (datetime, indexed) - TTL boundary for non-worker
+  holders. Worker holders use a far-future sentinel so the row is
+  cleared by step-status transitions, not by a TTL sweep.
 - `holder_meta` (dict[str, str]) - JSON metadata
 
 **Lifecycle:**
 
-- Acquired via `operations.acquire_resource_lock(...)` — opportunistically
-  sweeps expired rows before attempting insert under the unique primary key
-- TTL-refreshed via `refresh_resource_lock(...)` (workers refresh on
-  heartbeat at half the TTL)
-- Released via `release_resource_lock(...)` (idempotent) or
+- Worker holders: inserted atomically by `claim_next_step` in the
+  same transaction as the `RunStep` status update. Dropped by
+  `complete_step` / `error_step` / `release_step` in the same
+  transaction as the step terminal write, or by
+  `reap_dead_workers` keyed on lease token.
+- CLI / web / lifecycle holders: acquired via
+  `operations.acquire_resource_lock(...)` with a real TTL, which
+  opportunistically sweeps expired rows before attempting insert
+  under the unique primary key. Released via
+  `release_resource_lock(...)` (idempotent) or
   `force_release_resource_lock(...)` (audit-logged, used by
-  `si-diag vacuum --force`)
-- Dropped automatically by `complete_step` / `error_step` /
-  `release_step` in the same transaction as the step terminal
-  write
-- Expired rows are swept by `sweep_expired_resource_locks()` on a
-  60-second loop in each worker
+  `si-diag vacuum --force`). Expired rows are also swept on demand
+  by `sweep_expired_resource_locks()`.
 
 **Example:**
 

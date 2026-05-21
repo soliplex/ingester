@@ -9,9 +9,9 @@ helpers). This file exercises:
 * :class:`WorkerConfig` defaults and overrides.
 * :class:`Worker` — construction, ``id`` / ``lifecycle`` accessors,
   ``_allowed_types_for`` partitioning, the success / lease-lost /
-  resource-lock-race / handler-error / cancelled / error_step-raises
-  paths through ``_run_step``, and the heartbeat / reaper / sweeper
-  loops (one iteration each, with stop signalled).
+  in-process key-lock serialization / handler-error / cancelled /
+  error_step-raises paths through ``_run_step``, and the heartbeat
+  / reaper loops (one iteration each, with stop signalled).
 * :func:`_run_workflow_lifecycle_handlers` — None handlers, missing
   event, success, handler raises, history-update raises.
 * The legacy module shims ``start_worker`` / ``stop_worker`` /
@@ -86,7 +86,6 @@ def _patch_loop_ops():
         _patch_op("worker_heartbeat"),
         _patch_op("claim_next_step", return_value=None),
         _patch_op("reap_dead_workers", return_value=([], [])),
-        _patch_op("sweep_expired_resource_locks", return_value=0),
         _patch_op("delete_worker_checkin"),
     ):
         yield
@@ -243,7 +242,6 @@ class TestWorkerConfig:
         assert cfg.poll_backoff_max == 3.0
         assert cfg.checkin_interval is None
         assert cfg.checkin_timeout is None
-        assert cfg.resource_lock_ttl == 300
 
 
 # ---------------------------------------------------------------------
@@ -323,8 +321,8 @@ class TestWorkerStartStop:
         with _patch_loop_ops(), _patch_op("worker_heartbeat") as hb:
             await w.start()
             try:
-                # Three background loops + 1 consumer.
-                assert len(w._tasks) == 4
+                # Heartbeat + reaper + 1 consumer.
+                assert len(w._tasks) == 3
                 hb.assert_awaited()
             finally:
                 await w.stop(timeout=2.0)
@@ -491,40 +489,116 @@ async def test_run_step_last_step_publishes_item_end():
 
 
 @pytest.mark.asyncio
-async def test_run_step_acquires_resource_lock_when_present():
+async def test_run_step_does_not_call_acquire_resource_lock():
+    """The redundant defensive acquire was removed — the claim layer
+    already inserted the row atomically with the step claim, and
+    in-process serialization now uses an ``asyncio.Lock``."""
     w = Worker(config=WorkerConfig(consumers={"*": 1}))
     rt = _build_runtime_mocks()
     rs = _make_run_step(resource_key="rag:/tmp/db")
     with (
         _patch_runtime_lookups(rt),
-        _patch_op("acquire_resource_lock", return_value=True) as acquire,
+        _patch_op("acquire_resource_lock") as acquire,
         _patch_op("complete_step", return_value=True),
         _patch_op("recompute_run_status"),
     ):
         await w._run_step(rs, "lease-1", 0)
-        acquire.assert_awaited_once()
-        kwargs = acquire.await_args.kwargs
-        assert kwargs["holder_id"] == "lease-1"
-        assert kwargs["step_id"] == 1
+    acquire.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_run_step_releases_when_resource_lock_lost(caplog):
-    w = Worker(config=WorkerConfig(consumers={"*": 1}))
+async def test_run_step_serializes_same_resource_key_in_process():
+    """Two ``_run_step`` calls with the same ``resource_key`` must
+    serialize on the in-process ``asyncio.Lock`` — the second
+    coroutine cannot enter the user step handler until the first
+    has finished."""
+    w = Worker(config=WorkerConfig(consumers={"*": 2}))
     rt = _build_runtime_mocks()
-    rs = _make_run_step(resource_key="rag:/tmp/db")
+    rs_a = _make_run_step(step_id=1, resource_key="rag:/tmp/shared")
+    rs_b = _make_run_step(step_id=2, resource_key="rag:/tmp/shared")
+
+    order: list[str] = []
+    a_in_handler = asyncio.Event()
+    a_may_finish = asyncio.Event()
+
+    async def handler(run_step, **_):
+        if run_step.id == 1:
+            order.append("a-enter")
+            a_in_handler.set()
+            await a_may_finish.wait()
+            order.append("a-exit")
+        else:
+            order.append("b-enter")
+            order.append("b-exit")
+
+    rt["workflow_def"].item_steps[WorkflowStepType.PARSE].method = handler
+
     with (
         _patch_runtime_lookups(rt),
-        _patch_op("acquire_resource_lock", return_value=False),
-        _patch_op("release_step", return_value=True) as release,
-        _patch_op("complete_step") as complete,
+        _patch_op("complete_step", return_value=True),
+        _patch_op("recompute_run_status"),
     ):
-        with caplog.at_level(logging.WARNING, logger="soliplex.ingester.lib.wf.runner"):
-            raced = await w._run_step(rs, "lease-1", 0)
-        release.assert_awaited_once_with(1, "lease-1")
-        complete.assert_not_called()
-    assert raced is True
-    assert any("race on resource_key" in r.message for r in caplog.records)
+        task_a = asyncio.create_task(w._run_step(rs_a, "lease-A", 0))
+        await a_in_handler.wait()
+        # Kick off B while A is parked inside its handler. B's
+        # _run_step will block at the per-key in-process lock.
+        task_b = asyncio.create_task(w._run_step(rs_b, "lease-B", 0))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert order == ["a-enter"], f"B entered before A finished: {order}"
+        a_may_finish.set()
+        await asyncio.gather(task_a, task_b)
+    assert order == ["a-enter", "a-exit", "b-enter", "b-exit"]
+
+
+@pytest.mark.asyncio
+async def test_run_step_different_resource_keys_run_concurrently():
+    """Different ``resource_key`` values use different in-process
+    locks, so two consumers can run them in parallel."""
+    w = Worker(config=WorkerConfig(consumers={"*": 2}))
+    rt = _build_runtime_mocks()
+    rs_a = _make_run_step(step_id=1, resource_key="rag:/tmp/dbA")
+    rs_b = _make_run_step(step_id=2, resource_key="rag:/tmp/dbB")
+
+    in_handler = {1: asyncio.Event(), 2: asyncio.Event()}
+    both_may_finish = asyncio.Event()
+
+    async def handler(run_step, **_):
+        in_handler[run_step.id].set()
+        await both_may_finish.wait()
+
+    rt["workflow_def"].item_steps[WorkflowStepType.PARSE].method = handler
+
+    with (
+        _patch_runtime_lookups(rt),
+        _patch_op("complete_step", return_value=True),
+        _patch_op("recompute_run_status"),
+    ):
+        task_a = asyncio.create_task(w._run_step(rs_a, "lease-A", 0))
+        task_b = asyncio.create_task(w._run_step(rs_b, "lease-B", 0))
+        await asyncio.wait_for(
+            asyncio.gather(in_handler[1].wait(), in_handler[2].wait()),
+            timeout=2.0,
+        )
+        both_may_finish.set()
+        await asyncio.gather(task_a, task_b)
+
+
+@pytest.mark.asyncio
+async def test_run_step_no_resource_key_skips_lock():
+    """A step with ``resource_key=None`` runs without taking any
+    in-process lock — and doesn't create a spurious entry in the
+    lock dict."""
+    w = Worker(config=WorkerConfig(consumers={"*": 1}))
+    rt = _build_runtime_mocks()
+    rs = _make_run_step(resource_key=None)
+    with (
+        _patch_runtime_lookups(rt),
+        _patch_op("complete_step", return_value=True),
+        _patch_op("recompute_run_status"),
+    ):
+        await w._run_step(rs, "lease-1", 0)
+    assert w._key_locks == {}
 
 
 @pytest.mark.asyncio
@@ -797,45 +871,6 @@ async def test_consumer_loop_runs_step_when_claim_returns_one():
 
 
 @pytest.mark.asyncio
-async def test_consumer_loop_backs_off_after_race_release():
-    """When ``_run_step`` returns True (race-release), the consumer
-    should treat it like an idle claim: emit ``claim_lost_race``
-    and apply backoff so it doesn't spin-claim until the lock
-    holder finishes."""
-    metrics = MagicMock()
-    w = Worker(
-        config=WorkerConfig(
-            consumers={"*": 1},
-            poll_interval=0.0,
-            poll_backoff_max=0.0,
-        ),
-        metrics=metrics,
-    )
-    rs = _make_run_step(resource_key="rag:/tmp/db")
-
-    call_count = 0
-
-    async def fake_claim(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return rs
-        w._stop_event.set()
-        return None
-
-    async def fake_run_step(*args, **kwargs):
-        return True  # signal race-release
-
-    with (
-        patch("soliplex.ingester.lib.wf.runner.operations.claim_next_step", new=fake_claim),
-        patch.object(w, "_run_step", new=fake_run_step),
-    ):
-        await asyncio.wait_for(w._consumer_loop("*", 0), timeout=2.0)
-
-    metrics.incr.assert_any_call("claim_lost_race", pool="*")
-
-
-@pytest.mark.asyncio
 async def test_consumer_loop_propagates_cancellation():
     w = Worker(config=WorkerConfig(consumers={"*": 1}, poll_interval=10))
     blocked = asyncio.Event()
@@ -855,47 +890,6 @@ async def test_consumer_loop_propagates_cancellation():
 # ---------------------------------------------------------------------
 # Background loops (heartbeat / reaper / sweeper)
 # ---------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_heartbeat_loop_refreshes_inflight_resource_locks():
-    w = Worker(config=WorkerConfig(consumers={"*": 1}, checkin_interval=0))
-    w._inflight[1] = _InFlight(step_id=1, lease="lease-1", resource_key="rag:/tmp/db")
-
-    async def fake_heartbeat(_):
-        w._stop_event.set()
-
-    with (
-        patch("soliplex.ingester.lib.wf.runner.operations.worker_heartbeat", new=fake_heartbeat),
-        patch(
-            "soliplex.ingester.lib.wf.runner.operations.refresh_resource_lock",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as refresh,
-    ):
-        await asyncio.wait_for(w._heartbeat_loop(), timeout=2.0)
-    refresh.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_heartbeat_loop_skips_refresh_when_no_resource_key():
-    """The refresh-resource-lock branch is gated on
-    ``inflight.resource_key`` being truthy."""
-    w = Worker(config=WorkerConfig(consumers={"*": 1}, checkin_interval=0))
-    w._inflight[1] = _InFlight(step_id=1, lease="lease-1", resource_key=None)
-
-    async def fake_heartbeat(_):
-        w._stop_event.set()
-
-    with (
-        patch("soliplex.ingester.lib.wf.runner.operations.worker_heartbeat", new=fake_heartbeat),
-        patch(
-            "soliplex.ingester.lib.wf.runner.operations.refresh_resource_lock",
-            new_callable=AsyncMock,
-        ) as refresh,
-    ):
-        await asyncio.wait_for(w._heartbeat_loop(), timeout=2.0)
-    refresh.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1005,67 +999,6 @@ async def test_reaper_loop_continues_after_interval_elapses():
 
 
 @pytest.mark.asyncio
-async def test_lock_sweeper_loop_continues_after_interval_elapses():
-    w = Worker(config=WorkerConfig(consumers={"*": 1}))
-    body_calls = {"n": 0}
-
-    async def fake_sweep():
-        body_calls["n"] += 1
-        if body_calls["n"] >= 2:
-            w._stop_event.set()
-        # Returning 0 also exercises the "no-op when nothing swept"
-        # branch (the `if count:` is False on the first iteration).
-        return 0
-
-    fake_wait, _ = _wait_for_counter("_lock_sweeper_loop")
-    with (
-        patch("soliplex.ingester.lib.wf.runner.operations.sweep_expired_resource_locks", new=fake_sweep),
-        patch("soliplex.ingester.lib.wf.runner.asyncio.wait_for", new=fake_wait),
-    ):
-        async with asyncio.timeout(2.0):
-            await w._lock_sweeper_loop()
-    assert body_calls["n"] >= 2
-
-
-@pytest.mark.asyncio
-async def test_lock_sweeper_loop_propagates_cancellation():
-    w = Worker(config=WorkerConfig(consumers={"*": 1}))
-    started = asyncio.Event()
-
-    async def fake_sweep():
-        started.set()
-        await asyncio.sleep(120)
-
-    with patch("soliplex.ingester.lib.wf.runner.operations.sweep_expired_resource_locks", new=fake_sweep):
-        task = asyncio.create_task(w._lock_sweeper_loop())
-        await started.wait()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-
-@pytest.mark.asyncio
-async def test_heartbeat_loop_warns_on_lost_resource_lock(caplog):
-    w = Worker(config=WorkerConfig(consumers={"*": 1}, checkin_interval=0))
-    w._inflight[1] = _InFlight(step_id=1, lease="lease-1", resource_key="rag:/tmp/db")
-
-    async def fake_heartbeat(_):
-        w._stop_event.set()
-
-    with (
-        patch("soliplex.ingester.lib.wf.runner.operations.worker_heartbeat", new=fake_heartbeat),
-        patch(
-            "soliplex.ingester.lib.wf.runner.operations.refresh_resource_lock",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
-    ):
-        with caplog.at_level(logging.WARNING, logger="soliplex.ingester.lib.wf.runner"):
-            await asyncio.wait_for(w._heartbeat_loop(), timeout=2.0)
-    assert any("lost resource lock" in r.message for r in caplog.records)
-
-
-@pytest.mark.asyncio
 async def test_heartbeat_loop_logs_and_continues_on_db_error(caplog):
     w = Worker(config=WorkerConfig(consumers={"*": 1}, checkin_interval=0))
 
@@ -1123,33 +1056,6 @@ async def test_reaper_loop_logs_db_errors(caplog):
         with patch("soliplex.ingester.lib.wf.runner.operations.reap_dead_workers", new=fake_reap):
             await asyncio.wait_for(w._reaper_loop(), timeout=2.0)
     assert any("reaper loop iteration failed" in r.message for r in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_lock_sweeper_loop_emits_metric_when_locks_swept():
-    w = Worker(config=WorkerConfig(consumers={"*": 1}), metrics=MagicMock())
-
-    async def fake_sweep():
-        w._stop_event.set()
-        return 3
-
-    with patch("soliplex.ingester.lib.wf.runner.operations.sweep_expired_resource_locks", new=fake_sweep):
-        await asyncio.wait_for(w._lock_sweeper_loop(), timeout=2.0)
-    w._metrics.incr.assert_any_call("resource_lock_swept", value=3)
-
-
-@pytest.mark.asyncio
-async def test_lock_sweeper_loop_logs_db_errors(caplog):
-    w = Worker(config=WorkerConfig(consumers={"*": 1}))
-
-    async def fake_sweep():
-        w._stop_event.set()
-        raise RuntimeError("transient")
-
-    with caplog.at_level(logging.ERROR, logger="soliplex.ingester.lib.wf.runner"):
-        with patch("soliplex.ingester.lib.wf.runner.operations.sweep_expired_resource_locks", new=fake_sweep):
-            await asyncio.wait_for(w._lock_sweeper_loop(), timeout=2.0)
-    assert any("lock sweeper iteration failed" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------

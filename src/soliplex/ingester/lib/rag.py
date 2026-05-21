@@ -303,7 +303,7 @@ async def check_rag_existence(
                 found.add(h)
     finally:
         if conn.is_open():
-            await conn.close()
+            conn.close()
 
     logger.info(
         f"pre-check: {len(found)}/{len(doc_hashes)} already in RAG at {actual_db_path}",

@@ -87,10 +87,9 @@ claim-with-lease persistence layer:
   alongside.
 - **Pluggable metrics** — `Metrics` protocol with a default
   `LoggingMetrics` no-op. Counters: `claim_attempts`,
-  `claim_success`, `claim_idle`, `claim_error`, `claim_lost_race`,
-  `step_completed`, `step_error`, `step_failed`, `step_released`,
-  `worker_reaped`, `lease_lost`, `resource_lock_swept`. Histograms:
-  `claim_duration`, `step_duration`.
+  `claim_success`, `claim_idle`, `claim_error`, `step_completed`,
+  `step_error`, `step_failed`, `step_released`, `worker_reaped`,
+  `lease_lost`. Histograms: `claim_duration`, `step_duration`.
 
 Two workers can coexist in one process because nothing in the runner
 is module-global anymore; legacy module-level `start_worker` /
@@ -168,17 +167,21 @@ graph LR
 ### Workflow Execution Flow
 
 1. **Worker Startup** - `Worker.start()` spawns per-type consumer
-   loops plus heartbeat / reaper / lock-sweeper background tasks
+   loops plus heartbeat / reaper background tasks
 2. **Step Claim** - Consumer calls `claim_next_step` with a fresh
    lease token; atomic `UPDATE-FROM-SELECT-FOR-UPDATE-SKIP-LOCKED`
-   marks the row RUNNING. Steps whose `resource_key` is currently
-   locked are skipped at the SQL layer
-3. **Resource Lock Acquire** - If the step declared a
-   `resource_key`, the worker acquires the matching `ResourceLock`
-   row (TTL-refreshed on heartbeat)
+   marks the row RUNNING and (if the step has a `resource_key`)
+   inserts the matching `ResourceLock` row in the same transaction.
+   Steps whose `resource_key` is currently held are skipped at the
+   SQL layer.
+3. **In-Process Serialization** - The worker takes a per-key
+   `asyncio.Lock` before invoking the user step handler, so two
+   consumer coroutines targeting the same `resource_key` serialize
+   without DB I/O and without TTL semantics
 4. **Status Transition** - PENDING → RUNNING → COMPLETED / ERROR /
    FAILED; terminal writes are gated on the lease so a stale
-   worker cannot double-finalize
+   worker cannot double-finalize. The `ResourceLock` row is
+   cleared in the same transaction as the terminal write.
 5. **Step Execution** - Calls registered handler method
 6. **Artifact Storage** - Saves intermediate results
 7. **Retry Logic** - `error_step` increments retry; elevates to

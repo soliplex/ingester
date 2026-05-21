@@ -589,7 +589,6 @@ production:
 | `claim_success`        | A step was claimed                                      |
 | `claim_idle`           | No work was available                                   |
 | `claim_error`          | The claim query raised                                  |
-| `claim_lost_race`      | Step's `resource_key` was held between claim and acquire|
 | `step_completed`       | Successful terminal write                               |
 | `step_error`           | Retryable failure                                       |
 | `step_failed`          | Retries exhausted                                       |
@@ -597,7 +596,6 @@ production:
 | `step_reset_by_reaper` | A dead worker's step was reset to PENDING               |
 | `worker_reaped`        | A peer worker was reaped                                |
 | `lease_lost`           | Terminal write found a non-matching lease (labelled `phase`) |
-| `resource_lock_swept`  | Expired `ResourceLock` rows were swept                  |
 
 | Histogram         | Description                          |
 |-------------------|--------------------------------------|
@@ -711,8 +709,11 @@ points at a holder that no longer exists.
 
 **Solution:**
 1. Inspect the lock: `SELECT * FROM resourcelock WHERE resource_key='rag:/path/to/db'`
-2. The background `sweep_expired_resource_locks` loop clears
-   expired holders every 60s; if the row is genuinely stuck,
+2. Worker-held lock rows are cleared when the step completes,
+   errors, is released, or the holder is reaped via
+   `WorkerCheckin`. CLI/web/lifecycle holders use a real TTL and
+   are cleared opportunistically by `acquire_resource_lock` or by
+   `sweep_expired_resource_locks`. If the row is genuinely stuck,
    break it from the CLI:
 
    ```bash

@@ -117,21 +117,11 @@ async def validate_document(
     if doc.mime_type == "application/pdf":
         try:
             file_bytes = await doc_ops.read_doc_bytes(doc_hash, ArtifactType.DOC)
-            fp = BytesIO(file_bytes)
-
-            pdfdoc = pypdf.PdfReader(fp)
+            pdf_meta = await asyncio.to_thread(_extract_pdf_metadata, file_bytes)
+            del file_bytes
             meta["is_valid"] = True
             meta["invalid_reason"] = None
-            meta["page_count"] = len(pdfdoc.pages)
-            for k in ["/Author", "/Subject", "/Title", "/Keywords", "/Subject"]:
-                if pdfdoc.metadata:
-                    v = pdfdoc.metadata.get(k)
-                    if v is not None:
-                        cleaned_key = "pdf_" + k.lower().replace("/", "")
-                        meta[cleaned_key] = v
-            fp.close()
-            del file_bytes
-            del pdfdoc
+            meta.update(pdf_meta)
         except Exception as e:
             meta["is_valid"] = False
             meta["invalid_reason"] = str(e)
@@ -153,6 +143,57 @@ async def validate_document(
 async def read_file(path: Path, mode="rb"):
     async with aiofiles.open(path, mode) as f:
         return await f.read()
+
+
+# ---- sync CPU helpers (run via ``asyncio.to_thread``) ---------------
+#
+# These are pure-Python loops over potentially large JSON / pydantic
+# structures. They block the event loop if called directly. Keep them
+# as plain ``def`` so callers must explicitly hand them to
+# ``asyncio.to_thread``.
+
+
+def _chunks_from_bytes(chunk_bytes: bytes) -> list[Chunk]:
+    """Decode a JSON-bytes blob and validate each element as ``Chunk``.
+
+    For thousands of chunks the pydantic validation loop is seconds of
+    pure Python; run via ``asyncio.to_thread``.
+    """
+    return [Chunk.model_validate(x) for x in json.loads(chunk_bytes)]
+
+
+def _chunks_to_bytes(chunks) -> bytes:
+    """Dump a list of pydantic models with ``model_dump`` to JSON bytes."""
+    return json.dumps([c.model_dump() for c in chunks]).encode("utf-8")
+
+
+def _extract_pdf_metadata(file_bytes: bytes) -> dict:
+    """Parse a PDF and extract page count plus selected ``/Info`` keys.
+
+    ``pypdf.PdfReader`` walks the cross-reference table eagerly — for
+    large PDFs this is seconds of CPU. Designed to run on a worker
+    thread.
+    """
+    fp = BytesIO(file_bytes)
+    try:
+        pdfdoc = pypdf.PdfReader(fp)
+        result: dict = {"page_count": len(pdfdoc.pages)}
+        if pdfdoc.metadata:
+            for k in ("/Author", "/Subject", "/Title", "/Keywords"):
+                v = pdfdoc.metadata.get(k)
+                if v is not None:
+                    cleaned_key = "pdf_" + k.lower().replace("/", "")
+                    result[cleaned_key] = v
+        return result
+    finally:
+        fp.close()
+
+
+def _md5_hex(data: bytes) -> str:
+    """MD5 hex digest. ``hashlib`` releases the GIL during the C-level
+    hash but the calling coroutine still doesn't yield, so for
+    multi-MB blobs offload via ``asyncio.to_thread``."""
+    return hashlib.md5(data, usedforsecurity=False).hexdigest()
 
 
 async def split_parse_document(
@@ -425,6 +466,20 @@ async def parse_pdf_file(
     return await parse_bytes(file_bytes, "application/pdf", str(pdf_path), config)
 
 
+def _serialize_docling_doc(docling_doc: DoclingDocument) -> tuple[bytes, bytes]:
+    """Pure-Python serialization of a parsed Docling document.
+
+    Both calls run substantial pydantic v2 work and block the event
+    loop for tens of seconds on large documents. Kept as a sync
+    helper so ``split_parse_pdf_file`` can offload them with a
+    single ``asyncio.to_thread`` round-trip.
+    """
+    return (
+        docling_doc.export_to_markdown().encode("utf-8"),
+        docling_doc.model_dump_json().encode("utf-8"),
+    )
+
+
 async def split_parse_pdf_file(
     pdf_path: Path,
     config: dict | None = None,
@@ -436,6 +491,13 @@ async def split_parse_pdf_file(
     Honors ``split_workers`` and ``use_serve`` keys in ``config``.
     ``source_uri`` defaults to ``str(pdf_path)`` and is forwarded to docling
     for source-tracking metadata.
+
+    Sync, CPU-heavy steps (``smart_split_to_files``,
+    ``BatchProcessor.execute_parallel``, per-chunk ``json.loads``,
+    ``merge_from_results``, and the final Docling serialization) are
+    offloaded to threads via ``asyncio.to_thread`` so other consumer
+    coroutines, heartbeats, and lifecycle subscribers stay
+    responsive during a long parse.
     """
     from pdf_splitter.processor import BatchProcessor
     from pdf_splitter.reassembly import merge_from_results
@@ -444,12 +506,20 @@ async def split_parse_pdf_file(
     config = config or {}
     if source_uri is None:
         source_uri = str(pdf_path)
-    split_workers = config.get("split_workers", 1)
+    split_workers = config.get("split_workers", 2)
     use_serve = config.get("use_serve", True)
 
     async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
         tf = Path(temp_dir)
-        split_result = smart_split_to_files(pdf_path, output_dir=tf, parallel=False, max_chunk_pages=30, min_chunk_pages=10)
+        split_result = await asyncio.to_thread(
+            smart_split_to_files,
+            pdf_path,
+            output_dir=tf,
+            parallel=True,
+            max_workers=split_workers,
+            max_chunk_pages=30,
+            min_chunk_pages=10,
+        )
         if len(split_result) != 2:
             msg = f"split_to_files returned {split_result}.  should return 2 items.  {source_uri}"
             raise WorkflowException(msg)
@@ -457,34 +527,32 @@ async def split_parse_pdf_file(
         logger.info(f"split_parse {source_uri} split into {len(split_files)} pieces")
 
         if use_serve:
-            convert_sem = asyncio.Semaphore(12)
-
+            # docling-serve concurrency is bounded process-wide by
+            # ``docling_concurrency`` inside ``docling_convert``, so
+            # the per-PDF fan-out doesn't need its own gate.
             async def _read_and_convert(split_path):
-                async with convert_sem:
-                    fb = await read_file(split_path)
-                    result = await docling_convert(
-                        fb,
-                        "application/pdf",
-                        source_uri=source_uri,
-                        config_dict=config,
-                    )
-                    return {
-                        "success": True,
-                        "document_dict": json.loads(result["json"].decode("utf-8")),
-                    }
+                fb = await read_file(split_path)
+                result = await docling_convert(
+                    fb,
+                    "application/pdf",
+                    source_uri=source_uri,
+                    config_dict=config,
+                )
+                document_dict = await asyncio.to_thread(
+                    json.loads,
+                    result["json"].decode("utf-8"),
+                )
+                return {"success": True, "document_dict": document_dict}
 
             proc_results = await asyncio.gather(*[_read_and_convert(sp) for sp in split_files])
         else:
             start1 = time.time()
             proc = BatchProcessor(max_workers=split_workers, verbose=True)
-            proc_results = proc.execute_parallel(split_files)
+            proc_results = await asyncio.to_thread(proc.execute_parallel, split_files)
             logger.info(f"batch processing took {time.time() - start1:.2f}s files={len(split_files)}")
 
-        docling_doc = merge_from_results(proc_results)
-    return (
-        docling_doc.export_to_markdown().encode("utf-8"),
-        docling_doc.model_dump_json().encode("utf-8"),
-    )
+        docling_doc = await asyncio.to_thread(merge_from_results, proc_results)
+    return await asyncio.to_thread(_serialize_docling_doc, docling_doc)
 
 
 async def split_parse_bytes(
@@ -523,19 +591,13 @@ async def chunk_document(
             WorkflowStepType.PARSE,
             ArtifactType.PARSED_JSON,
         )
-        json_text = json_bytes.decode("utf-8")
+        docling_document = await asyncio.to_thread(DoclingDocument.model_validate_json, json_bytes)
         del json_bytes
-        docling_document = DoclingDocument.model_validate_json(json_text)
-        del json_text
 
         chunk_objs = await rag.get_chunk_objs(docling_document, step_config.config_json)
         del docling_document
-        chunk_dicts = [x.model_dump() for x in chunk_objs]
+        chunk_bytes = await asyncio.to_thread(_chunks_to_bytes, chunk_objs)
         del chunk_objs
-        chunk_json = json.dumps(chunk_dicts)
-        del chunk_dicts
-        chunk_bytes = chunk_json.encode("utf-8")
-        del chunk_json
         if force:
             try:
                 await op.delete(doc_hash)
@@ -577,12 +639,8 @@ async def embed_document(
     if not exists or force:
         chunk_op = await _get_op(workflow_run.id, WorkflowStepType.CHUNK, ArtifactType.CHUNKS)
         chunk_bytes = await chunk_op.read(doc_hash)
-        chunk_json = chunk_bytes.decode("utf-8")
+        chunk_objs = await asyncio.to_thread(_chunks_from_bytes, chunk_bytes)
         del chunk_bytes
-        chunk_dicts = json.loads(chunk_json)
-        del chunk_json
-        chunk_objs = [Chunk.model_validate(x) for x in chunk_dicts]
-        del chunk_dicts
         logger.debug(
             f"got {len(chunk_objs)} chunks {source} {batch_id} {doc_hash}",
             extra=_lc,
@@ -590,10 +648,8 @@ async def embed_document(
         embed_chunks = await rag.embed(chunk_objs, step_config.config_json, doc_hash=doc_hash)
         del chunk_objs
         embed_op = await _get_op(workflow_run.id, WorkflowStepType.EMBED, ArtifactType.EMBEDDINGS)
-        embed_json = json.dumps([x.model_dump() for x in embed_chunks])
+        embed_bytes = await asyncio.to_thread(_chunks_to_bytes, embed_chunks)
         del embed_chunks
-        embed_bytes = embed_json.encode("utf-8")
-        del embed_json
         await embed_op.write(doc_hash, embed_bytes)
         if not await embed_op.exists(doc_hash):
             msg = f"embed {doc_hash}: artifact {ArtifactType.EMBEDDINGS} missing after write"
@@ -640,9 +696,7 @@ async def save_to_rag(
         chunk_bytes = await chunk_op.read(doc_hash)
         logger.debug(f"got just chunks for {doc_hash}", extra=_log_con)
 
-    chunk_json = chunk_bytes.decode("utf-8")
-    chunk_dicts = json.loads(chunk_json)
-    chunk_objs = [Chunk.model_validate(x) for x in chunk_dicts]
+    chunk_objs = await asyncio.to_thread(_chunks_from_bytes, chunk_bytes)
     r = asyncio.gather(
         read_bytes(
             doc_hash,
@@ -669,7 +723,7 @@ async def save_to_rag(
             WorkflowStepType.INGEST,
             ArtifactType.DOC,
         )
-        md5_hash = hashlib.md5(raw_bytes, usedforsecurity=False).hexdigest()
+        md5_hash = await asyncio.to_thread(_md5_hex, raw_bytes)
         doc.doc_meta["md5"] = md5_hash
     md5_hash = doc.doc_meta["md5"]
     file_size = doc.file_size

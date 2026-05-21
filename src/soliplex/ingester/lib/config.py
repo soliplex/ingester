@@ -84,7 +84,6 @@ class Settings(BaseSettings):
     embeddings_store_dir: str = "embeddings"
     stop_phrases: list[str] = []
 
-    ingest_queue_concurrency: int = 20
     ingest_worker_concurrency: int = 10
     docling_concurrency: int = 3
     input_s3: S3Settings = S3Settings()

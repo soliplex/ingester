@@ -1770,13 +1770,21 @@ _NONTERMINAL_RUN_STATUSES = (
     RunStatus.ERROR,
 )
 
+# Sentinel expires_at for WORKER-held ``ResourceLock`` rows. Worker
+# locks have no functional TTL — they're cleared by complete_step,
+# error_step, release_step, or reap_dead_workers — but the row must
+# still satisfy ``subq_locked``'s ``expires_at > now`` predicate and
+# stay clear of the opportunistic ``WHERE expires_at < now`` sweep.
+# CLI/web/lifecycle holders going through ``acquire_resource_lock``
+# continue to use real TTLs.
+_WORKER_LOCK_EXPIRES = datetime.datetime(9999, 12, 31)
+
 
 async def claim_next_step(
     worker_id: str,
     lease_token: str,
     allowed_types: list[WorkflowStepType] | None = None,
     batch_id: int | None = None,
-    resource_lock_ttl: int = 300,
     holder_meta: dict[str, str] | None = None,
 ) -> RunStep | None:
     """Atomically claim the next eligible step for *worker_id*.
@@ -1821,7 +1829,6 @@ async def claim_next_step(
         atomic resource-lock insert lost a race.
     """
     now = _utc_now()
-    expires = now + datetime.timedelta(seconds=resource_lock_ttl)
     async with get_session() as session:
         # Subquery 1: minimum step number per eligible workflow run.
         subq_min_step = (
@@ -1927,7 +1934,7 @@ async def claim_next_step(
                     holder_kind=ResourceLockKind.WORKER,
                     step_id=step.id,
                     acquired_at=now,
-                    expires_at=expires,
+                    expires_at=_WORKER_LOCK_EXPIRES,
                     holder_meta=holder_meta or {"worker_id": worker_id},
                 ),
             )

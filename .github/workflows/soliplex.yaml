@@ -72,9 +72,9 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - name: Run dependency audit
@@ -107,7 +107,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Notify Slack on failure
-        uses: slackapi/slack-github-action@v3.0.1
+        uses: slackapi/slack-github-action@v3.0.3
         with:
           webhook: ${{ secrets.SLACK_NOTIFY_URL }}
           webhook-type: incoming-webhook

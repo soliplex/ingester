@@ -1,6 +1,12 @@
-# Soliplex Ingester
+# Soliplex Ingester - ARCHIVED
 
 [![CI](https://github.com/soliplex/ingester/actions/workflows/soliplex.yaml/badge.svg)](https://github.com/soliplex/ingester/actions/workflows/soliplex.yaml)
+
+## This Project is Archived
+
+This project has been replaced by using haiku-rag directly through [ingester agents](https://github.com/soliplex/ingester-agents). Agents no longer connect to this service so it is deprecated.
+
+## Documentation Index
 
 This project is designed to provide a robust system to load documents from various sources into RAG systems.  The default configuration is intended to provide populated databases for the [Soliplex](https://github.com/soliplex/soliplex) RAG (Retrieval Augmented Generation) system but it can be customized to support other storage systems and language models.
 
@@ -9,8 +15,6 @@ Document ingestion can be a time consuming and error prone process.  Soliplex in
 This ingester has been tested with workflows containing hundreds of documents and with pdf files containing over one thousand pages (on appropriate hardware) so scalability and reliability are paramount.
 
 Soliplex ingester has been designed alongside [agents](https://github.com/soliplex/ingester-agents) that are able do load data from filesystems and source control management systems, but other tools can be used as well.
-
-## Documentation Index
 
 ### Getting Started
 
